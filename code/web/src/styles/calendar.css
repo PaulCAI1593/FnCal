@@ -1,0 +1,2262 @@
+/* =========================================================================
+   0.2.0 多日历 / 弹窗样式（M5 UI 规范 v0.1.1）
+   只用 tokens.css 既有颜色/圆角（--r-*、--surface-3、--text）；复用 .swatches/.swatch。
+   ========================================================================= */
+
+/* ---- 侧栏「日历」区块 ---- */
+.side-calendars {
+  /* 0.2.9（用户 4）：列表最后一行下面不留死空白（底部渐变改用 .sidebar::after 覆盖层）。
+     0.2.10（1-13）：删掉这里的 border-bottom —— 就是用户看到的那条「切在最后一行上」的
+     分割线；列表按容器自然裁切，底部不再画任何线/硬边。 */
+  padding: 8px 0 0;
+  /* 0.2.9（用户 18）：标题行固定、只有内层列表滚动（滚动规则在 layout.css）。 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.side-calendars__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 4px 12px;
+}
+.side-calendars__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.side-calendars__add {
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--text-2);
+}
+@media (hover: hover) and (pointer: fine) {
+.side-calendars__add:hover {
+  background: var(--surface-3);
+}
+}
+
+.cal-group {
+  padding: 2px 0;
+}
+/* 0.2.9（用户 4）：最后一组/最后一行不留底部空白（底部由滚动容器自然结束）。 */
+.cal-group:last-child {
+  padding-bottom: 0;
+}
+.cal-row:last-child {
+  margin-bottom: 0;
+}
+/* 0.2.9（用户 19）：分组标题改成可点击的按钮（展开/收起该组）。
+   0.2.3 的体量保留（辅助字号 12px、次级文字色），但换成整行按钮：触屏命中区
+   ≥44px、键盘可 Tab、箭头随状态旋转。 */
+.cal-group__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-3);
+  text-align: left;
+  cursor: pointer;
+}
+.cal-group__title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .cal-group__title:hover {
+    background: var(--surface-3);
+  }
+}
+.cal-group__chevron {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+  transition: transform 150ms var(--ease);
+}
+/* 收起：箭头转 -90°（指向右），列表不占高度（display:none），标题行保留。 */
+.cal-group.is-collapsed .cal-group__chevron {
+  transform: rotate(-90deg);
+}
+.cal-group.is-collapsed .cal-group__list {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cal-group__chevron {
+    transition: none;
+  }
+}
+/* 折叠列表容器：行仍是这一层的直接子元素（拖拽排序/末尾无空白规则不变）。 */
+.cal-group__list {
+  padding-bottom: 2px;
+}
+.cal-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 0.2.3：侧栏项高 32px（对齐旧分类栏）；项间距 4px 由相邻行规则提供。 */
+  height: 32px;
+  padding: 0 8px 0 12px;
+}
+.cal-row + .cal-row {
+  margin-top: 4px;
+}
+@media (hover: hover) and (pointer: fine) {
+.cal-row:hover {
+  background: var(--surface-3);
+}
+}
+
+/* 8px 色点（规范：复用 .chip__dot 语义）。 */
+.chip__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.cal-row__name {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+.cal-row__name:hover {
+  color: var(--accent);
+}
+}
+
+/* 0.2.2（⑪）：日历行复选框本身承载日历色；行首不再有独立色点。
+   44px 的 label 是触控命中区，22px 的 .cal-row__box 负责视觉。 */
+.cal-row__checkwrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -7px 0;
+  flex: none;
+  cursor: pointer;
+}
+.cal-row__check {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+/* 0.2.9（用户 4 / 美工 §18.1）：侧栏日历拖动排序——**只手柄可拖**，
+   手柄是「很窄的浅灰双列点阵」。
+   - 视觉 8×20px（点 2×2px、两列四行、列距 2px），默认 `--gray-400`（比 --text-3 淡一档），
+     hover 变 `--text-3`；
+   - 绝对定位落在行左侧 12px padding 里（`left:0`），**不占布局位**：复选框与日历名零位移；
+   - 热区只占左侧 12px 通道、纵向 44px（透明 ::after），**不覆盖从 12px 起的复选框热区**。 */
+.cal-row__grip {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 8px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  /* 双列四行小点阵（点 2×2、列距 2px），不引入新图片资源。 */
+  background-image: radial-gradient(circle at 1px 1px, currentColor 1px, transparent 1.2px);
+  background-size: 4px 5px;
+  background-repeat: repeat;
+  background-position: center;
+  color: var(--gray-400);
+  cursor: grab;
+  touch-action: none;
+}
+.cal-row__grip svg {
+  display: none;
+}
+.cal-row__grip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+.cal-row__grip:active {
+  cursor: grabbing;
+}
+.cal-row__grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .cal-row:hover .cal-row__grip,
+  .cal-row:focus-within .cal-row__grip {
+    display: inline-flex;
+  }
+  /* 0.2.9：hover 加深一档（必须包在鼠标设备条件里，触屏不粘滞）。 */
+  .cal-row__grip:hover {
+    color: var(--text-3);
+  }
+}
+@media (pointer: coarse) {
+  .cal-row__grip {
+    display: inline-flex;
+  }
+}
+.cal-row.is-dragging {
+  opacity: 0.6;
+  background: var(--surface-3);
+  box-shadow: var(--shadow-sm);
+}
+.cal-group.is-reordering {
+  user-select: none;
+}
+body.is-reordering {
+  overflow: hidden;
+  touch-action: none;
+}
+.cal-row__box {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid var(--cal-color, var(--accent));
+  background: var(--surface);
+  box-sizing: border-box;
+  pointer-events: none;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.cal-row__check:checked + .cal-row__box {
+  background: var(--cal-color, var(--accent));
+  border-color: var(--cal-color, var(--accent));
+  /* 白色对勾（SVG data URI，不新增图片资源）。 */
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 13l4 4L19 7'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 16px 16px;
+}
+.cal-row__check:focus-visible + .cal-row__box {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.cal-row__more {
+  width: 28px;
+  height: 28px;
+  color: var(--text-3);
+  flex: none;
+}
+@media (hover: hover) and (pointer: fine) {
+.cal-row__more:hover {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+}
+
+
+/* ---- 日历弹窗（设置 / 删除 / 选择） ---- */
+.cal-settings,
+.cal-delete,
+.cal-picker-modal {
+  width: min(420px, calc(100vw - 32px));
+}
+.cal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.cal-field--row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.cal-hint,
+.cal-delete__text {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.cal-desc {
+  resize: vertical;
+  min-height: 66px;
+}
+.cal-only {
+  width: 100%;
+  justify-content: center;
+}
+.cal-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.cal-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+.cal-picker__row:hover {
+  background: var(--surface-3);
+}
+}
+/* 0.2.10（1-3）：导入弹窗「现有日历」每项 8px 色点（无描边、gap 8px 见上），
+ * 键盘高亮/当前项用 accent-soft 底，与其它可选项一致。 */
+.cal-picker__row:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cal-picker__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ---- 编辑器「日历」下拉（B2，规范 v0.1.1 §6/§37–§41） ---- */
+.modal__calendar .cal-select {
+  position: relative;
+  display: block;
+}
+.modal__calendar .cal-hint {
+  grid-column: 2;
+  margin: 0;
+}
+.cal-select__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+.cal-select__trigger:hover {
+  background: var(--surface-3);
+}
+}
+
+.cal-select__trigger:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.cal-select__trigger[aria-expanded='true'] {
+  border-color: var(--accent);
+}
+.cal-select__trigger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cal-select__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cal-select__chev {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.cal-select__list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 220px;
+  max-height: 200px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  scrollbar-width: thin;
+}
+.cal-select__list[hidden] {
+  display: none;
+}
+.cal-select__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-base);
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+.cal-select__item:hover,
+.cal-select__item:focus-visible {
+  background: var(--surface-3);
+}
+}
+
+.cal-select__item[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.cal-select__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cal-select__check {
+  flex: none;
+  display: inline-flex;
+  color: var(--accent);
+}
+.cal-select__item--new {
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
+  color: var(--text-2);
+}
+.cal-select__new-icon {
+  display: inline-flex;
+  width: 8px;
+  justify-content: center;
+}
+
+/* ---- 设置三页（B3，规范 v0.1.1 §5/§29–§36） ---- */
+.settings-modal {
+  max-width: 560px;
+  width: min(560px, calc(100vw - 32px));
+}
+/* 0.2.9（用户 8）：设置 / 账号管理 / 新建账号弹窗里的原生复选框与单选按钮
+   统一跟主题色（accent-color 是运行时 CSS 变量，切主题色立即生效，无需刷新）。
+   侧栏日历行复选框（.cal-row__check）是自绘、底色=日历色（0.2.2 ⑪），不在此规则内。 */
+.settings-modal input[type='checkbox'],
+.settings-modal input[type='radio'],
+.admin-modal input[type='checkbox'],
+.admin-modal input[type='radio'],
+.admin-reset-modal input[type='checkbox'],
+.admin-reset-modal input[type='radio'] {
+  accent-color: var(--accent);
+}
+.settings__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* 0.2.8（用户 9 / 美工 §17.1）：设置顶部页签 = 浏览器标签页造型。
+   - 上/左/右三边描边、顶部圆角 8px，页签间距 -1px 叠边（无双线）；
+   - 选中页签与内容面板连成一体：底边透明 + margin-bottom:-1px 压住面板上沿线；
+   - 未选中：surface-2 底 + 下沿分隔线；hover：surface-3。 */
+.settings__tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 0;
+  max-width: 100%;
+  align-self: flex-start;
+  overflow: visible;
+  background: none;
+  border-radius: 0;
+  /* 未选中页签的下沿分隔线（面板上沿）；选中的会把这一像素盖掉。 */
+  border-bottom: 1px solid var(--border);
+  /* 与下方内容面板的 12px 间距抵消，只留 1px 叠边，形成「贴在一起」的接缝。 */
+  margin-bottom: -13px;
+}
+.settings__tabs button {
+  position: relative;
+  height: auto;
+  min-height: 36px;
+  padding: 0 14px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: visible;
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  background: var(--surface-2);
+  color: var(--text-2);
+  margin-right: -1px;
+  margin-bottom: -1px;
+  box-shadow: none;
+  font-weight: 550;
+}
+@media (hover: hover) and (pointer: fine) {
+  .settings__tabs button:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+}
+.settings__tabs button[aria-selected='true'] {
+  background: var(--surface);
+  color: var(--text);
+  border-bottom-color: transparent;
+  z-index: 1;
+  box-shadow: none;
+}
+@media (pointer: coarse) {
+  /* 触屏命中区 ≥44px（spec §17.1）。 */
+  .settings__tabs button {
+    min-height: 44px;
+  }
+}
+/* 0.2.9（用户 9）：设置弹窗底部常驻提示条——在滚动容器 .modal__body 之外、
+   按钮区之上；说明文字常显，「有 N 项未应用」仅在 N>0 显示。预留最小高度避免
+   表格滚动区高度随提示出现/消失而跳动。 */
+/* 0.2.10（1-7）：页脚一行 = 提示（左）+ 版本号（右），不再有 58px 高的独立提示条；
+ * 窄屏只允许提示换行，版本号与按钮各占一行、不挤在一起。 */
+.settings__foot-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+.settings__pending-count {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.settings__pending-count[hidden] {
+  display: none;
+}
+.settings__pending-hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.settings__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  flex: 0 0 auto;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.settings__version {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+  /* 0.2.10（1-7）：提示可换行，版本号本身不换行、始终与提示同一行右端。 */
+  white-space: nowrap;
+  flex: none;
+}
+/* 0.2.23（H4）→ 0.2.24（I3）：页脚只留一行版本号（前端内嵌版本，与后端不一致时补
+   「需刷新」），指纹行已按用户要求撤掉，`settings__build` 随之删除。 */
+.settings__about {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  margin-left: auto;
+  min-width: 0;
+  flex: none;
+}
+.settings__about .settings__version {
+  margin-left: 0;
+}
+/* 0.2.8（用户追加）：设置「应用」失败时留在弹窗内的中文错误（不关闭对话框）。 */
+.settings__apply-error {
+  margin: 0;
+  color: var(--danger-ink);
+  font-size: var(--fs-sm);
+}
+.settings__apply-error[hidden] {
+  display: none;
+}
+.settings__pages {
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.settings__page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* 0.2.9（用户 7）：页签与内容之间留出正常间距。页签保留 -13px 的叠边造型
+     （接缝不变），间距由面板内 padding 给——三个页签共用这一个类。 */
+  padding-top: 20px;
+}
+.settings__page[hidden] {
+  display: none;
+}
+.settings__row {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-height: 36px;
+}
+.settings__label {
+  font-size: var(--fs-base);
+  color: var(--text-2);
+}
+.settings__control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.settings__control .select {
+  width: 100%;
+}
+.settings__hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  /* 0.2.10（1-8）：周数口径说明是两条独立句子，各自成行（\n 生效），
+     左对齐、正常行高；长句在窄屏内换行，不撑出横向滚动。 */
+  white-space: pre-line;
+  text-align: left;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.settings__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* 0.2.20（E16）：「周数算法」一行左右排——左边分段控件、右边说明跟着选中项切换
+   （原来说明是两行恒显的大段文字，占了三行高）。窄屏可上下排。 */
+.settings__row--split {
+  align-items: center;
+}
+.settings__control--inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.settings__week-mode-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: normal;
+  text-align: left;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 720px) {
+  .settings__control--inline {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-2);
+  }
+}
+.settings__chip {
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--fs-sm);
+}
+.settings__chip[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.settings__segmented {
+  align-self: flex-start;
+}
+.settings__account {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 4px;
+}
+.settings__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.settings__account-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings__account-name {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.settings__account-username {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.settings__inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings__inline .input {
+  flex: 1;
+  min-width: 0;
+}
+/* 0.2.10（1-7）：页脚 padding/border 已在上面统一给，这里不再覆盖。 */
+.settings__security {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* 手机：页签可横滑、字段单列（规范 §5 / 移动端要求）。 */
+@media (max-width: 520px) {
+  .settings__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    align-items: start;
+  }
+  .settings__pages {
+    max-height: none;
+  }
+}
+
+/* ---- 右侧任务栏（B4，规范 v0.1.1 §2/§3/§13–§24） ---- */
+.icon-btn.taskbar-toggle {
+  width: auto;
+  padding: 0 10px;
+  gap: 6px;
+}
+.icon-btn__label {
+  font-size: var(--fs-base);
+}
+.app.has-taskbar {
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--taskbar-w);
+  grid-template-areas:
+    'header header header'
+    'sidebar main taskbar';
+}
+.taskbar {
+  grid-area: taskbar;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+.taskbar[hidden] {
+  display: none;
+}
+.taskbar__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.taskbar__title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.taskbar__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.taskbar__filters {
+  align-self: flex-start;
+}
+.taskbar__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 0.2.8（用户）：条目多时列表独立滚动，行不被压缩。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 0.2.8（用户）：行高固定 56px（标题一行 + 时间/日历一行），
+     条目再多也不压缩行距，超出由 .taskbar__list 滚动。 */
+  flex: 0 0 auto;
+  min-height: 56px;
+  padding-right: 4px;
+  border-radius: var(--r-sm);
+}
+/* 0.2.4（真机 P0-7）：任务栏复选框与侧栏复选框同一套 --cal-color ——
+   勾颜色跟随「任务」日历色，而不是固定 accent。 */
+.task-row__check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--cal-color, var(--accent));
+  /* 0.2.22（G1）：任务栏复选框改正圆，与月视图 chip、日程列表的圆勾选一致。 */
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--cal-fg, var(--text-on-accent));
+  cursor: pointer;
+}
+.task-row__check.is-checked {
+  background: var(--cal-color, var(--accent));
+  border-color: var(--cal-color, var(--accent));
+  color: var(--cal-fg, var(--text-on-accent));
+}
+.task-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.task-row__title {
+  font-size: var(--fs-md);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-row.is-done .task-row__title {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.task-row__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  /* 0.2.8（用户）：第二行「时间 + 日历名」单行不换行，日历名超出省略。 */
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.task-row__due {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.task-row__due.is-overdue {
+  color: var(--danger-ink);
+}
+.taskbar__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 12px;
+  text-align: center;
+}
+.taskbar__empty-title {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-2);
+}
+.taskbar__empty-desc {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.taskbar-scrim {
+  display: none;
+}
+@media (max-width: 1200px) {
+  .app.has-taskbar {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr) 260px;
+  }
+}
+@media (max-width: 900px) {
+  .app.has-taskbar {
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    grid-template-areas:
+      'header header'
+      'sidebar main';
+  }
+  .taskbar {
+    position: fixed;
+    top: var(--header-h);
+    right: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 27;
+    box-shadow: var(--shadow-lg);
+  }
+  .app.has-taskbar .taskbar-scrim:not([hidden]) {
+    display: block;
+    position: fixed;
+    inset: var(--header-h) 0 0 0;
+    z-index: 26;
+    background: var(--overlay-scrim);
+  }
+}
+@media (max-width: 720px) {
+  .taskbar {
+    top: 0;
+    width: 100%;
+    padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  }
+  .icon-btn__label {
+    display: none;
+  }
+}
+
+/* ---- 触屏（手机端）：一次点击即生效 ---- */
+/* 去掉 300ms 点击延迟与双击缩放抢事件（规范 §移动端）。 */
+button,
+a,
+input,
+select,
+textarea,
+label,
+[role='button'],
+[role='checkbox'],
+[role='radio'],
+[role='tab'],
+.cal-row,
+.task-row,
+.chip,
+.swatch,
+.switch,
+.timegrid,
+.mini-cal__day,
+.search__item {
+  touch-action: manipulation;
+}
+
+/* 触屏上不保留「粘住的 hover」：按下才高亮，松手即恢复。 */
+@media (hover: none) {
+  .cal-row:hover,
+  .task-row:hover,
+  .cal-select__item:hover,
+  .cal-picker__row:hover,
+  .task-row__check:hover,
+  .cal-row__more:hover {
+    background: transparent;
+  }
+  .cal-row:active,
+  .task-row:active {
+    background: var(--surface-3);
+  }
+}
+
+/* ---- 小日历年月滚轮（B5，规范 v0.1.1 §4/§25–§28） ---- */
+.mini__title {
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: 650;
+  cursor: pointer;
+}
+.ym-popover {
+  padding: 8px;
+  z-index: 85;
+}
+.ym-popover__wheels {
+  display: flex;
+  gap: 4px;
+}
+.ym-wheel {
+  flex: 1;
+  height: 180px;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  outline: none;
+  border-radius: var(--r-md);
+}
+.ym-wheel::-webkit-scrollbar {
+  display: none;
+}
+.ym-wheel:focus-visible {
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.ym-wheel__pad {
+  height: 60px;
+}
+.ym-wheel__row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 60px;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--fs-md);
+  cursor: pointer;
+  scroll-snap-align: center;
+}
+@media (hover: hover) and (pointer: fine) {
+.ym-wheel__row:hover {
+  background: var(--surface-3);
+}
+}
+
+.ym-wheel__row[aria-selected='true'] {
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: var(--fs-lg);
+  font-weight: 650;
+}
+.ym-popover__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+@media (hover: none) {
+  .ym-wheel__row:hover {
+    background: transparent;
+  }
+  .ym-wheel__row:active {
+    background: var(--surface-3);
+  }
+}
+
+/* ---- 搜索筛选面板（B6，规范 v0.1.1 §7/§42–§47） ---- */
+/* 0.2.10（1-12）：搜索框内清空小叉。用 visibility 而非 display 切换，保持占位，
+ * 输入框文字区宽度不因出现/消失而抖动。 */
+.search__clear {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+.search__clear.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+.search__clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.search__filter-btn {
+  position: relative;
+  flex: none;
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+}
+.search__filter-btn.has-filter .search__filter-dot,
+.search__filter-btn .search__filter-dot {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.search__filter-btn.has-filter .search__filter-dot {
+  display: block;
+}
+.search__filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+.search__filters[hidden] {
+  display: none;
+}
+.search__filter-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.search__filter-label {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.search__filter-chips,
+.search__filter-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.search__chip {
+  height: 28px;
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+}
+.search__chip[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: transparent;
+}
+.search__swatch {
+  width: 26px;
+  height: 26px;
+}
+.search__filter-dates {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search__filter-dates .input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+}
+/* 0.2.36（M1）：时间范围的日期字段 = 可见按钮 + 弹层日历，真值 input 视觉隐藏。
+   原生 <input type="date"> 的空态占位符由浏览器按 locale 画成「yyyy/mm/日」，
+   shadow DOM 里改不了文案，所以外框改成自己画的按钮（观感复刻 .input）。 */
+.search__date-field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+.search__date-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--sp-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-md);
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease),
+    background-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+/* 悬停只在鼠标设备生效（触屏「点一下即选中」，0.2.17 起的统一口径）。 */
+@media (hover: hover) and (pointer: fine) {
+  .search__date-btn:hover {
+    background: var(--surface-3);
+  }
+}
+.search__date-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.search__date-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 日期是数字信息：等宽数字，两个字段的值不跳字宽。 */
+  font-variant-numeric: tabular-nums;
+}
+/* 空态占位符与 .input::placeholder 同色（--text-3），不是正文色。 */
+.search__date-text.is-empty {
+  color: var(--text-3);
+}
+.search__date-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-3);
+}
+.search__date-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.search__filter-dash {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.search__filter-switch {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  cursor: pointer;
+}
+.search__filter-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+.search__filter-clear {
+  height: 28px;
+  font-size: var(--fs-sm);
+}
+.search__count {
+  padding: 6px 16px 2px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.search__empty-hint {
+  margin: 4px 0 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+/* 手机：搜索面板全屏、筛选区整屏展开（移动端要求）。 */
+@media (max-width: 720px) {
+  /* 0.2.8（用户 10）：窄屏周号列略窄（22px），竖排仍不裁字、不换行。 */
+  .month--weeknums .month__dow,
+  .month--weeknums .month__grid {
+    grid-template-columns: 22px repeat(7, minmax(0, 1fr));
+  }
+  .search-scrim {
+    padding: 0;
+  }
+  .search__panel {
+    max-width: none;
+    max-height: none;
+    height: 100%;
+    border: 0;
+    border-radius: 0;
+  }
+  .search__filters {
+    flex: 1;
+    max-height: none;
+  }
+}
+@media (hover: none) {
+  .search__chip:hover,
+  .search__swatch:hover {
+    background: inherit;
+  }
+}
+
+/* ---- 日历设置弹窗（B7，规范 v0.1.1 §8/§48–§53） ---- */
+.cal-settings {
+  width: min(480px, calc(100vw - 32px));
+}
+.cal-hint--locked {
+  margin: 0 0 4px;
+}
+.cal-field.is-disabled {
+  opacity: 0.5;
+}
+/* 0.2.10（1-18）：只给禁用控件「光标」而非整块字段——名称是 input，描述是 textarea
+ * 且始终可编辑，所以这里只保留开关（显示开关）的禁止光标，不再命中 textarea。 */
+.cal-field.is-disabled .switch,
+.cal-field.is-disabled input[disabled] {
+  cursor: not-allowed;
+}
+.cal-count {
+  align-self: flex-end;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 嵌入窗口退路提示条（0.2.0 移动端） ---- */
+.embed-notice {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.embed-notice__text {
+  flex: 1;
+  min-width: 180px;
+}
+
+/* ---- 触屏可点目标 ≥44×44（0.2.0 移动端；规范 M3 §9 触摸下限） ---- */
+@media (pointer: coarse) {
+  .cal-row,
+  .task-row {
+    min-height: 44px;
+  }
+  .cal-row__more,
+  .side-calendars__add,
+  .taskbar__close,
+  .taskbar__new,
+  .mini__nav .icon-btn,
+  .cal-filter__rename {
+    width: 44px;
+    height: 44px;
+  }
+  .cal-row__checkwrap {
+    width: 44px;
+    height: 44px;
+  }
+  .cal-row__box {
+    width: 24px;
+    height: 24px;
+  }
+  .task-row__check {
+    width: 26px;
+    height: 26px;
+  }
+  .cal-filter__toggle,
+  .menu-item,
+  .settings__row,
+  .search__filter-btn,
+  .settings__chip,
+  .search__chip,
+  .cal-picker__row,
+  .cal-select__item,
+  .cal-select__trigger {
+    min-height: 44px;
+  }
+  .swatch,
+  .search__swatch {
+    width: 44px;
+    height: 44px;
+  }
+  .switch {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+  .mini__cell {
+    min-height: 44px;
+  }
+  .btn--sm {
+    min-height: 44px;
+  }
+  /* 0.2.10（1-12）：清空小叉在触屏上命中区 ≥44×44。 */
+  .search__clear {
+    width: 44px;
+    height: 44px;
+  }
+  /* 0.2.17（B2.1，触屏热区）：顶栏图标按钮、头像、抽屉按钮和底部 tab 也是手指目标，
+     0.2.0 那批只覆盖了列表行/开关/色块。这里统一抬到 44×44（tab 高 48）。 */
+  .icon-btn,
+  .avatar,
+  .menu-toggle {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .tabbar__btn {
+    min-width: 44px;
+    min-height: 48px;
+  }
+}
+
+/* ---- 手机：编辑器「日历」下拉改为全屏列表（0.2.0 移动端） ---- */
+.cal-select__mobile-head {
+  display: none;
+}
+@media (max-width: 720px) {
+  .cal-select__list {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    min-width: 0;
+    max-height: none;
+    padding: 12px;
+    padding-top: calc(12px + env(safe-area-inset-top, 0px));
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    border: 0;
+    border-radius: 0;
+    background: var(--surface);
+    box-shadow: none;
+  }
+  .cal-select__mobile-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 4px 8px;
+    margin-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cal-select__mobile-title {
+    font-size: var(--fs-md);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .cal-select__item {
+    min-height: 44px;
+  }
+}
+
+/* ---- ISO 周数（0.2.1 #14；0.2.8 用户 10：竖排 + 整行居中） ---- */
+.month--weeknums .month__dow,
+.month--weeknums .month__grid {
+  /* 只容得下竖排文字：24px（不裁字、不换行）。 */
+  grid-template-columns: 24px repeat(7, minmax(0, 1fr));
+}
+.month--weeknums .month__cell:nth-child(7n) {
+  border-right: 1px solid var(--grid-line);
+}
+.month--weeknums .month__cell:nth-child(8n) {
+  border-right: none;
+}
+.month__weeknum-head {
+  border-right: 1px solid var(--grid-line);
+}
+.month__weeknum {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-right: 1px solid var(--grid-line);
+  border-bottom: 1px solid var(--grid-line);
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+/* 0.2.9（用户 6）：竖排周号 = 逐字 span 的 flex 竖列。不用 writing-mode/upright
+   （全角推进会把字距撑到 3 倍字高）；字距就是 line-height 1.1 的正常行距。 */
+.month__weeknum-text,
+.timegrid__weeknum-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin: 0;
+  line-height: 1.1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.weeknum-char {
+  display: block;
+  margin: 0;
+  padding: 0;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+.timegrid__weeknum {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ---- 设置 → 日历 表格页（0.2.1 #6 结构） ---- */
+/* 0.2.10（1-6）：工具条常驻不滚动、表格自己滚（窄屏同样成立）：
+   页面 = flex 列，上限与 .settings__pages 一致；工具条/说明 flex:none，
+   表格体 flex:1 1 auto + 自身滚动。 */
+.settings__page--calendar {
+  max-height: min(70vh, 560px);
+  overflow: hidden;
+  gap: 8px;
+}
+.settings__page--calendar .cal-table__toolbar {
+  flex: 0 0 auto;
+  margin-bottom: 0;
+}
+.settings__page--calendar .cal-table__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.settings__page--calendar .cal-table__dav-hint {
+  flex: 0 0 auto;
+  margin: 0;
+}
+.cal-table__toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.cal-table__count {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 0.2.15（D12）：「编辑 / 删除(清空) / 导出」统一圆角描边框——同高、同内边距、同圆角；
+   危险动作只换文字与描边颜色；hover / active / focus-visible / 禁用态都保留框。 */
+.cal-table__toolbar .btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: var(--fs-base);
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.cal-table__toolbar .btn--danger-outline {
+  border-color: var(--danger);
+  background: transparent;
+  color: var(--danger-ink);
+}
+.cal-table__toolbar .btn:active:not(:disabled) {
+  background: var(--surface-3);
+}
+.cal-table__toolbar .btn--danger-outline:active:not(:disabled) {
+  background: var(--danger-soft);
+}
+.cal-table__toolbar .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.cal-table__toolbar .btn--danger-outline:focus-visible {
+  outline-color: var(--danger);
+}
+.cal-table__toolbar .btn:disabled {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  opacity: 0.6;
+}
+.cal-table__body {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.cal-table__row {
+  display: grid;
+  /* 0.2.2（⑥）/ 0.2.3 B3：名称弹性、后两列固定窄宽；表头与数据行同一套 grid。
+     表头「CalDAV 权限」单行不换行不裁切（列宽按最长表头给足）。 */
+  grid-template-columns: minmax(160px, 1fr) 88px 148px;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.cal-table__row--head .cal-table__cell {
+  white-space: nowrap;
+}
+/* 0.2.4 §15.2：选中行 --accent-soft 常驻（直到选中另一行）；hover 只临时
+   --surface-3（选中行 hover 用 accent-soft 与 surface-3 的混色变深）；
+   键盘聚焦行用 --ring 外发光，不改底色。 */
+.cal-table__row[aria-selected='true'] {
+  background: var(--accent-soft);
+}
+.cal-table__row[aria-selected='true'] .cal-table__name {
+  font-weight: 650;
+}
+@media (hover: hover) {
+  .cal-table__row:not(.cal-table__row--head):not([aria-selected='true']):hover {
+    background: var(--surface-3);
+  }
+  .cal-table__row[aria-selected='true']:hover {
+    background: color-mix(in srgb, var(--accent-soft) 80%, var(--surface-3));
+  }
+}
+.cal-table__row:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+  outline: none;
+}
+.cal-table__cell {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cal-table__cell--dav {
+  justify-content: flex-end;
+}
+@media (hover: none) {
+  .cal-table__row {
+    min-height: 44px;
+  }
+}
+.cal-table__cell--dav .select {
+  width: 100%;
+  min-width: 0;
+}
+/* 0.2.3 B2：窄屏页签触控命中 >=44px（换行布局，不再横滚）。 */
+@media (max-width: 720px) {
+  /* §17.1：窄屏三页签等分（flex:1 1 0 + min-width:0），文字完整不裁、不横向滚动。 */
+  .settings__tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+  .settings__tabs button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: var(--sp-2);
+    text-align: center;
+    justify-content: center;
+  }
+}
+
+/* 0.2.3 B3：窄屏改两行卡片式（名称/显示一行，CalDAV 权限另起一行占满），
+   表头与数据行同一套 grid；触屏行高 ≥44px。 */
+@media (max-width: 720px) {
+  .cal-table__row {
+    grid-template-columns: minmax(0, 1fr) 72px;
+    row-gap: 6px;
+    padding: 8px 12px;
+    min-height: 44px;
+  }
+  .cal-table__cell--dav {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+  .cal-table__row--head {
+    display: none;
+  }
+}
+/* 0.2.3 B2：窄屏页签触控命中 >=44px。 */
+@media (max-width: 720px) {
+  .settings__tabs button {
+    min-height: 44px;
+  }
+}
+/* ---- 0.2.2（⑨）：日历颜色 9 色快捷 + 自定义取色器 ---- */
+.cal-color-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.cal-custom-color {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+/* 0.2.4（真机 P0-10）：取色器 input 只作原生取色器入口，视觉上是调色板末尾的
+   彩虹圆（.swatch-custom）；input 本身隐藏但仍可被测试/脚本触发。 */
+.cal-custom-color__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+}
+.cal-custom-color__value {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 0.2.3 §14：默认日历「清空」样式（描边危险按钮 + 实心确认） ---- */
+.btn--danger-outline {
+  color: var(--danger-ink);
+  border: 1px solid var(--danger);
+  background: transparent;
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn--danger-outline:hover {
+    background: var(--danger-soft);
+    color: var(--danger-ink);
+  }
+}
+.btn--danger-solid {
+  color: var(--text-inverse);
+  background: var(--danger);
+  border: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn--danger-solid:hover {
+    background: var(--danger-hover);
+  }
+}
+.cal-clear {
+  width: min(480px, calc(100vw - 32px));
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+}
+@media (max-width: 720px) {
+  .cal-table__toolbar .btn--danger-outline,
+  .cal-clear .btn--danger-solid {
+    min-height: 44px;
+  }
+  /* §14：行菜单里的「清空」项触屏命中区 >=44px。 */
+  .ctx-menu__item {
+    min-height: 44px;
+  }
+}
+
+/* ---- 0.2.13：安全设置（管理员）与我的安全（自助） ---- */
+.security-modal {
+  width: min(760px, calc(100vw - 32px));
+  max-width: 760px;
+}
+.security-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.security-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.security-status__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.security-status__label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.security-status__value {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+/* 0.2.14：安全设置页/自助页的警告条（监听失败、证书主机不匹配、2FA 未建专用密码）。 */
+.security-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-3);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.security-status > .security-callout {
+  grid-column: 1 / -1;
+}
+.security-callout--warn {
+  border-left-color: var(--warning);
+  color: var(--text-1);
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface-2));
+}
+.security-callout--danger {
+  border-left-color: var(--danger);
+  color: var(--danger-ink);
+  background: var(--danger-soft);
+}
+.security-callout--info {
+  border-left-color: var(--accent);
+}
+.security-callout--action {
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.security-callout__icon {
+  flex: none;
+  font-weight: 700;
+}
+.security-callout__text {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+.security-readonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.security-readonly__value {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 13px;
+}
+.security-account__warn:empty,
+.security-self-guide:empty {
+  display: none;
+}
+/* 0.2.14（P0-2）：HTTPS 监听失败时的全局横幅（登录页也要能看到）。 */
+.https-fallback-banner {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.https-fallback-banner__text {
+  flex: 1 1 20em;
+  min-width: 0;
+}
+.security-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.security-section__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text-2);
+}
+.security-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.security-row__label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.security-row__name {
+  font-size: 13px;
+}
+.security-row__hint {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.security-row__control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.security-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.security-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.security-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger-ink);
+}
+.security-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* 证书摘要 */
+.security-cert {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.security-cert__line {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.security-cert__warn {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+}
+/* PEM / 白名单文本域 */
+.security-pem {
+  width: 100%;
+  min-height: 88px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  resize: vertical;
+}
+.security-whitelist {
+  width: 100%;
+  min-height: 76px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+/* 0.2.37（S7）：登录活动里的「失败次数最多的来源」列表 */
+.security-activity__sources {
+  margin: 2px 0 0;
+  padding-left: 18px;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+/* TOTP 绑定 */
+.security-totp-setup {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.security-qr {
+  display: inline-flex;
+  padding: 8px;
+  border-radius: 8px;
+  background: #fff;
+}
+.security-qr svg {
+  display: block;
+  width: 168px;
+  height: 168px;
+}
+.security-totp-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+.security-totp-secret__label {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.security-totp-secret__value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+.security-totp-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* 一次性明文（恢复码 / 专用密码） */
+.security-secret {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.security-secret__title {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.security-secret__values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+.security-secret__value {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  user-select: all;
+}
+.security-secret__hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-3);
+}
+/* 账号列表 */
+.security-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.security-account {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.security-account__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.security-account__name {
+  font-size: 13px;
+  font-weight: 650;
+}
+.security-account__badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.security-account__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.security-account__subtitle {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.security-account__dav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.security-app-passwords {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.security-app-password {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.security-app-password__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+}
+.security-app-password__name {
+  font-weight: 600;
+}
+/* 锁定与审计 */
+.security-locks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.security-locks__title {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.security-lock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.security-audit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.security-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.security-audit__time {
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.security-audit__type {
+  font-size: 12px;
+  font-weight: 600;
+}
+.security-audit__who {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.security-audit__detail {
+  font-size: 11.5px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+/* 我的安全 */
+.security-self-status {
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.security-confirm-modal {
+  width: min(420px, calc(100vw - 32px));
+  max-width: 420px;
+}
+@media (max-width: 600px) {
+  .security-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .security-row__control {
+    justify-content: flex-start;
+  }
+  .security-qr svg {
+    width: 140px;
+    height: 140px;
+  }
+}
+
+/* ---- 设置：快捷键清单（0.2.17 B4.2） -------------------------------- */
+/* 两列网格：左列键帽右对齐、右列中文说明。`display: contents` 让每个 row 透明，
+   键帽与说明才能对齐成一列（否则逐行各自栅格，长短键帽会错位）。 */
+.shortcuts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+  margin: var(--sp-3) 0 0;
+}
+.shortcuts__row {
+  display: contents;
+}
+.shortcuts__keys {
+  margin: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.shortcuts__key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--fs-xs);
+  min-width: 28px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--text-2);
+  text-align: center;
+  white-space: nowrap;
+}
+.shortcuts__desc {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}

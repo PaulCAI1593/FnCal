@@ -1,0 +1,84 @@
+#!/bin/bash
+# upgrade_init：升级应用文件之前执行。
+#   - 0.2.7：先停止旧版本服务并等端口释放（覆盖升级时旧进程会一直占住监听端口，
+#     导致新版 start 报「端口被占用」；旧版这里完全没停）
+#   - 再把 var/ 打成 tar 备份（不含 backups 自身），备份失败则中止升级以保护数据
+set -u
+umask 027
+
+VAR_DIR="${TRIM_PKGVAR:-}"
+BACKUP_DIR="${VAR_DIR}/backups"
+BACKUP_KEEP=5
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+
+log_info() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+fail() {
+  log_info "升级前检查失败：$1"
+  exit 1
+}
+
+# 只在异常时调用：排障所需最小环境信息（不含密码/密钥/业务数据）。
+diag() {
+  log_info "---- 诊断信息（upgrade_init）----"
+  log_info "uid=$(id -u 2>/dev/null || echo '?') user=$(id -un 2>/dev/null || echo '?') groups=$(id -Gn 2>/dev/null || echo '?')"
+  log_info "TRIM_PKGVAR=${VAR_DIR:-<未设置>} TRIM_APPVER=${TRIM_APPVER:-<未设置>} TRIM_OLD_APPVER=${TRIM_OLD_APPVER:-<未设置>}"
+  for p in "$(dirname "$VAR_DIR" 2>/dev/null || echo '')" "$VAR_DIR"; do
+    [ -n "$p" ] || continue
+    log_info "path: $p"
+    log_info "$(ls -ld "$p" 2>&1 || true)"
+    log_info "$(findmnt -no FSTYPE,OPTIONS --target "$p" 2>/dev/null || mount 2>/dev/null | grep -m1 " $p " || echo 'mount: 未找到')"
+    log_info "$(df -h "$p" 2>/dev/null | tail -n 1 || echo 'df: 不可用')"
+  done
+  log_info "--------------------------------"
+}
+
+[ -n "$VAR_DIR" ] || fail "缺少 TRIM_PKGVAR 环境变量。"
+
+# 0.2.7：升级前先停旧版本服务（main stop 内部会 TERM→KILL 并等端口释放，最多 20 秒）。
+# 必需：覆盖升级时旧 server.mjs 仍监听入口端口，不停掉新版 start 必报端口占用。
+if [ -f "${SCRIPT_DIR}/main" ]; then
+  if bash "${SCRIPT_DIR}/main" stop >/dev/null 2>&1; then
+    log_info "升级前已停止旧版本服务（并等待端口释放，最多 20 秒）。"
+  else
+    log_info "警告：升级前停止旧版本服务返回非 0；继续升级，由 upgrade_callback 再兜底启动。"
+  fi
+else
+  log_info "警告：未找到 ${SCRIPT_DIR}/main，跳过升级前停止服务。"
+fi
+
+# 首次安装或数据目录尚未创建：无需备份，直接通过
+if [ ! -d "$VAR_DIR" ]; then
+  log_info "未发现应用数据目录，跳过升级备份。"
+  exit 0
+fi
+
+mkdir -p "$BACKUP_DIR" 2>/dev/null || { diag; fail "无法创建备份目录：${BACKUP_DIR}（数据根不可写或卷已满）。"; }
+chmod 700 "$BACKUP_DIR" 2>/dev/null || true
+
+OLD_VER="${TRIM_OLD_APPVER:-unknown}"
+NEW_VER="${TRIM_APPVER:-unknown}"
+STAMP="$(date '+%Y%m%d-%H%M%S' 2>/dev/null || echo unknown)"
+ARCHIVE="${BACKUP_DIR}/var-${OLD_VER}-to-${NEW_VER}-${STAMP}.tar.gz"
+
+if tar -czf "$ARCHIVE" -C "$VAR_DIR" --exclude=./backups . 2>/dev/null; then
+  chmod 600 "$ARCHIVE" 2>/dev/null || true
+  log_info "升级前已备份应用数据：${ARCHIVE}（${OLD_VER} → ${NEW_VER}）。"
+else
+  rm -f "$ARCHIVE"
+  diag
+  fail "tar 备份失败（磁盘空间不足或数据不可读）；已中止升级，现有数据保持不变。"
+fi
+
+# 只保留最近若干份备份，避免长期占满磁盘（幂等）
+ls -1t "$BACKUP_DIR"/var-*.tar.gz 2>/dev/null | tail -n +$((BACKUP_KEEP + 1)) | while IFS= read -r old; do
+  rm -f "$old" 2>/dev/null || true
+done
+
+exit 0

@@ -1,0 +1,10 @@
+# 构建上下文里不需要的东西（源码仓库本身也不该有这些）
+.git
+.gitignore
+**/node_modules
+**/dist
+code/app/var
+code/app/.var-*
+**/*.log
+**/*.pid
+**/.DS_Store

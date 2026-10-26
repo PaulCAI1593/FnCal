@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <title>FnCal</title>
+    <meta name="description" content="FnCal：本地优先的日程管理应用，自带 CalDAV 服务。月/周/日/日程视图、重复事件、搜索与 .ics 导入导出，数据只保存在本机。" />
+    <meta name="keywords" content="FnCal, 日程管理, 日历视图, 事件, 重复事件, 日程, 导入导出, CalDAV" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e0f13" media="(prefers-color-scheme: dark)" />
+
+    <!-- 0.2.4 ⑭：主题色派生变量（首屏 prepaint 与运行时共用；默认色不注入）。 -->
+    <script src="./accent-prepaint.js"></script>
+    <!-- 首屏前按上次同步的显式主题着色；main.js 加载后会再次校正。 -->
+    <script>
+      (function () {
+        try {
+          var blob = JSON.parse(localStorage.getItem('cal:snapshot') || 'null');
+          var raw = blob && blob.entries && blob.entries['cal:settings'];
+          var settings = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          var theme = settings && settings.theme;
+          if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+          if (settings && settings.accentColor && window.FncalAccent) {
+            window.FncalAccent.apply(settings.accentColor);
+          }
+        } catch (_e) {
+          /* 无快照或存储被禁用时沿用系统主题/默认 accent */
+        }
+      })();
+    </script>
+
+    <!-- 图标与 PWA -->
+    <link rel="icon" href="./favicon.ico" sizes="48x48" />
+    <link rel="icon" href="./favicon-32x32.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="./favicon-16x16.png" type="image/png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" sizes="180x180" />
+    <link rel="manifest" href="./site.webmanifest" />
+
+    <meta name="application-name" content="FnCal" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="FnCal" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FnCal" />
+    <meta property="og:title" content="FnCal" />
+    <meta property="og:description" content="FnCal：本地优先的日程管理应用，数据只保存在本机。" />
+    <meta property="og:locale" content="zh_CN" />
+  </head>
+  <body>
+    <div id="app" aria-busy="true"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

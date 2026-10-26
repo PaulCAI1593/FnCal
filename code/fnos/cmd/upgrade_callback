@@ -1,0 +1,179 @@
+#!/bin/bash
+# upgrade_callback：升级应用文件之后执行。幂等。
+#   - 0.2.7：结束前 main start 确保新版本已运行（已在运行则幂等返回 0；失败只告警不阻断）
+#   - 补齐目录与 0600 会话密钥（不覆盖已有密钥）
+#   - 把 var/config.json 迁移到当前 schema（缺键补默认值，非法值纠正）
+#   - 旧数据目录 var/data → var/calendars 的一次性迁移（占位逻辑）
+set -u
+umask 027
+
+VAR_DIR="${TRIM_PKGVAR:-}"
+CONFIG_FILE="${VAR_DIR}/config.json"
+SECRET_FILE="${VAR_DIR}/secret.key"
+ETC_DIR="${TRIM_PKGETC:-${VAR_DIR}/etc}"
+HOME_DIR="${TRIM_PKGHOME:-${VAR_DIR}/home}"
+RUN_USER="${TRIM_USERNAME:-${TRIM_RUN_USERNAME:-}}"
+RUN_GROUP="${TRIM_GROUPNAME:-${TRIM_RUN_GROUPNAME:-${RUN_USER}}}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+
+log_info() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+fail() {
+  log_info "升级后迁移失败：$1"
+  exit 1
+}
+
+# 只在异常时调用：排障所需最小环境信息（不含密码/密钥/业务数据）。
+diag() {
+  log_info "---- 诊断信息（upgrade_callback）----"
+  log_info "uid=$(id -u 2>/dev/null || echo '?') user=$(id -un 2>/dev/null || echo '?') groups=$(id -Gn 2>/dev/null || echo '?')"
+  log_info "TRIM_PKGVAR=${VAR_DIR:-<未设置>} TRIM_APPVER=${TRIM_APPVER:-<未设置>} TRIM_OLD_APPVER=${TRIM_OLD_APPVER:-<未设置>}"
+  for p in "$(dirname "$VAR_DIR" 2>/dev/null || echo '')" "$VAR_DIR"; do
+    [ -n "$p" ] || continue
+    log_info "path: $p"
+    log_info "$(ls -ld "$p" 2>&1 || true)"
+    log_info "$(findmnt -no FSTYPE,OPTIONS --target "$p" 2>/dev/null || mount 2>/dev/null | grep -m1 " $p " || echo 'mount: 未找到')"
+    log_info "$(df -h "$p" 2>/dev/null | tail -n 1 || echo 'df: 不可用')"
+  done
+  log_info "------------------------------------"
+}
+
+gen_secret() {
+  local target="$1" tmp="${1}.tmp.$$"
+  if [ -r /dev/urandom ]; then
+    ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$tmp" ) 2>/dev/null || return 1
+  elif command -v openssl >/dev/null 2>&1; then
+    ( umask 077; openssl rand -hex 32 >"$tmp" ) 2>/dev/null || return 1
+  else
+    return 1
+  fi
+  [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$target" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$target" 2>/dev/null || true
+}
+
+[ -n "$VAR_DIR" ] || fail "缺少 TRIM_PKGVAR 环境变量。"
+
+# 写阶段：系统此时应已建好数据根；先尝试补齐目录，失败才真失败。
+if ! mkdir -p "$VAR_DIR" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/backups" \
+              "$ETC_DIR" "$HOME_DIR" 2>/dev/null; then
+  diag
+  fail "无法创建应用数据目录：${VAR_DIR}（数据根不可写、安装卷未挂载或卷已满）。"
+fi
+[ -d "$VAR_DIR/calendars" ] || mkdir -p "$VAR_DIR/calendars" 2>/dev/null || true
+
+if [ ! -s "$SECRET_FILE" ]; then
+  gen_secret "$SECRET_FILE" || fail "会话密钥缺失且无法生成，请检查 /dev/urandom。"
+  log_info "会话密钥缺失，升级时已重新生成（既有会话将失效，用户需重新登录）。"
+fi
+chmod 600 "$SECRET_FILE" 2>/dev/null || true
+
+# 旧版数据目录迁移（仅在目标目录尚不存在时执行，保证幂等）
+if [ -d "${VAR_DIR}/data" ] && [ ! -d "${VAR_DIR}/calendars" ]; then
+  if mv "${VAR_DIR}/data" "${VAR_DIR}/calendars" 2>/dev/null; then
+    log_info "已迁移旧数据目录：var/data → var/calendars。"
+  else
+    log_info "警告：旧数据目录迁移失败，请人工检查 ${VAR_DIR}/data。"
+  fi
+fi
+
+# config.json schema 迁移：缺键补默认值，非法端口/日志级别纠正；失败不阻断升级
+if [ -f "$CONFIG_FILE" ]; then
+  if command -v node >/dev/null 2>&1; then
+    if node -e '
+const fs = require("fs");
+const file = process.argv[1];
+const defaults = { schemaVersion: 1, port: 5280, logLevel: "info", uidDomain: "caldav.local", initialAdminUsername: "caldav", importSampleData: false, keepDataOnUninstall: true };
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(file, "utf8")); } catch (err) { process.exit(2); }
+let changed = false;
+for (const key of Object.keys(defaults)) {
+  if (cfg[key] === undefined || cfg[key] === null || cfg[key] === "") { cfg[key] = defaults[key]; changed = true; }
+}
+const port = Number(cfg.port);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) { cfg.port = 5280; changed = true; }
+if (!["debug", "info", "warn", "error"].includes(cfg.logLevel)) { cfg.logLevel = "info"; changed = true; }
+if (typeof cfg.importSampleData !== "boolean") { cfg.importSampleData = String(cfg.importSampleData) === "true"; changed = true; }
+// 0.2.0：安装向导不再提供示例数据步骤；升级时统一关掉，避免旧配置把它打开。
+if (cfg.importSampleData !== false) { cfg.importSampleData = false; changed = true; }
+if (changed) { const tmp = file + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + "\n"); fs.renameSync(tmp, file); }
+' "$CONFIG_FILE" >/dev/null 2>&1; then
+      log_info "运行配置已迁移到当前 schema：${CONFIG_FILE}。"
+    else
+      log_info "警告：config.json 迁移失败，保留原文件（不阻断升级）；如启动异常请人工检查。"
+    fi
+  else
+    log_info "警告：未找到 node，跳过 config.json 迁移。"
+  fi
+else
+  log_info "未发现 config.json（全新安装形态），由首次安装流程创建。"
+fi
+
+chmod 750 "$VAR_DIR" "$ETC_DIR" "$HOME_DIR" 2>/dev/null || true
+chmod 700 "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/backups" 2>/dev/null || true
+if [ "$(id -u)" -eq 0 ] && [ -n "$RUN_USER" ]; then
+  chown "$RUN_USER:$RUN_GROUP" "$VAR_DIR" "$ETC_DIR" "$HOME_DIR" 2>/dev/null || true
+  chown "$RUN_USER:$RUN_GROUP" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/backups" "$VAR_DIR/calendars" 2>/dev/null || true
+  [ -f "$CONFIG_FILE" ] && chown "$RUN_USER:$RUN_GROUP" "$CONFIG_FILE" 2>/dev/null || true
+  [ -f "$SECRET_FILE" ] && chown "$RUN_USER:$RUN_GROUP" "$SECRET_FILE" 2>/dev/null || true
+fi
+
+# 0.2.8（发布阻断）：升级路径必须真正执行一次「数据迁移/对账」——老版本把对象存在
+# <var>/calendars/<user>/.data/kv.json，而 CalDAV 只读 objects/<uid>.ics；对账负责
+# 把老 KV 幂等补写成 .ics（已存在则跳过），并补齐两个默认日历。幂等，可重复执行。
+MIGRATION_LOG="${VAR_DIR}/logs/migration.log"
+resolve_node_bin() {
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  local apps_root candidate
+  apps_root="$(cd "${TRIM_APPDEST:-}/../.." 2>/dev/null && pwd)"
+  for candidate in \
+    "${apps_root:+${apps_root}/nodejs_v22/target/bin/node}" \
+    "${TRIM_APPDEST_VOL:+${TRIM_APPDEST_VOL}/@appcenter/nodejs_v22/target/bin/node}"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+if [ -f "${TRIM_APPDEST:-}/server/server.mjs" ]; then
+  if NODE_BIN="$(resolve_node_bin)"; then
+    : >>"$MIGRATION_LOG" 2>/dev/null || true
+    if "$NODE_BIN" "${TRIM_APPDEST}/server/server.mjs" --migrate >>"$MIGRATION_LOG" 2>&1; then
+      log_info "升级数据迁移/对账完成（补写条数/跳过条数见 ${MIGRATION_LOG}）。"
+    else
+      log_info "升级数据迁移/对账失败：旧数据保持不变（对账只做幂等补写）；详见 ${MIGRATION_LOG}。"
+      # 先以兼容模式把服务拉起来（用户至少还能用 Web），再返回非 0 让应用中心看到失败。
+      if bash "${SCRIPT_DIR}/main" start >/dev/null 2>&1; then
+        log_info "已以兼容模式启动服务；请修复后删除 <var>/migration.json 并重启以重试对账。"
+      fi
+      exit 1
+    fi
+  else
+    log_info "警告：未找到 Node 运行时，跳过升级数据迁移/对账（服务启动时会自动再对账一次）。"
+  fi
+fi
+
+# 0.2.7：升级后确保新版本已启动。fnOS 通常在升级完成后自行拉起服务，
+# 这里显式 start 一次是幂等的兜底（已在运行则直接返回 0）；失败只告警、不阻断升级。
+if [ -f "${SCRIPT_DIR}/main" ]; then
+  if bash "${SCRIPT_DIR}/main" start >/dev/null 2>&1; then
+    log_info "升级后已确保新版本服务在运行。"
+  else
+    log_info "警告：升级后自动启动失败，请在应用中心手动启动；若提示端口占用，详见 ${VAR_DIR}/logs/service.log。"
+  fi
+else
+  log_info "警告：未找到 ${SCRIPT_DIR}/main，跳过升级后启动。"
+fi
+
+log_info "升级后迁移完成（旧版本：${TRIM_OLD_APPVER:-unknown}，新版本：${TRIM_APPVER:-unknown}）。"
+exit 0

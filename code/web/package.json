@@ -1,0 +1,29 @@
+{
+  "name": "fncal-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "FnCal 日历前端（自建 REST + Cookie 会话，零云依赖）。源自 HeyPuter/everything 的 src/calendar（MIT）。",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "mock": "node dev-mock/server.mjs",
+    "test": "node scripts/test.mjs",
+    "test:watch": "node scripts/test.mjs watch",
+    "coverage": "node scripts/test.mjs --coverage"
+  },
+  "keywords": [
+    "calendar",
+    "fncal",
+    "caldav",
+    "vanilla-js"
+  ],
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.10",
+    "jsdom": "^29.1.1",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10"
+  }
+}

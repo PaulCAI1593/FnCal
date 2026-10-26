@@ -1,0 +1,250 @@
+#!/bin/bash
+# install_callback：应用文件安装完成之后执行。幂等。
+#   - 生成/保留 0600 的 var/secret.key（会话签名密钥，不打印、不打包）
+#   - 首次安装写入 var/config.json（端口、日志级别、管理员用户名）
+#     0.1.7/0.2.0：安装向导不再提供「导入示例数据」步骤，config.json 的 importSampleData
+#     固定写 false（字段保留只为兼容旧配置/旧包回退）。
+#   - 若安装环境提供 CALDAV_ADMIN_PASSWORD，落成一次性 0600 文件供首次启动读取；
+#     否则不写任何密码，由应用首次启动生成随机管理员密码并写入 0600 文件
+set -u
+umask 027
+
+APP_NAME="FnCal"
+VAR_DIR="${TRIM_PKGVAR:-}"
+ETC_DIR="${TRIM_PKGETC:-${VAR_DIR}/etc}"
+HOME_DIR="${TRIM_PKGHOME:-${VAR_DIR}/home}"
+CONFIG_FILE="${VAR_DIR}/config.json"
+SECRET_FILE="${VAR_DIR}/secret.key"
+ADMIN_PWD_INIT="${VAR_DIR}/admin-password.init"
+RUN_USER="${TRIM_USERNAME:-${TRIM_RUN_USERNAME:-}}"
+RUN_GROUP="${TRIM_GROUPNAME:-${TRIM_RUN_GROUPNAME:-${RUN_USER}}}"
+
+log_info() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+fail() {
+  log_info "安装失败：$1"
+  exit 1
+}
+
+# 只在异常时调用：打印排障所需的最小环境信息（不含密码/密钥/业务数据）。
+diag() {
+  log_info "---- 诊断信息（install_callback）----"
+  log_info "uid=$(id -u 2>/dev/null || echo '?') user=$(id -un 2>/dev/null || echo '?') groups=$(id -Gn 2>/dev/null || echo '?')"
+  log_info "TRIM_APPNAME=${TRIM_APPNAME:-<未设置>} TRIM_APPVER=${TRIM_APPVER:-<未设置>}"
+  log_info "TRIM_PKGVAR=${VAR_DIR:-<未设置>}"
+  log_info "TRIM_APPDEST=${TRIM_APPDEST:-<未设置>}"
+  log_info "TRIM_PKGETC=${TRIM_PKGETC:-<未设置>} TRIM_PKGHOME=${TRIM_PKGHOME:-<未设置>}"
+  for p in "$(dirname "$VAR_DIR" 2>/dev/null || echo '')" "$VAR_DIR"; do
+    [ -n "$p" ] || continue
+    log_info "path: $p"
+    log_info "$(ls -ld "$p" 2>&1 || true)"
+    log_info "$(findmnt -no FSTYPE,OPTIONS --target "$p" 2>/dev/null || mount 2>/dev/null | grep -m1 " $p " || echo 'mount: 未找到')"
+    log_info "$(df -h "$p" 2>/dev/null | tail -n 1 || echo 'df: 不可用')"
+  done
+  log_info "------------------------------------"
+}
+
+gen_secret() {
+  local target="$1" tmp="${1}.tmp.$$"
+  if [ -r /dev/urandom ]; then
+    ( umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$tmp" ) 2>/dev/null || return 1
+  elif command -v openssl >/dev/null 2>&1; then
+    ( umask 077; openssl rand -hex 32 >"$tmp" ) 2>/dev/null || return 1
+  else
+    return 1
+  fi
+  [ -s "$tmp" ] || { rm -f "$tmp"; return 1; }
+  mv "$tmp" "$target" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$target" 2>/dev/null || true
+  return 0
+}
+
+# 端口占用探测（bash /dev/tcp；失败当作「未占用」，不阻断安装）
+port_in_use() {
+  ( exec 3<>"/dev/tcp/127.0.0.1/${1}" ) 2>/dev/null
+}
+
+[ -n "$VAR_DIR" ] || fail "缺少 TRIM_PKGVAR 环境变量。"
+
+# 写阶段：系统此时应已创建数据根；先尝试补齐目录，失败才真失败。
+if ! mkdir -p "$VAR_DIR" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/calendars" "$VAR_DIR/backups" \
+              "$ETC_DIR" "$HOME_DIR" 2>/dev/null; then
+  diag
+  fail "无法创建应用数据目录：${VAR_DIR}。可能原因：数据根不可写（目录属主/权限不对）、安装卷未挂载、或卷已满；请把上面的诊断信息完整回传。"
+fi
+
+# 0.2.7：清理上次运行残留的 pid 文件（重装/覆盖安装后目录里可能还留着旧 pid，
+# 会让 status/stop 误判）。真正的残留进程由 cmd/main 按「自家进程」标记回收。
+rm -f "$VAR_DIR/run/service.pid" "$VAR_DIR/caldav.pid" 2>/dev/null || true
+
+# 1) 会话签名密钥：已存在则不覆盖（升级/重装必须保留现有会话密钥语义）
+if [ ! -s "$SECRET_FILE" ]; then
+  gen_secret "$SECRET_FILE" || fail "生成 secret.key 失败（无 /dev/urandom 且无 openssl）。"
+  log_info "已生成会话签名密钥：${SECRET_FILE}（0600）。"
+else
+  chmod 600 "$SECRET_FILE" 2>/dev/null || true
+fi
+
+# 2) 安装向导字段（fnOS 以同名字段提供环境变量）
+ADMIN_USER="${wizard_admin_username:-admin}"
+[ -n "$ADMIN_USER" ] || ADMIN_USER="admin"
+case "$ADMIN_USER" in
+  *[!a-z0-9._-]*) fail "管理员用户名只能包含小写字母、数字、点、下划线、连字符：${ADMIN_USER}" ;;
+esac
+if [ "${#ADMIN_USER}" -lt 2 ] || [ "${#ADMIN_USER}" -gt 32 ]; then
+  fail "管理员用户名长度应为 2-32：${ADMIN_USER}"
+fi
+
+# 0.1.7/0.2.0：向导已删除「示例数据」档；不再读取该向导字段。
+IMPORT_SAMPLE="false"
+
+LOG_LEVEL="${wizard_log_level:-info}"
+case "$LOG_LEVEL" in
+  debug|info|warn|error) : ;;
+  *) LOG_LEVEL="info" ;;
+esac
+
+# 端口来源：安装向导 wizard_port（全新安装）→ TRIM_SERVICE_PORT → 5280。
+# 0.1.9 关键约束：入口模板 `app/ui/config` 的 port=${wizard_port} 与
+# config.json:port 必须来自同一个值，避免「入口端口」与「实际监听端口」不一致。
+# 非法值只回退 5280 并记日志，不阻断安装；端口数字写日志（不含敏感信息）。
+PORT_RAW="${wizard_port:-}"
+if [ -n "$PORT_RAW" ]; then
+  PORT_SOURCE="wizard_port"
+else
+  PORT_RAW="${TRIM_SERVICE_PORT:-5280}"
+  PORT_SOURCE="TRIM_SERVICE_PORT/默认（未收到 wizard_port）"
+fi
+PORT="$PORT_RAW"
+case "$PORT" in
+  ''|*[!0-9]*) PORT="" ;;
+esac
+if [ -z "$PORT" ] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
+  log_info "警告：${PORT_SOURCE}=${PORT_RAW:-<空>} 非法，端口必须是 1024–65535 之间的数字（例如 5290）；回退 5280（安装继续，不因此失败）。"
+  PORT=5280
+else
+  PORT=$((10#$PORT))
+fi
+log_info "服务端口：${PORT}（来源：${PORT_SOURCE}）。入口模板 port=\${wizard_port} 将展开为该值。"
+if [ -z "${wizard_port:-}" ]; then
+  log_info "注意：本次未收到 wizard_port（常见于覆盖升级，向导不会重跑）→ 入口模板可能展开为空，桌面卡片可能打不开；如需卡片可用，请卸载时保留数据后重装并在向导里填写端口。"
+fi
+
+# 0.2.13：HTTPS 端口（仅在应用内开启 HTTPS 后才监听）。同样只认 1024–65535 的
+# 纯数字，非法回退 5243；与 HTTP 端口相同时中止安装（提示中文，不猜用户意图）。
+HTTPS_PORT_RAW="${wizard_https_port:-5243}"
+HTTPS_PORT="$HTTPS_PORT_RAW"
+case "$HTTPS_PORT" in
+  ''|*[!0-9]*) HTTPS_PORT="" ;;
+esac
+if [ -z "$HTTPS_PORT" ] || [ "$HTTPS_PORT" -lt 1024 ] || [ "$HTTPS_PORT" -gt 65535 ]; then
+  log_info "警告：wizard_https_port=${HTTPS_PORT_RAW:-<空>} 非法，HTTPS 端口必须是 1024–65535 之间的数字（例如 5243）；回退 5243。"
+  HTTPS_PORT=5243
+else
+  HTTPS_PORT=$((10#$HTTPS_PORT))
+fi
+if [ "$HTTPS_PORT" -eq "$PORT" ]; then
+  fail "HTTPS 端口不能与 HTTP 端口相同（都是 ${PORT}），请返回上一步把其中一个改成别的端口。"
+fi
+if port_in_use "$HTTPS_PORT"; then
+  log_info "提示：HTTPS 端口 ${HTTPS_PORT} 当前已被占用（不影响安装，只有开启 HTTPS 时才需要该端口空闲）。"
+fi
+log_info "HTTPS 端口：${HTTPS_PORT}（仅开启 HTTPS 后监听）。"
+
+# 安装阶段端口被占用只警告：真正的启动检查在 cmd/main，报中文指引。
+if port_in_use "$PORT"; then
+  log_info "警告：端口 ${PORT} 当前已被占用；安装继续。若安装后服务无法启动，请先停掉占用它的应用/进程。"
+fi
+
+# 3) var/config.json：只在不存在时创建，保留升级/重装前的用户配置
+if [ ! -f "$CONFIG_FILE" ]; then
+  TMP_CONFIG="${CONFIG_FILE}.tmp.$$"
+  cat >"$TMP_CONFIG" <<EOF
+{
+  "schemaVersion": 1,
+  "port": ${PORT},
+  "httpsPort": ${HTTPS_PORT},
+  "logLevel": "${LOG_LEVEL}",
+  "uidDomain": "caldav.local",
+  "initialAdminUsername": "${ADMIN_USER}",
+  "importSampleData": ${IMPORT_SAMPLE},
+  "keepDataOnUninstall": true
+}
+EOF
+  chmod 640 "$TMP_CONFIG" 2>/dev/null || true
+  mv "$TMP_CONFIG" "$CONFIG_FILE" || { rm -f "$TMP_CONFIG"; fail "写入 config.json 失败。"; }
+  if command -v node >/dev/null 2>&1; then
+    node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$CONFIG_FILE" >/dev/null 2>&1 \
+      || fail "生成的 config.json 不是合法 JSON。"
+  fi
+  log_info "已写入运行配置：${CONFIG_FILE}（HTTP 端口 ${PORT}，HTTPS 端口 ${HTTPS_PORT}，日志级别 ${LOG_LEVEL}，管理员 ${ADMIN_USER}）。"
+else
+  log_info "已存在运行配置，保留不覆盖：${CONFIG_FILE}。"
+fi
+
+# 4) 初始管理员密码（0.1.6）：
+#    - 安装向导填写的密码（wizard_admin_password / _confirm）优先级最高；
+#    - 其次兼容旧/CLI 的 CALDAV_ADMIN_PASSWORD；
+#    - 两者都没有 → 保持旧行为：应用首次启动生成随机密码 + 首登强制改密。
+#    任何分支都绝不打印密码、绝不写日志；本脚本也绝不启用 set -x。
+WIZARD_PWD="${wizard_admin_password:-}"
+WIZARD_PWD_CONFIRM="${wizard_admin_password_confirm:-}"
+ADMIN_PWD_INPUT=""
+PASSWORD_SOURCE=""
+
+if [ -n "$WIZARD_PWD" ] || [ -n "$WIZARD_PWD_CONFIRM" ]; then
+  # 两次输入必须都非空且一致；不一致/过短都中止安装，并给中文原因（不含密码）。
+  if [ -z "$WIZARD_PWD" ] || [ -z "$WIZARD_PWD_CONFIRM" ]; then
+    fail "两次输入的管理员密码不一致（其中一个为空），请返回上一步重新填写。"
+  fi
+  if [ "$WIZARD_PWD" != "$WIZARD_PWD_CONFIRM" ]; then
+    fail "两次输入的管理员密码不一致，请返回上一步重新填写。"
+  fi
+  if [ "${#WIZARD_PWD}" -lt 8 ]; then
+    fail "管理员密码至少 8 位，请返回上一步重新填写。"
+  fi
+  ADMIN_PWD_INPUT="$WIZARD_PWD"
+  PASSWORD_SOURCE="wizard"
+elif [ -n "${CALDAV_ADMIN_PASSWORD:-}" ]; then
+  ADMIN_PWD_INPUT="${CALDAV_ADMIN_PASSWORD}"
+  PASSWORD_SOURCE="env"
+else
+  rm -f "$ADMIN_PWD_INIT"
+  log_info "未提供安装时设置的管理员密码：应用首次启动时生成随机密码，写入 ${VAR_DIR}/admin-initial-password.txt（权限 0600），日志同时提示位置；首次登录会要求修改密码。"
+fi
+
+if [ -n "$ADMIN_PWD_INPUT" ]; then
+  TMP_PWD="${ADMIN_PWD_INIT}.tmp.$$"
+  ( umask 077; printf '%s' "$ADMIN_PWD_INPUT" >"$TMP_PWD" ) || fail "写入一次性初始密码文件失败。"
+  mv "$TMP_PWD" "$ADMIN_PWD_INIT" || { rm -f "$TMP_PWD"; fail "写入一次性初始密码文件失败。"; }
+  chmod 600 "$ADMIN_PWD_INIT" 2>/dev/null || true
+  if [ -n "$RUN_USER" ]; then
+    chown "$RUN_USER:$RUN_GROUP" "$ADMIN_PWD_INIT" 2>/dev/null || true
+  fi
+  if [ "$PASSWORD_SOURCE" = "wizard" ]; then
+    log_info "已接收安装时设置的管理员密码（0600）：首次启动由 cmd/main 透传给应用，初始化完成后删除；密码不会写入日志。"
+  else
+    log_info "已接收安装环境提供的一次性初始管理员密码（0600）：首次启动由 cmd/main 透传给应用，初始化完成后删除。"
+  fi
+fi
+unset WIZARD_PWD WIZARD_PWD_CONFIRM ADMIN_PWD_INPUT TMP_PWD 2>/dev/null || true
+
+# 5) 目录与文件属主/权限收敛
+chmod 750 "$VAR_DIR" "$ETC_DIR" "$HOME_DIR" 2>/dev/null || true
+chmod 700 "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/backups" 2>/dev/null || true
+chmod 640 "$CONFIG_FILE" 2>/dev/null || true
+if [ "$(id -u)" -eq 0 ] && [ -n "$RUN_USER" ]; then
+  chown "$RUN_USER:$RUN_GROUP" "$VAR_DIR" "$ETC_DIR" "$HOME_DIR" 2>/dev/null || true
+  chown "$RUN_USER:$RUN_GROUP" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/calendars" "$VAR_DIR/backups" 2>/dev/null || true
+  chown "$RUN_USER:$RUN_GROUP" "$CONFIG_FILE" "$SECRET_FILE" 2>/dev/null || true
+fi
+
+log_info "${APP_NAME} 安装完成：数据目录 ${VAR_DIR}，运行用户 ${RUN_USER:-当前用户}。"
+exit 0
+

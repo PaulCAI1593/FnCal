@@ -1,0 +1,223 @@
+#!/bin/bash
+# config_callback：配置校验通过之后执行。
+#   - 校验 wizard_log_level / wizard_port（非法 → 非 0 退出，旧配置不变）
+#   - wizard_port 未变 → 不重启，提示「端口未变化」
+#   - wizard_port 变化 → 先测占用（被占用 → 非 0、旧配置不变）→ 写 config.json
+#     → 重启服务；重启失败则回滚旧配置并报错
+#   - 仅日志级别变化时维持原行为（写 config.json + 服务在跑才重启）
+# 0.1.9：入口模板 port=${wizard_port} 与 config.json:port 绑定同一个值；这里改动
+# 端口后，卡片仍按安装时端口（fnOS 设计如此），日志会给出提示。
+set -u
+umask 027
+
+VAR_DIR="${TRIM_PKGVAR:-}"
+CONFIG_FILE="${VAR_DIR}/config.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+LOG_LEVEL="${wizard_log_level:-}"
+PORT_RAW="${wizard_port:-}"
+HTTPS_PORT_RAW="${wizard_https_port:-}"
+BACKUP=""
+
+log_info() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+fail() {
+  log_info "配置应用失败：$1"
+  exit 1
+}
+
+# 只在异常时调用：排障所需最小环境信息（不含密码/密钥/业务数据）。
+diag() {
+  log_info "---- 诊断信息（config_callback）----"
+  log_info "uid=$(id -u 2>/dev/null || echo '?') user=$(id -un 2>/dev/null || echo '?') groups=$(id -Gn 2>/dev/null || echo '?')"
+  log_info "TRIM_PKGVAR=${VAR_DIR:-<未设置>} TRIM_PKGETC=${TRIM_PKGETC:-<未设置>}"
+  for p in "$(dirname "$VAR_DIR" 2>/dev/null || echo '')" "$VAR_DIR"; do
+    [ -n "$p" ] || continue
+    log_info "path: $p"
+    log_info "$(ls -ld "$p" 2>&1 || true)"
+    log_info "$(findmnt -no FSTYPE,OPTIONS --target "$p" 2>/dev/null || mount 2>/dev/null | grep -m1 " $p " || echo 'mount: 未找到')"
+  done
+  log_info "------------------------------------"
+}
+
+# 失败/退出时清理备份；回滚动作在 fail 前显式执行。
+cleanup() {
+  [ -n "$BACKUP" ] && rm -f "$BACKUP" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+port_in_use() {
+  ( exec 3<>"/dev/tcp/127.0.0.1/${1}" ) 2>/dev/null
+}
+
+current_port() {
+  sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n 1
+}
+
+current_level() {
+  sed -n 's/.*"logLevel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n 1
+}
+
+current_https_port() {
+  sed -n 's/.*"httpsPort"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n 1
+}
+
+restore_backup() {
+  [ -n "$BACKUP" ] && [ -f "$BACKUP" ] && cp -f "$BACKUP" "$CONFIG_FILE" 2>/dev/null || true
+}
+
+[ -n "$VAR_DIR" ] || fail "缺少 TRIM_PKGVAR 环境变量。"
+
+# 写阶段：先尝试确保数据目录存在，创建失败才失败（正常配置变更时目录已由系统建好）。
+if ! mkdir -p "$VAR_DIR" 2>/dev/null; then
+  diag
+  fail "无法创建/访问数据目录：${VAR_DIR}（数据根不可写、安装卷未挂载或卷已满）。"
+fi
+
+if [ -z "$LOG_LEVEL" ] && [ -z "$PORT_RAW" ] && [ -z "$HTTPS_PORT_RAW" ]; then
+  log_info "未收到配置项变更，无需应用。"
+  exit 0
+fi
+
+# ---- 1) 入参校验（两处校验之二；非法一律旧配置不变） ----
+if [ -n "$LOG_LEVEL" ]; then
+  case "$LOG_LEVEL" in
+    debug|info|warn|error) : ;;
+    *) fail "日志级别非法：${LOG_LEVEL}（旧配置未改动）" ;;
+  esac
+fi
+
+NEW_PORT=""
+if [ -n "$PORT_RAW" ]; then
+  case "$PORT_RAW" in
+    ''|*[!0-9]*) fail "端口必须是 1024–65535 之间的数字（例如 5290），收到：${PORT_RAW}（旧配置未改动）" ;;
+  esac
+  if [ "$PORT_RAW" -lt 1024 ] || [ "$PORT_RAW" -gt 65535 ]; then
+    fail "端口必须是 1024–65535 之间的数字（例如 5290），收到：${PORT_RAW}（旧配置未改动）"
+  fi
+  NEW_PORT=$((10#$PORT_RAW))
+fi
+
+# 0.2.13：HTTPS 端口（留空=沿用当前值）。规则同上，且不得与（新的）HTTP 端口相同。
+NEW_HTTPS_PORT=""
+if [ -n "$HTTPS_PORT_RAW" ]; then
+  case "$HTTPS_PORT_RAW" in
+    ''|*[!0-9]*) fail "HTTPS 端口必须是 1024–65535 之间的数字（例如 5243），收到：${HTTPS_PORT_RAW}（旧配置未改动）" ;;
+  esac
+  if [ "$HTTPS_PORT_RAW" -lt 1024 ] || [ "$HTTPS_PORT_RAW" -gt 65535 ]; then
+    fail "HTTPS 端口必须是 1024–65535 之间的数字（例如 5243），收到：${HTTPS_PORT_RAW}（旧配置未改动）"
+  fi
+  NEW_HTTPS_PORT=$((10#$HTTPS_PORT_RAW))
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  diag
+  fail "运行配置不存在：${CONFIG_FILE}（应用目录可能不完整）。"
+fi
+
+OLD_PORT="$(current_port)"
+[ -n "$OLD_PORT" ] || { diag; fail "运行配置缺少 port：${CONFIG_FILE}（请重新安装或手动补全）。"; }
+OLD_LEVEL="$(current_level)"
+[ -n "$OLD_LEVEL" ] || OLD_LEVEL="info"
+
+PORT_CHANGED=0
+LEVEL_CHANGED=0
+HTTPS_CHANGED=0
+OLD_HTTPS_PORT="$(current_https_port)"
+[ -n "$OLD_HTTPS_PORT" ] || OLD_HTTPS_PORT=5243
+if [ -n "$NEW_PORT" ] && [ "$NEW_PORT" -ne "$OLD_PORT" ]; then PORT_CHANGED=1; fi
+if [ -n "$LOG_LEVEL" ] && [ "$LOG_LEVEL" != "$OLD_LEVEL" ]; then LEVEL_CHANGED=1; fi
+if [ -n "$NEW_HTTPS_PORT" ] && [ "$NEW_HTTPS_PORT" -ne "$OLD_HTTPS_PORT" ]; then HTTPS_CHANGED=1; fi
+
+# 交叉校验：最终生效的两个端口不能相同（HTTP 端口可能本次也改了）。
+FINAL_HTTP_PORT="$OLD_PORT"
+[ -n "$NEW_PORT" ] && FINAL_HTTP_PORT="$NEW_PORT"
+FINAL_HTTPS_PORT="$OLD_HTTPS_PORT"
+[ -n "$NEW_HTTPS_PORT" ] && FINAL_HTTPS_PORT="$NEW_HTTPS_PORT"
+if [ "$FINAL_HTTP_PORT" -eq "$FINAL_HTTPS_PORT" ]; then
+  fail "HTTPS 端口不能与 HTTP 端口相同（都是 ${FINAL_HTTP_PORT}），请把其中一个改成别的端口（旧配置未改动）。"
+fi
+
+# 端口没变：明确提示，且不因端口触发重启。
+if [ -n "$NEW_PORT" ] && [ "$PORT_CHANGED" -eq 0 ]; then
+  log_info "HTTP 端口未变化：${NEW_PORT}（不重启服务）。"
+fi
+if [ -n "$NEW_HTTPS_PORT" ] && [ "$HTTPS_CHANGED" -eq 0 ]; then
+  log_info "HTTPS 端口未变化：${NEW_HTTPS_PORT}（不重启服务）。"
+fi
+
+if [ "$PORT_CHANGED" -eq 0 ] && [ "$LEVEL_CHANGED" -eq 0 ] && [ "$HTTPS_CHANGED" -eq 0 ]; then
+  log_info "配置无变化，无需重启。"
+  exit 0
+fi
+
+# ---- 2) 端口变化：先测占用（被占用则旧配置不变） ----
+if [ "$PORT_CHANGED" -eq 1 ] && port_in_use "$NEW_PORT"; then
+  fail "新端口 ${NEW_PORT} 已被占用：请换一个 1024–65535 的空闲端口后重试（旧配置未改动）。"
+fi
+
+# ---- 3) 备份后写入（任何写入/校验/重启失败都恢复） ----
+BACKUP="${CONFIG_FILE}.bak.$$"
+cp -f "$CONFIG_FILE" "$BACKUP" 2>/dev/null || fail "无法备份运行配置：${CONFIG_FILE}（旧配置未改动）"
+
+if [ "$LEVEL_CHANGED" -eq 1 ]; then
+  sed -i "s/\"logLevel\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"logLevel\": \"${LOG_LEVEL}\"/" "$CONFIG_FILE" 2>/dev/null \
+    || { restore_backup; fail "写入 logLevel 失败：${CONFIG_FILE}（已回滚旧配置）。"; }
+fi
+
+if [ "$PORT_CHANGED" -eq 1 ]; then
+  sed -i "s/\"port\"[[:space:]]*:[[:space:]]*[0-9][0-9]*/\"port\": ${NEW_PORT}/" "$CONFIG_FILE" 2>/dev/null \
+    || { restore_backup; fail "写入 port 失败：${CONFIG_FILE}（已回滚旧配置）。"; }
+  NOW_PORT="$(current_port)"
+  if [ "$NOW_PORT" != "$NEW_PORT" ]; then
+    restore_backup
+    fail "port 写入校验失败（期望 ${NEW_PORT}，实际 ${NOW_PORT:-空}）；已回滚旧配置。"
+  fi
+fi
+
+if [ "$HTTPS_CHANGED" -eq 1 ]; then
+  # 不存在 httpsPort 字段时补一条（旧配置升级上来的情况）。
+  if grep -q '"httpsPort"' "$CONFIG_FILE" 2>/dev/null; then
+    sed -i "s/\"httpsPort\"[[:space:]]*:[[:space:]]*[0-9][0-9]*/\"httpsPort\": ${NEW_HTTPS_PORT}/" "$CONFIG_FILE" 2>/dev/null \
+      || { restore_backup; fail "写入 httpsPort 失败：${CONFIG_FILE}（已回滚旧配置）。"; }
+  else
+    sed -i "s/\"port\"[[:space:]]*:.*/&\n  \"httpsPort\": ${NEW_HTTPS_PORT},/" "$CONFIG_FILE" 2>/dev/null \
+      || { restore_backup; fail "写入 httpsPort 失败：${CONFIG_FILE}（已回滚旧配置）。"; }
+  fi
+  NOW_HTTPS_PORT="$(current_https_port)"
+  if [ "$NOW_HTTPS_PORT" != "$NEW_HTTPS_PORT" ]; then
+    restore_backup
+    fail "httpsPort 写入校验失败（期望 ${NEW_HTTPS_PORT}，实际 ${NOW_HTTPS_PORT:-空}）；已回滚旧配置。"
+  fi
+fi
+
+if command -v node >/dev/null 2>&1; then
+  node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))' "$CONFIG_FILE" >/dev/null 2>&1 \
+    || { restore_backup; fail "更新后的 config.json 不是合法 JSON；已回滚旧配置。"; }
+fi
+
+# ---- 4) 生效：服务在跑才重启；重启失败回滚 ----
+if [ -f "${SCRIPT_DIR}/main" ] && bash "${SCRIPT_DIR}/main" status >/dev/null 2>&1; then
+  log_info "服务正在运行，重启以应用新配置。"
+  bash "${SCRIPT_DIR}/main" stop >/dev/null 2>&1 || true
+  if ! bash "${SCRIPT_DIR}/main" start >/dev/null 2>&1; then
+    restore_backup
+    fail "服务重启失败；已回滚旧配置（端口保持 ${OLD_PORT}）。请查看 logs/service.log 后重试。"
+  fi
+  log_info "服务已按新配置重启。"
+else
+  log_info "服务未运行，配置将在下次启动时生效。"
+fi
+
+if [ "$PORT_CHANGED" -eq 1 ]; then
+  log_info "端口已从 ${OLD_PORT} 改为 ${NEW_PORT}；请让已配置的 CalDAV 客户端改用新端口。注意：飞牛桌面图标的端口不会自动更新（仍为安装时 ${OLD_PORT}）；如需卡片按新端口打开，请卸载时保留数据、重装并在安装向导里填 ${NEW_PORT}。"
+else
+  log_info "已将日志级别设为 ${LOG_LEVEL}。"
+fi
+
+exit 0

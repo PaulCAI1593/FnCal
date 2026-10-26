@@ -1,0 +1,45 @@
+#!/bin/bash
+# uninstall_init：卸载应用文件之前执行。
+#   - 先停掉常驻服务（尽力而为，应用中心通常已先停止）
+#   - 记录向导里的「保留/删除数据」选择，供 uninstall_callback 使用（env 缺失时兜底）
+# 本脚本不删除任何用户数据。
+set -u
+umask 027
+
+VAR_DIR="${TRIM_PKGVAR:-}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+CHOICE_FILE="${VAR_DIR}/.uninstall-keep-data"
+
+log_info() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+[ -n "$VAR_DIR" ] || {
+  log_info "卸载前检查失败：缺少 TRIM_PKGVAR 环境变量。"
+  exit 1
+}
+
+# 停止服务（幂等；服务未运行也返回成功）
+if [ -f "${SCRIPT_DIR}/main" ]; then
+  bash "${SCRIPT_DIR}/main" stop >/dev/null 2>&1 || true
+fi
+
+# 记录卸载选择：keep（默认，保留数据）/ delete（删除数据）
+KEEP_DATA="${wizard_keep_data:-keep}"
+case "$KEEP_DATA" in
+  delete|DELETE|Delete|0|false) KEEP_DATA="delete" ;;
+  *) KEEP_DATA="keep" ;;
+esac
+
+if [ -d "$VAR_DIR" ]; then
+  ( umask 077; printf '%s' "$KEEP_DATA" >"$CHOICE_FILE" ) 2>/dev/null || true
+else
+  log_info "数据目录不存在（${VAR_DIR}），跳过卸载选择记录；卸载流程继续。"
+fi
+
+log_info "卸载前准备完成；向导选择：${KEEP_DATA}（keep=保留数据，delete=删除数据）。"
+exit 0

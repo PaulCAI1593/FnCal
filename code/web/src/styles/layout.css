@@ -1,0 +1,2963 @@
+/* =========================================================================
+   App shell: header, sidebar, mini-calendar, popovers, modal, toasts.
+   ========================================================================= */
+
+.app {
+  display: grid;
+  grid-template-rows: var(--header-h) 1fr;
+  /* minmax(0, …) lets the main column shrink below its content's min-size so a
+     wide header/grid never forces horizontal overflow of the viewport. */
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  grid-template-areas:
+    'header header'
+    'sidebar main';
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ---- Header ----------------------------------------------------------- */
+.header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0 max(var(--sp-4), env(safe-area-inset-right, 0px)) 0
+    max(var(--sp-4), env(safe-area-inset-left, 0px));
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  z-index: 30;
+}
+.header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: calc(var(--sidebar-w) - var(--sp-4) - var(--sp-3));
+}
+.brand-mark {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+.brand-name {
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.header__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  /* 0.2.11（C10）：导航区吃掉标题与搜索槽位之间的空间，标题过长就在**槽位左界**
+     处省略——槽位宽度固定，所以展开/收起搜索都不会让标题位移。 */
+  flex: 1 1 auto;
+  min-width: 0; /* allow the title to ellipsize instead of forcing overflow */
+}
+/* 0.2.17（B2.3）：窄屏「今天」图标按钮的图标默认不出现——宽屏保持原来的文字按钮，
+   两档形态在 views.css 的 ≤520 块里切换。 */
+.header__today-icon {
+  display: none;
+}
+.header__title {
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Current-period label ("July 2026") is nav chrome, not copyable text. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.header__title .muted {
+  color: var(--text-3);
+  font-weight: 500;
+}
+.nav-arrows {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.header__spacer {
+  /* 0.2.11（C10）：搜索槽位是固定宽度的独立项，剩余空间已经由 `.header__nav`
+     吃掉（标题在槽位左界省略），这里不再抢空间。 */
+  flex: 0 1 0;
+  min-width: 0;
+}
+.header__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  /* 0.2.20（E21）：右侧工具区**固定**——搜索展开时不允许它被压缩（用户：「搜索栏
+     展开的时候，右边位置固定，不要压缩左边这些按钮菜单」）。默认 flex 是 0 1 auto，
+     空间不够时这一组会自己收缩，把「任务」两个汉字压成竖排两行。让步顺序：先让标题
+     （.header__nav 已 flex:1 1 auto + 省略号）→ 再让搜索槽位（.header__search 可缩到
+     220–400）→ 最后才走断点；工具区永不收缩。 */
+  flex: 0 0 auto;
+}
+.header__tools > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Avatar / user button */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0; /* the profile picture must fill the whole circle */
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 650;
+  font-size: var(--fs-md);
+  border: 1px solid transparent;
+  transition: box-shadow var(--dur-fast) var(--ease);
+  text-transform: uppercase;
+  overflow: hidden; /* clip the profile picture to the circle */
+  flex-shrink: 0; /* a fixed circle even when header tools get crowded */
+}
+/* Hover styles are gated to devices that can hover — see views.css. */
+@media (hover: hover) {
+  .avatar:hover {
+    box-shadow: 0 0 0 3px var(--ring);
+  }
+}
+/* Profile picture (replaces the letter when the account has one). */
+.avatar__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  /* Keep the button itself the pointer target in browsers. The popover's
+     outside-pointerdown check in app.js additionally tolerates the <img> as
+     target — both layers are deliberate; neither alone covers every caller. */
+  pointer-events: none;
+}
+
+/* ---- Sidebar ---------------------------------------------------------- */
+.sidebar {
+  position: relative;
+  grid-area: sidebar;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  /* 0.2.11（C6）：底部不留内边距——日历列表是侧栏最后一个块，列表滚动区要一直贴到
+     侧栏底边；最后一行靠自身行内边距留白，滚到底时整行完整可见（底部渐隐见
+     `.sidebar::after`，滚到底会被 app.js 收起，不会吃掉最后一项）。 */
+  padding: var(--sp-4) var(--sp-4) 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  /* 0.2.8（用户）：侧栏本身不再是滚动容器 —— 顶部「新建 + 迷你月历」固定，
+     只有下面的日历列表滚动。overflow:hidden 防止高窗口时整列被撑开。 */
+  overflow: hidden;
+  min-height: 0;
+  z-index: 20;
+}
+/* 0.2.9（用户 4）：底部渐变遮罩改成**覆盖层**（不占位、不用空白撑高度）；
+   仅当列表还能继续滚（app.js 加 .is-scrollable）时淡入。 */
+.sidebar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24px;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--surface), transparent);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.sidebar.is-scrollable::after {
+  opacity: 1;
+}
+/* A flex column must not squeeze what it holds: every child defaults to
+   flex-shrink:1 with min-height:auto. The calendar list below is the only child
+   allowed to grow/shrink and scroll; the Create button and the mini month stay
+   at their natural height (0.2.8 用户：滚轮只滚列表，顶部块不动）。 */
+.sidebar > * {
+  flex: 0 0 auto;
+}
+/* 0.2.8（用户）：日历区独立滚动，滚动条按既有规范隐藏但保留滚轮/触摸/键盘。
+   0.2.9（用户 18）：**标题行「日历 + ＋」也固定**——整个 section 不再滚动，改为
+   「不滚动的列容器 + 内层 `.side-calendars__list` 滚动」；滚轮只滚列表。
+   `overscroll-behavior: contain` 防止滚到底后继续把滚动传给页面。 */
+.sidebar > .side-calendars {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sidebar > .side-calendars > .side-calendars__head {
+  flex: 0 0 auto;
+}
+.sidebar > .side-calendars > .side-calendars__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  /* 0.2.11（C6）：列表自身不留底部空白，滚动区一直贴到侧栏底边。 */
+  padding-bottom: 0;
+  scroll-padding-bottom: var(--sp-3);
+}
+.sidebar > .side-calendars > .side-calendars__list::-webkit-scrollbar {
+  display: none;
+}
+.sidebar__create {
+  height: 44px;
+  font-size: var(--fs-md);
+  border-radius: var(--r-lg);
+}
+
+/* Mini calendar */
+.mini {
+  user-select: none;
+}
+.mini__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-2);
+}
+.mini__title {
+  font-size: var(--fs-md);
+  font-weight: 650;
+}
+.mini__nav {
+  display: inline-flex;
+  gap: 2px;
+}
+.mini__nav .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+.mini__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  /* 0.2.15（D7）：迷你月历固定 6 行——`getMonthGrid` 恒出 42 格，5 周的月份第
+     6 行留空，下方「日历」列表上边缘不再随月份跳动。 */
+  grid-template-rows: repeat(6, 1fr);
+  gap: 1px;
+}
+.mini__dow {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  padding: var(--sp-1) 0;
+  text-transform: uppercase;
+}
+.mini__cell {
+  aspect-ratio: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  border-radius: 50%;
+  color: var(--text);
+  transition: background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+  position: relative;
+}
+@media (hover: hover) {
+  .mini__cell:hover {
+    background: var(--surface-3);
+  }
+}
+/* 0.2.9（用户 5 / 美工 §18.2）：非本月日期与主月视图同一 token（`--gray-400`），
+   事件点同步变淡（0.4）。 */
+.mini__cell.is-muted {
+  color: var(--gray-400);
+}
+.mini__cell.is-muted.has-events::after {
+  opacity: 0.4;
+}
+.mini__cell.is-today {
+  color: var(--accent);
+  font-weight: 700;
+}
+/* 0.2.10（用户 1-19）：今天 = 主题色**圆描边、不填色**，数字 accent 加粗；
+   描边用 inset 环贴在格边、与数字之间自然留出空隙，不改变格子尺寸/行高。 */
+.mini__cell.is-today:not(.is-selected) {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.mini__cell.is-selected {
+  /* 0.2.11（C3）：选中态的实心圆改为独立图层（`.mini__fill`），这样多日连线可以
+     压到填色**下面**（线 z1 < 填色 z2 < 数字 z3），不会横穿在圆上面。 */
+  color: var(--text-on-accent);
+  font-weight: 650;
+}
+/* 今天正好是选中日：实心圆保留（选中态），今天的环画在外侧并留 2px `--surface`
+   空隙（同一套双层 shadow，与年视图 ⑪ 一致），两者都能辨识。 */
+.mini__cell.is-selected.is-today {
+  color: var(--text-on-accent);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent);
+}
+/* 迷你月历的三个图层（C3/C7）：连线 1 < 填色圆 2 < 数字 3。 */
+.mini__fill {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.mini__cell.is-selected .mini__fill {
+  background: var(--accent);
+}
+.mini__num {
+  position: relative;
+  z-index: 3;
+  pointer-events: none;
+}
+.mini__cell.has-events::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  /* 0.2.19（D11）：圆点颜色 = 当天最高优先级事件色，与年视图圆填色同一套规则
+     （lib/day-color.js 的 dayColorFor 写进 --mini-dot-color）。缺省仍是 currentColor。 */
+  background: var(--mini-dot-color, currentColor);
+}
+/* 0.2.10（用户 1-4 / 美工 §20.3）：跨天事件画成横线，取代圆点。
+   0.2.11（C3/C7）：线是 z1 的独立一层，压在填色圆（z2）下面，数字（z3）在最上。
+   0.2.17（B6）：整条改成**点线**（用户原话「改成............点线吧，开头和结尾也
+   还是和单日一样」）——点的直径 = 线的粗细 = 单日圆点的 3px，圆头由
+   radial-gradient 画（dotted 边框是方点，不符合）。
+   0.2.18（C2/C3）：**跨 span 一个图层**。每个 `.mini__cell.has-line` 里不再画
+   `::before`，整条线只由首格里的一个 `.mini__run` 元素向右溢出画完（几何见
+   lib/segment.js 的 miniRunBox / miniRunStyle）。于是整条只有一个相位原点：
+   跨列点距恒定、格线上没有 1px 接缝，`--mini-run-tiles` 反算出 background-size，
+   首点圆心落在首格中心、末点圆心落在末格中心。
+   0.2.18（C2）：换行处**不画任何符号**（`.mini__arrow` 已删除）。 */
+/* 0.2.18（C2）：迷你月历容器作用域内关掉一切「延续」符号——换行处不显示任何箭头。
+   scope 严格限制在 `.mini__grid` 内，月/周/四日/日视图的 `.chip__cont` 不受影响。 */
+.mini__grid .chip__cont,
+.mini__grid .mini__arrow {
+  display: none;
+}
+.mini__run {
+  position: absolute;
+  bottom: 3px;
+  z-index: 1;
+  height: 3px;
+  width: 3px;
+  left: calc(50% - 1.5px);
+  pointer-events: none;
+  background-image: radial-gradient(
+    circle at 1.5px 50%,
+    var(--mini-line-color, currentColor) 0 1.5px,
+    transparent 1.6px
+  );
+  /* 0.2.18（C3）：首点圆心钉在 1.5px、末点圆心钉在 100% - 1.5px——两端各让一个
+     半径，中间均分成 `tiles` 个周期（由 lib/segment.js 的 miniRunBox 算）。 */
+  background-size: calc((100% - 3px) / var(--mini-run-tiles, 1)) 100%;
+  background-repeat: repeat-x;
+  background-position: 0 0;
+}
+/* 只有一天可见的片段（或单点）：退化成和单日圆点同一语言的一个点。 */
+.mini__run--dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background-color: var(--mini-line-color, currentColor);
+  background-image: none;
+}
+/* 整条 run 都落在非本月格子里时才压淡（原来是逐格压淡，跨月时一半深一半浅）。 */
+.mini__run--muted {
+  opacity: 0.4;
+}
+/* 0.2.20（E5）：选中日的「圆内」点也要变白——多日点线整条压在填色圆下面（z1 < z2），
+   于是选中圆盖掉了圆内那一段点、圆外两个下角却还露彩点。这里在选中格里加一层
+   **被圆裁剪**的白色点线：几何与整条 run 逐项相同（同一个 miniRunBox 的 left/width/
+   tiles，按格平移 k×(100% + 1px)），所以相位完全一致，只是颜色换成 --text-on-accent；
+   圆外的点仍由下面那条事件色 run 画。 */
+.mini__sel-clip {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.mini__run--white {
+  background-image: radial-gradient(
+    circle at 1.5px 50%,
+    var(--text-on-accent) 0 1.5px,
+    transparent 1.6px
+  );
+}
+.mini__run--white.mini__run--dot {
+  background-color: var(--text-on-accent);
+  background-image: none;
+}
+/* 有线的那天不再画圆点（避免线 + 点叠在一起）。 */
+.mini__cell.has-line::after {
+  display: none;
+}
+.mini__cell.is-selected.has-events::after {
+  background: var(--text-on-accent);
+}
+
+/* Sidebar sections */
+.side-section__title {
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: var(--sp-2);
+}
+/* A collapsible section's heading is its disclosure button (the button lives
+   inside the <h2>, which is why it inherits all of the above). The negative
+   inline margin lets the hover surface reach past the text without indenting
+   it: the label stays on the same left edge as the Create button, the mini
+   month and the other section titles, which an added padding-left would have
+   pushed it off. It bleeds 8px into the sidebar's own 16px padding, so nothing
+   overflows and no horizontal scrollbar appears. */
+.side-section__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  /* Full section width plus the 8px it bleeds either side, so the caret sits
+     at the right edge and the whole row is the target. */
+  width: calc(100% + 2 * var(--sp-2));
+  margin: 0 calc(-1 * var(--sp-2));
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  text-align: left;
+  /* Chrome's UA sheet resets text-transform on form controls, so the heading's
+     uppercase does not reach a button inside it on its own. */
+  text-transform: inherit;
+  transition: background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .side-section__toggle:hover {
+    background: var(--surface-3);
+    color: var(--text-2);
+  }
+}
+/* "2 hidden", shown only while the section is folded: the count of colors the
+   filter is currently keeping off the calendar. Lower case on purpose — it is
+   a state, not part of the heading. */
+.side-section__note {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-3);
+}
+.side-section__caret {
+  margin-left: auto;
+  transition: transform var(--dur-fast) var(--ease);
+}
+/* Down when folded, up when open — the caret points the way the section will
+   move, as it does in the account menu and every other calendar's sidebar. */
+.side-section__toggle[aria-expanded='true'] .side-section__caret {
+  transform: rotate(180deg);
+}
+/* Nothing below the heading to space away from. */
+.side-section.is-collapsed .side-section__title {
+  margin-bottom: 0;
+}
+.cal-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Row = the show/hide checkbox + a rename pencil beside it (not inside it:
+   interactive content in a role="checkbox" is neither valid nor operable). */
+.cal-filter__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.cal-filter__toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+/* Keyed off the row, not the checkbox: the pencil is a sibling, so a
+   `.cal-filter__toggle:hover` highlight dropped out the moment the pointer
+   crossed onto it — the row flickering out from under the control the pointer
+   was reaching for. */
+@media (hover: hover) {
+  .cal-filter__item:hover .cal-filter__toggle {
+    background: var(--surface-3);
+  }
+}
+/* Six pencils standing in a column outweigh the names they belong to, so the
+   pencil waits for the row (hover) or the keyboard (focus-within). It stays in
+   the tab order either way; only its paint is deferred — and only where a
+   pointer can hover: a touch screen has no way to discover a hidden
+   affordance, so there the pencils simply show. */
+.cal-filter__rename {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  transition: opacity var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .cal-filter__rename {
+    opacity: 0;
+  }
+  .cal-filter__item:hover .cal-filter__rename,
+  .cal-filter__item:focus-within .cal-filter__rename {
+    opacity: 1;
+  }
+}
+.cal-filter__check {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-xs);
+  border: 2px solid var(--dot-color, var(--gray-400));
+  background: var(--dot-color, transparent);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ev-fg, #fff); /* the palette's ink for this fill — dark on orange */
+  transition: background var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+.cal-filter__toggle[aria-checked='false'] .cal-filter__check {
+  background: transparent;
+}
+.cal-filter__toggle[aria-checked='false'] .cal-filter__check .icon {
+  opacity: 0;
+}
+.cal-filter__label {
+  min-width: 0;
+  font-size: var(--fs-md);
+  color: var(--text);
+  /* A renamed category is the one label here that can be long. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- Main ------------------------------------------------------------- */
+.main {
+  grid-area: main;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg);
+}
+
+.main.is-file-drop-target::after {
+  content: '拖放日历文件以导入';
+  position: absolute;
+  inset: var(--sp-3);
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  color: var(--text);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ---- Popover (user menu, etc.) --------------------------------------- */
+.popover {
+  position: fixed;
+  z-index: 80;
+  min-width: 220px;
+  padding: var(--sp-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  animation: pop-in var(--dur) var(--ease);
+  transform-origin: top right;
+  /* Anchored just below the header; on a short viewport (landscape phone) the
+     ~390px of content otherwise runs past the bottom with nothing scrollable
+     (body overflow is hidden), leaving Import/Sign out unreachable. */
+  max-height: calc(100vh - var(--header-h) - 16px);
+  max-height: calc(100dvh - var(--header-h) - 16px);
+  overflow-y: auto;
+}
+.popover__header {
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-2);
+}
+.popover__name {
+  font-weight: 650;
+}
+.popover__meta {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  color: var(--text);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .menu-item:hover {
+    background: var(--surface-3);
+  }
+}
+.menu-item .icon {
+  color: var(--text-3);
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+}
+
+/* ---- Modal ------------------------------------------------------------ */
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  /* Track the *visible* viewport (dvh), not the URL-bar-hidden large viewport a
+     bare 100vh/inset:0 gives on mobile Safari — otherwise a tall modal is
+     centered against an oversized area and its header/footer end up behind the
+     browser toolbars. */
+  height: 100dvh;
+  background: var(--overlay-scrim);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Keep the modal clear of the notch / home indicator (viewport-fit=cover). */
+  padding: max(var(--sp-4), env(safe-area-inset-top)) var(--sp-4)
+    max(var(--sp-4), env(safe-area-inset-bottom));
+  animation: fade-in var(--dur) var(--ease);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+.modal {
+  width: 100%;
+  max-width: 480px;
+  /* Fill the padded, dvh-sized scrim at most; the body scrolls within. */
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg);
+  animation: modal-in var(--dur-slow) var(--ease);
+  overflow: hidden;
+}
+/* A card rebuilt while the dialog is already open (refreshView in modal.js:
+   RSVP answers landing, a task toggled) — no entrance animation. */
+.modal--settled {
+  animation: none;
+}
+/* The event/task/out-of-office editor pins its top edge on open (see anchorTop
+   in modal.js) so switching type changes the height from the bottom instead of
+   re-centering and making the whole dialog jump. `--modal-anchor-top` is the
+   margin that reproduces the opened centered position; it also caps max-height
+   so a taller variant scrolls its body rather than overflowing the footer.
+   Other .modal-scrim users (the recurrence / scope dialogs) keep the default
+   centering. */
+.modal-scrim--anchored {
+  align-items: flex-start;
+}
+.modal-scrim--anchored .modal {
+  margin-top: var(--modal-anchor-top, 0px);
+  max-height: calc(100% - var(--modal-anchor-top, 0px));
+}
+.modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
+}
+.modal__title {
+  font-size: var(--fs-lg);
+  font-weight: 650;
+}
+.modal__body {
+  /* Vertical padding matters: the body scrolls (overflow-y:auto, which also
+     clips overflow-x), so with 0 top/bottom padding the first field's focus
+     ring and the last field's selected-swatch ring — box-shadows drawn a few px
+     outside their boxes — get clipped at the scroll edges. The padding keeps
+     those rings inside the visible area. */
+  padding: var(--sp-2) var(--sp-4);
+  overflow-y: auto;
+  /* Allow the body to shrink below its content height inside the flex column so
+     it scrolls, keeping the header and footer pinned instead of overflowing the
+     modal and clipping them. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.modal__foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  margin-top: var(--sp-2);
+}
+.modal__foot .spacer {
+  flex: 1;
+}
+.modal__mode {
+  align-self: stretch;
+  display: flex;
+}
+/* The three create-mode choices share the control's width evenly. */
+.modal__mode button {
+  flex: 1;
+}
+.modal__tz-hint {
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+/* ---- Compact editor layout (the event / out-of-office / task form) -----
+   Labels sit in a fixed left column with their control beside them, so the
+   form reads as aligned rows instead of a tall stack of label-over-field
+   blocks — roughly half the height, no internal scrolling on a laptop.
+   Scoped to .modal--editor: the details card and the recurrence / scope /
+   import dialogs keep the stacked .field default. */
+.modal--editor {
+  --editor-label-w: 92px;
+}
+.modal--editor .modal__body {
+  gap: var(--sp-3);
+}
+.modal--editor .modal__foot {
+  margin-top: 0;
+}
+.modal--editor .field {
+  display: grid;
+  grid-template-columns: var(--editor-label-w) minmax(0, 1fr);
+  column-gap: var(--sp-3);
+  row-gap: var(--sp-2);
+  align-items: start;
+}
+/* The label marks the control's FIRST row; extra control rows (guest rows,
+   the add-notification button, hints) stack in the control column under it.
+   min-height centers it against a standard 38px input without dragging it
+   to the middle of taller blocks (the notes textarea, a grown guest list).
+   :first-child keeps in-column .field__label hints (e.g. the reminders
+   permission hint) out of the label column. */
+.modal--editor .field > .field__label:first-child {
+  grid-row: 1;
+  grid-column: 1;
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+}
+.modal--editor .field > :not(.field__label:first-child) {
+  grid-column: 2;
+  min-width: 0;
+}
+/* Title has no visible label — a single prominent, underline-style input. */
+.modal--editor .field--title {
+  display: block;
+}
+.modal--editor .input--title {
+  height: 44px;
+  padding: 0 1px;
+  border: 0;
+  border-bottom: 1.5px solid var(--border-strong);
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+.modal--editor .input--title:focus {
+  box-shadow: none;
+  border-bottom-color: var(--accent);
+}
+/* Switch rows (All day / Completed) share the label column. */
+.modal--editor .inline-field {
+  display: grid;
+  grid-template-columns: var(--editor-label-w) minmax(0, 1fr);
+  column-gap: var(--sp-3);
+  align-items: center;
+}
+.modal--editor .inline-field .switch {
+  justify-self: start;
+}
+/* Swatches center against the same 38px row rhythm as the inputs. */
+.modal--editor .swatches {
+  min-height: 38px;
+  align-items: center;
+  align-content: center;
+}
+/* Grid items stretch by default, which would center these buttons' content
+   mid-column; pin them to the control column's left edge instead. */
+.modal--editor .reminders__add,
+.modal--editor .meeting__add {
+  justify-self: start;
+}
+/* The attached meeting link: URL (truncated, it's long) + copy/remove. Centered
+   against the same 38px row rhythm as the inputs beside it. */
+.modal--editor .meeting__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-height: 38px;
+  min-width: 0;
+}
+.modal--editor .meeting__url {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Slightly tighter rows: a 34px ghost button dwarfs the 20px text beside it.
+   (The pointer:coarse block below restores a full-size tap target.) */
+.modal--editor .reminders__remove,
+.modal--editor .guests__copy,
+.modal--editor .meeting__action {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+/* The details card's meeting URL, shown under "Join meeting" for anyone who
+   wants to copy it — long, so it truncates rather than wraps the card wide. */
+.modal--view .view__join-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal--editor .textarea {
+  min-height: 64px;
+}
+/* Body-level notes (secondary-zone times, the save error) line up with the
+   control column, tying them to the inputs they describe. Direct children of
+   the body only: the booking editor puts its save error INSIDE the weekly-hours
+   .field, where the grid already places it in the control column — the indent
+   would then apply twice and push the message clear of the rows it is about. */
+.modal--editor .modal__body > .modal__tz-hint,
+.modal--editor .modal__body > .modal__error {
+  margin-left: calc(var(--editor-label-w) + var(--sp-3));
+}
+.modal--editor .modal__tz-hint {
+  margin-top: calc(-1 * var(--sp-1));
+}
+/* Full-bleed hairline between the schedule block and the details block. */
+.modal--editor .modal__sep {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--sp-1) calc(-1 * var(--sp-4));
+}
+/* Narrow screens: back to stacked label-over-field rows — a 92px label
+   column plus two date/time inputs doesn't fit a phone width. */
+@media (max-width: 520px) {
+  .modal--editor .field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .modal--editor .field > .field__label:first-child {
+    min-height: 0;
+    grid-row: auto;
+  }
+  .modal--editor .field > :not(.field__label:first-child) {
+    grid-column: 1;
+  }
+  .modal--editor .swatches {
+    min-height: 0;
+  }
+  .modal--editor .modal__body > .modal__tz-hint,
+  .modal--editor .modal__body > .modal__error {
+    margin-left: 0;
+  }
+}
+
+/* ---- Item details card (read-only view mode) --------------------------
+   Clicking an existing event/task opens this compact card; the editor is an
+   explicit step behind its pencil action. Shares the .modal shell. */
+.modal--view {
+  max-width: 424px;
+}
+.modal__head--view {
+  gap: var(--sp-1);
+  padding-bottom: 0;
+}
+.view__kind {
+  margin-right: auto;
+  font-size: var(--fs-xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.view__body {
+  gap: var(--sp-3);
+  /* The card usually has no footer, so give the body its own bottom air. */
+  padding-bottom: var(--sp-5);
+}
+.view__title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-1);
+}
+.view__color {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-xs);
+  /* Optically center on the title's first line. */
+  margin-top: 5px;
+}
+.view__title-main {
+  min-width: 0;
+}
+/* A public holiday has no palette color: the flag it wears on its chip takes
+   the swatch's slot, so the card's title row lines up with an event's. */
+.view__color--holiday {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  margin-top: 4px;
+  color: var(--text-3);
+  background: none;
+  border-radius: 0;
+}
+.view__title {
+  font-size: var(--fs-xl);
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.view__badges {
+  display: flex;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+}
+.view__badge {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  padding: 1px 8px;
+}
+.view__row {
+  display: flex;
+  gap: var(--sp-3);
+  font-size: var(--fs-md);
+}
+.view__row-icon {
+  flex: none;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+.view__row-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* A location is most often a meeting URL, and a booking line carries an
+     email: unbreakable runs that overflowed the row, gave the card body a
+     horizontal scrollbar and ran off a phone's card edge. */
+  overflow-wrap: anywhere;
+}
+/* 0.2.9（用户 17）：详情卡「所属日历」行——日历色点 + 日历名。
+   点色是**日历色**（不是事件色），长名 ellipsis 不换行。 */
+.view__cal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.view__cal-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.view__cal-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.view__muted {
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.view__desc {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* URLs/emails auto-detected in user text (see linkify in dom.js). Focus uses
+   the global :focus-visible outline. */
+.linkified {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+.linkified:hover {
+  color: var(--accent-hover);
+}
+}
+
+.modal__foot--view {
+  justify-content: flex-start;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+/* ---- Guests / RSVP ----------------------------------------------------- */
+/* Editor guest rows (mirrors the reminders rows' rhythm). */
+.guests {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.guests:empty {
+  display: none;
+}
+.guests__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.guests__email {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.guests__status {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+.input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+/* Focus on an invalid field: this rule outranks .input:focus's accent border
+   (same specificity, loaded later), which left only the 2.3:1 translucent
+   ring to mark focus. Draw the solid ring around the red border instead. */
+.input[aria-invalid='true']:focus {
+  box-shadow: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Contact suggestions, floated over whatever follows the guest field. The
+   wrapper is the positioning context so the list hangs off the input itself. */
+.guests__entry {
+  position: relative;
+}
+.guests__suggest {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 216px;
+  overflow-y: auto;
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+}
+.guests__suggest[hidden] {
+  display: none;
+}
+.guests__suggestion {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.guests__suggestion[aria-selected='true'] {
+  background: var(--surface-3);
+}
+.guests__suggestion[aria-selected='true'] .guests__suggestion-meta {
+  color: var(--text-2);
+}
+/* A face per suggestion — the contact's initial, or a mail glyph for the row
+   that stands for the address being typed in. */
+.guests__face {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-full);
+  background: var(--accent-soft);
+  color: var(--accent-ink-on-soft);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  text-transform: uppercase;
+  line-height: 1;
+}
+/* The row that stands for the address being typed is an action, not somebody we
+   know anything about — a quieter face than a contact's. */
+.guests__suggestion--typed .guests__face {
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+.guests__suggestion-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.guests__suggestion-name,
+.guests__suggestion-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.guests__suggestion-name {
+  font-weight: 550;
+}
+.guests__suggestion-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* Time field: a text box whose dropdown of quarter-hour choices opens scrolled
+   to the field's own time. Styled like the guest suggestions. Without the
+   Popover API (see [popover] below) the list hangs inside the wrapper, which
+   is then its positioning context. */
+.time-field {
+  position: relative;
+}
+.time-field[hidden] {
+  display: none;
+}
+.time-field__list {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  left: 0;
+  /* At least the input's width; wider when an end field's span labels need it. */
+  min-width: 100%;
+  max-height: 216px;
+  overflow-y: auto;
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+}
+.time-field__list[hidden] {
+  display: none;
+}
+/* With the Popover API the list renders in the top layer, so no scrolling
+   dialog body can clip it; the field sets top/left/width from the input's
+   rect. Undo the UA popover defaults (inset:0, margin:auto, system colors). */
+.time-field__list[popover] {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  color: var(--text);
+}
+.time-field__option {
+  flex: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* An end field's choices carry the span they make from the start ("1 hr 30
+   min"), set off to the right so the times still line up as a column. */
+.time-field__duration {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+.time-field__option[aria-selected='true'] {
+  background: var(--surface-3);
+}
+
+/* Details-card guest list. */
+.view__guests {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+}
+.view__guest {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.view__guest-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.view__guest-who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* A note the guest left via their RSVP link. */
+.view__guest-note {
+  overflow-wrap: anywhere;
+}
+/* Per-guest "copy RSVP link" (editor rows + details card). */
+.guests__copy {
+  flex: none;
+}
+/* Guest suggestions awaiting the host (a guest proposed adding someone from
+   their RSVP page). Set off from the guest list proper — these people are
+   NOT on the list until the host approves. */
+.view__suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-2);
+  padding: var(--sp-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+}
+/* Each suggestion: who (full first line), then its own compact action pair —
+   a long address must never squeeze the buttons into wrapping mid-label. */
+.view__suggestion {
+  flex-wrap: wrap;
+}
+.view__suggestion .view__guest-main {
+  flex: 1 1 100%;
+}
+.view__suggestion .btn {
+  flex: none;
+  height: 28px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+/* The host's actions under the guest list: email the invitations, copy the
+   links. One wrapping row — a vertical stack of ghost buttons read as links. */
+.view__guest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+/* Whether a guest has been emailed the invitation they hold now. Never wraps
+   or shrinks: it sits between the address (which may be long) and the copy
+   button, and a half-wrapped "Update pending" reads as a broken row. */
+.view__guest-sent {
+  flex: none;
+  white-space: nowrap;
+}
+/* Per-guest response state: hollow ring = awaiting, filled = answered. */
+.view__rsvp-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-3);
+}
+.view__rsvp-dot[data-status='accepted'] {
+  background: var(--success);
+  border-color: var(--success);
+}
+.view__rsvp-dot[data-status='declined'] {
+  background: var(--danger);
+  border-color: var(--danger);
+}
+.view__rsvp-dot[data-status='tentative'] {
+  background: var(--warning);
+  border-color: var(--warning);
+}
+
+/* "Going?" chips on the details card. */
+.view__going-label {
+  font-weight: 600;
+  color: var(--text-2);
+  margin-right: var(--sp-2);
+}
+.view__going button {
+  min-width: 56px;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+}
+
+/* Form rows inside modal */
+.form-row {
+  display: flex;
+  gap: var(--sp-3);
+}
+.form-row > * {
+  flex: 1;
+  min-width: 0;
+}
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.inline-field .field__label {
+  margin: 0;
+}
+
+/* 0.2.19（D3）：日期字段回到原形态——一个日期按钮（点开是弹层日历）+ 公历 /
+   农历切换钮；隐藏的 input[type=date] 仍是公历真值（视觉隐藏、不抢焦点、不进
+   Tab 序）。0.2.18 的年/月/日三个下拉已被用户否决，这里不再出现。 */
+.editor__date-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  /* 日期 + 时间同处 .form-row；日期占大头，时间框够写「9:30 AM」。 */
+  flex: 1.6 1 0;
+}
+.editor__date-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 0.2.20（E9）：与 .input/.select 同高同字号（38px / --fs-md=14px）——原来 34px/12px，
+     在「重复」「地点」「时间」旁边明显小一号（用户：「字号统一，现在日期明显小了」）。 */
+  height: 38px;
+  padding: 0 var(--sp-2);
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .editor__date-btn:hover {
+    border-color: var(--border-strong);
+  }
+}
+.editor__date-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.editor__date-main,
+.editor__date-sub {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.editor__date-main {
+  /* 0.2.20（E9）：主文案与「重复 / 地点 / 时间」同一字号（14px），副行仍是 11px 小字；
+     主 14 + 副 11 + 1px 间隙在 38px 内放得下，不撑高。 */
+  font-size: var(--fs-md);
+  line-height: 1.2;
+}
+.editor__date-sub {
+  font-size: var(--fs-xs);
+  line-height: 1.1;
+  color: var(--text-3);
+}
+.editor__date-sub:empty {
+  display: none;
+}
+/* 0.2.20（E6）：日期框右侧的「公历/农历」胶囊删掉（语种唯一入口在弹层两段式）。 */
+.editor__date-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 0.2.19（D3）：弹层日历。公历/农历两种显示，回填的永远是公历 'YYYY-MM-DD'。 */
+.date-pop {
+  z-index: 140; /* 打开它的编辑器弹窗在 100 */
+  width: 288px;
+  padding: var(--sp-2);
+  transform-origin: top left;
+}
+.date-pop__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-1);
+}
+.date-pop__title {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.date-pop__nav {
+  width: 30px;
+  height: 30px;
+}
+.date-pop__weekdays,
+.date-pop__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.date-pop__weekday {
+  padding: 2px 0;
+  text-align: center;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.date-pop__day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.date-pop__day.is-outside {
+  color: var(--text-3);
+}
+.date-pop__day.is-today {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.date-pop__day.is-selected {
+  color: var(--text-on-accent);
+  background: var(--accent);
+}
+.date-pop__day.is-selected .date-pop__day-sub {
+  color: inherit;
+  opacity: 0.85;
+}
+@media (hover: hover) {
+  .date-pop__day:not(.is-selected):hover {
+    background: var(--surface-2);
+  }
+}
+.date-pop__day:disabled {
+  cursor: default;
+}
+.date-pop__day-main {
+  line-height: 1.1;
+}
+.date-pop__day-sub {
+  font-size: 9px;
+  line-height: 1.1;
+  color: var(--text-3);
+}
+.date-pop__day-sub:empty {
+  display: none;
+}
+.date-pop__foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: var(--sp-1);
+}
+/* 0.2.20（E6）：唯一的语种控制——「公历 | 农历」两段式（复用 .segmented 的选中态）。 */
+.date-pop__seg {
+  padding: 2px;
+}
+.date-pop__seg-btn {
+  height: 26px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 550;
+}
+
+/* 0.2.18（C6①）：「农历」这种行内开关作为 .field 的控件子项时，标签已经由
+   .field 的第 1 列给出——这里不能再套一层标签列，否则整行会右移一个标签宽度，
+   和上下各行的标签对不齐。 */
+.modal--editor .field > .inline-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+/* Color swatches */
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  position: relative;
+  transition: transform var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .swatch:hover {
+    transform: scale(1.12);
+  }
+}
+.swatch[aria-checked='true'] {
+  border-color: var(--surface);
+  box-shadow: 0 0 0 2px var(--swatch-color);
+}
+.swatch[aria-checked='true']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  /* A clean white dot with a faint dark ring so it reads on light swatches.
+     (mix-blend-mode: difference produced arbitrary muddy colors per swatch.) */
+  background: #fff;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.18);
+}
+/* 0.2.4 §15.1：调色板末尾「自定义颜色」圆——26px、虚线描边、内嵌取色器图标。
+   三处调色板（日历设置 / 行菜单改色 / 事件编辑器）共用 colors.customColorSwatch。 */
+.swatch--custom {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-3);
+  position: relative;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--dur-fast) var(--ease);
+}
+/* 0.2.8（用户 4 澄清）：圆内**取色器（滴管）图标必须水平垂直居中**——
+   圆本身是 flex 居中 + padding 0 + line-height 0；图标外层固定 14px 并居中，
+   SVG display:block 去掉基线留白（否则会偏心 1–2px）。 */
+.swatch--custom {
+  padding: 0;
+  line-height: 0;
+  /* 美工 §17.2：border-box + padding:0，避免 border 把内容盒挤偏（图标居中前提）。 */
+  box-sizing: border-box;
+}
+.swatch--custom__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  line-height: 0;
+}
+.swatch--custom__icon .icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+.swatch--custom__icon .icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+@media (hover: hover) {
+  .swatch--custom:hover {
+    transform: scale(1.12);
+  }
+}
+.swatch--custom:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 选中自定义色时（0.2.8 用户 4 / 美工 §17.2）：圆内填充当前自定义色实色，
+   外环与预设色选中态同款（`--ring`），滴管图标按对比色**仍居中显示**、不隐藏。 */
+.swatch--custom.is-selected {
+  border-color: transparent;
+  background: var(--custom-color, var(--accent));
+  color: var(--custom-fg, #ffffff);
+  box-shadow: 0 0 0 2px var(--ring);
+  transform: scale(1.12);
+}
+/* 触屏：圆 26px 不放大的前提下，用透明伪元素把命中区扩到 ≥44px（§17.2）。 */
+@media (pointer: coarse) {
+  .swatch--custom::after {
+    content: '';
+    position: absolute;
+    inset: -9px;
+    border-radius: 50%;
+  }
+}
+
+/* Reminders (notifications) editor */
+.reminders {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.reminders:empty {
+  display: none;
+}
+.reminders__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.reminders__row .select {
+  flex: 1;
+  min-width: 0;
+}
+.reminders__remove {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  color: var(--text-3);
+}
+@media (hover: hover) {
+  .reminders__remove:hover {
+    color: var(--danger);
+    background: var(--danger-soft);
+  }
+}
+.reminders__add {
+  align-self: flex-start;
+  height: 32px;
+  padding: 0 var(--sp-2);
+  gap: 6px;
+  color: var(--text-2);
+}
+.reminders__add .icon {
+  color: var(--text-3);
+}
+.reminders__hint {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+/* Enlarge the smallest controls on touch devices for comfortable tapping
+   (no effect on mouse/desktop). */
+@media (pointer: coarse) {
+  /* The editor's Save / Cancel / Delete are 36px tall; the sidebar's Create
+     and the tab bar's buttons are already 44. */
+  .modal__foot .btn {
+    min-height: 44px;
+  }
+  .swatch {
+    width: 34px;
+    height: 34px;
+  }
+  .modal--editor .reminders__remove,
+  .modal--editor .guests__copy,
+  .modal--editor .meeting__action {
+    width: 34px;
+    height: 34px;
+  }
+  .mini__nav .icon-btn {
+    width: 36px;
+    height: 36px;
+  }
+  .book-item__copy {
+    width: 34px;
+    height: 34px;
+  }
+  .mail-item__actions .icon-btn {
+    width: 34px;
+    height: 34px;
+  }
+  /* No hover to reveal it with, so on touch the pencil is simply always there. */
+  .cal-filter__rename {
+    width: 34px;
+    height: 34px;
+    opacity: 1;
+  }
+  /* A 12px heading is a 20px tap target; this is a real control now. */
+  .side-section__toggle {
+    min-height: 34px;
+  }
+  .bk-day__add {
+    height: 34px;
+  }
+}
+
+/* ---- Recurrence dialogs (nested over the event modal) ---------------- */
+.dialog-scrim {
+  z-index: 130; /* above the event modal (100) */
+}
+.rr-modal {
+  max-width: 440px;
+}
+.rr-scope {
+  max-width: 420px;
+}
+/* "Send invitations?" — one question, two buttons. */
+.invite-ask {
+  max-width: 420px;
+}
+/* "Rename category" — one field, with the color it belongs to beside it. */
+.cat-rename {
+  max-width: 400px;
+}
+.cat-rename__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.cat-rename__dot {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-xs);
+}
+.cat-rename__hint {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.rr-every {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.rr-num {
+  width: 84px;
+  flex: none;
+}
+.rr-every .select {
+  flex: 1;
+}
+
+.rr-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.rr-weekday {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  color: var(--text-2);
+  background: var(--surface-3);
+  border: 1px solid transparent;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .rr-weekday:hover {
+    color: var(--text);
+  }
+}
+.rr-weekday[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+.rr-weekday:focus-visible {
+  /* The global ring (solid accent, 7:1): the translucent --ring it replaced
+     reached 2.3:1 on the surface and was this control's only focus signal. */
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rr-ends-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+  cursor: pointer;
+}
+.rr-ends-row input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.rr-ends-line {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.rr-ends-line .input {
+  width: auto;
+}
+.rr-ends-line .input[type='date'] {
+  min-width: 150px;
+}
+.rr-ends-line .rr-num {
+  width: 76px;
+}
+.rr-ends-row .input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- Import / export dialog ------------------------------------------ */
+.io-modal {
+  max-width: 460px;
+}
+.io-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.io-hint {
+  color: var(--text-2);
+  font-size: var(--fs-base);
+  line-height: var(--lh-normal);
+}
+/* 0.2.10（1-3 / 美工 §20.2）：导入目标「现有日历」列表——每项 8px 色点、行距 8px，
+   选中项 accent-soft 底 + accent 文字；色点无描边（.chip__dot 自带）。 */
+.io-cal-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.io-cal-picker__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .io-cal-picker__row:hover {
+    background: var(--surface-3);
+  }
+}
+.io-cal-picker__row[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.io-cal-picker__row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.io-cal-picker__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.io-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+}
+.io__status {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.io__status[data-variant='success'] {
+  color: var(--success-ink);
+}
+/* data-io.js emits 'warn' for the soft cases ("no events", offline) — unstyled
+   it read as plain body text, indistinguishable from a neutral message. */
+.io__status[data-variant='warn'] {
+  color: var(--warning);
+}
+.io__status[data-variant='danger'] {
+  color: var(--danger-ink);
+}
+/* Import progress: writes are paced to respect puter.kv's rate limit, so a
+   large file takes a while — the bar shows it's working, not hung. */
+.io-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+}
+.io-progress__track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  overflow: hidden;
+}
+.io-progress__fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--dur-fast) var(--ease);
+}
+.io-progress__text {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+/* ---- Context menu (fallback, mirrors puter.ui.contextMenu) ----------- */
+.ctx-menu {
+  position: fixed;
+  z-index: 120;
+  min-width: 180px;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  animation: pop-in var(--dur-fast) var(--ease);
+  transform-origin: top left;
+}
+.ctx-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+}
+@media (hover: hover) and (pointer: fine) {
+.ctx-menu__item:hover,
+.ctx-menu__item.is-focused {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+}
+
+@media (hover: hover) and (pointer: fine) {
+.ctx-menu__item.is-danger:hover,
+.ctx-menu__item.is-danger.is-focused {
+  background: var(--danger-ink);
+}
+}
+
+.ctx-menu__item[aria-disabled='true'] {
+  color: var(--text-3);
+  pointer-events: none;
+}
+.ctx-menu__sep {
+  height: 1px;
+  margin: var(--sp-1) var(--sp-2);
+  background: var(--border);
+}
+.ctx-menu__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}
+/* 0.2.4 §15.3：二级菜单在父项右侧展开（hover 即出现，点击也可开）。
+   gap 4px、顶边对齐；z-index 90（高于 popover 80、低于一级菜单 120），
+   右缘放不下时由 JS 翻到左侧（transform-origin: top right）。 */
+.ctx-menu__submenu {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  margin-left: 4px;
+  min-width: 160px;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-pop);
+  z-index: 90;
+  transform-origin: top left;
+}
+.ctx-menu__submenu.is-flipped {
+  transform-origin: top right;
+}
+/* 0.2.8（用户 3）：靠近视口底部时向上翻转（JS 设 is-flipped-y）。 */
+.ctx-menu__submenu.is-flipped-y {
+  transform-origin: bottom left;
+}
+.ctx-menu__submenu.is-flipped.is-flipped-y {
+  transform-origin: bottom right;
+}
+.ctx-menu__submenu[hidden] {
+  display: none;
+}
+
+/* ---- Toasts ----------------------------------------------------------- */
+.toaster {
+  position: fixed;
+  /* Clear the home-indicator zone on a notch phone running as an installed
+     app — every other bottom-anchored surface already does. */
+  bottom: calc(var(--sp-5) + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 140;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  pointer-events: none;
+}
+@media (max-width: 720px) {
+  /* Above the tab bar, not over it: a "Task rescheduled — Undo" toast used to
+     sit on the view switcher for its four seconds. */
+  .toaster {
+    bottom: calc(var(--tabbar-h) + var(--sp-3) + env(safe-area-inset-bottom, 0px));
+  }
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--gray-900);
+  color: var(--gray-0);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--fs-md);
+  pointer-events: auto;
+  animation: toast-in var(--dur) var(--ease);
+  max-width: min(92vw, 460px);
+}
+/* A flex child needs min-width: 0 to shrink below its content, and a
+   rescheduling toast can carry a guest's email — an unbreakable run that
+   painted past the pill's edge, white on white in the light theme. */
+.toast__msg {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* An inline wrapper is a full line box tall, and the icon inside sits on its
+   baseline — floating the check above the text's optical center. Flex sizes
+   the wrapper to the icon so align-items: center actually centers it. */
+.toast__icon {
+  display: flex;
+  flex: none;
+}
+:root[data-theme='dark'] .toast,
+.toast {
+  border: 1px solid var(--border);
+}
+.toast.is-leaving {
+  animation: toast-out var(--dur) var(--ease) forwards;
+}
+.toast__action {
+  /* The toast surface is inverted (--gray-900): dark in light theme, light in
+     dark theme. --accent-hover was low-contrast on both. Use a light-blue
+     action on the (light-theme) dark toast and a dark-blue one in dark theme. */
+  color: #8FB3DD;
+  font-weight: 650;
+  padding: 0 var(--sp-1);
+}
+:root[data-theme='dark'] .toast__action {
+  color: #2F5E9E;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .toast__action {
+    color: #2F5E9E;
+  }
+}
+.toast--danger .icon {
+  color: var(--danger);
+}
+.toast--success .icon {
+  color: var(--success);
+}
+/* Same inversion as .toast__action: the dark palette's feedback colors are
+   lifted for dark grounds, and on the dark theme's LIGHT toast they fade to
+   2.6:1 (danger) and 2.0:1 (success) — a glyph needs 3:1. */
+:root[data-theme='dark'] .toast--danger .icon {
+  color: #d13438;
+}
+:root[data-theme='dark'] .toast--success .icon {
+  color: #1f8a56;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .toast--danger .icon {
+    color: #d13438;
+  }
+  :root:not([data-theme='light']) .toast--success .icon {
+    color: #1f8a56;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* ---- Auth / loading screens ------------------------------------------ */
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6);
+  background: var(--bg);
+  z-index: 60;
+}
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.auth-card__logo {
+  width: 56px;
+  height: 56px;
+}
+.auth-card__title {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.auth-card__sub {
+  color: var(--text-2);
+  line-height: var(--lh-normal);
+  max-width: 34ch;
+}
+.auth-card .btn {
+  height: 44px;
+  margin-top: var(--sp-2);
+}
+.loading-screen {
+  flex-direction: column;
+  gap: var(--sp-4);
+  color: var(--text-3);
+}
+
+/* 自建登录表单（M3.7）：用户名/密码/登录，错误就地显示。 */
+.auth-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  text-align: left;
+}
+.auth-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.auth-form .input {
+  width: 100%;
+  height: 40px;
+}
+.auth-form .btn {
+  width: 100%;
+}
+.auth-card__error {
+  margin: 0;
+  color: var(--danger-ink);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+  text-align: left;
+}
+.auth-card__notice {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+/* 0.2.16（A3）：密码显隐按钮（36px 触屏点按区）+ CapsLock 提示 + 首启改密规则清单。 */
+.auth-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.auth-field .input {
+  flex: 1;
+  padding-right: 48px;
+}
+.auth-field__toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .auth-field__toggle:hover {
+    color: var(--text-1);
+  }
+}
+.auth-field__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.auth-field__toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.auth-field__caps {
+  margin: 0;
+  color: var(--warning);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+.auth-field__caps[hidden] {
+  display: none;
+}
+.auth-rules {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-normal);
+}
+.auth-rules__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.auth-rules__mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-full);
+  opacity: 0.6;
+}
+.auth-rules__mark .icon {
+  width: 10px;
+  height: 10px;
+}
+.auth-rules__item[data-met='false'] .auth-rules__mark .icon {
+  visibility: hidden;
+}
+.auth-rules__item[data-met='true'] {
+  color: var(--accent);
+}
+.auth-rules__item[data-met='true'] .auth-rules__mark {
+  opacity: 1;
+}
+/* 首字母色块头像：背景色由 profile.js 按账号哈希写入。 */
+.avatar.avatar--letter {
+  background-image: none;
+  font-weight: 600;
+}
+
+/* ---- Empty state (agenda) -------------------------------------------- */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  height: 100%;
+  color: var(--text-3);
+  text-align: center;
+}
+.empty > .icon {
+  /* 0.2.17（B3.2）：空态图标从 40px 抬到 48px，并去掉 opacity 0.6——空态本来就是
+     「这里什么都没有」的一句说明，图标再虚化只会让人以为内容没加载出来。 */
+  width: 48px;
+  height: 48px;
+}
+/* Grid views (month/week/day) keep the grid mounted underneath so dates and
+   slots stay clickable; the block only takes pointer events on its button. */
+.empty.empty--overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  height: auto;
+  pointer-events: none;
+  padding: var(--sp-4);
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+}
+.empty.empty--overlay > .btn {
+  pointer-events: auto;
+}
+
+/* Backdrop for mobile sidebar */
+/* Above the tab bar (25): the drawer it backs is a fixed panel that must
+   cover the bar, and the bar must be dimmed and untappable while the drawer
+   is open — it used to paint over both, hiding the drawer's last rows and
+   switching the view underneath an open drawer. */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay-scrim);
+  z-index: 26;
+  animation: fade-in var(--dur) var(--ease);
+}
+.menu-toggle {
+  display: none;
+}
+
+/* ---- Mobile bottom tab bar (view switcher) --------------------------- */
+.tabbar {
+  display: none;
+  grid-area: tabbar;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: var(--sp-1);
+  padding: 6px max(6px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px))
+    max(6px, env(safe-area-inset-left, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  z-index: 25;
+}
+.tabbar__btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  /* 0.2.17（B2.2）：10px 的中文标签在真机上糊成一团，抬到 11px；同时去掉
+     `text-transform: uppercase`——对中文完全无效，只是照抄了英文 tab 的写法。 */
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+.tabbar__btn.is-active {
+  color: var(--accent-ink-on-soft);
+  background: var(--accent-soft);
+}
+.tabbar__btn:active {
+  background: var(--surface-3);
+}
+
+/* ---- Booking links (sidebar section + editor dialog) -------------------- */
+.book-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.book-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.book-item__open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .book-item__open:hover {
+    background: var(--surface-3);
+  }
+}
+.book-item__title {
+  max-width: 100%;
+  font-size: var(--fs-md);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-item__meta {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+/* "Not accepting bookings", said in the space an 11px meta line has: the same
+   state-pill recipe as the details card's .view__badge. */
+.book-item__off {
+  margin-left: var(--sp-1);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-weight: 600;
+}
+.book-item__copy {
+  flex: none;
+  width: 30px;
+  height: 30px;
+}
+.book-item__copy:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.book-new {
+  justify-content: flex-start;
+  margin-top: 2px;
+}
+
+/* The editor: wider than the event editor so a weekly-hours row — two native
+   time inputs (~125px each with a 12-hour "09:00 AM" value), the dash, and
+   the remove button — fits without clipping the AM/PM segment. */
+.modal--booking {
+  max-width: 600px;
+  /* Wide enough for "Accepting bookings" (117px at 12px/600), the longest label
+     here: at 104px it and "Puter Meetings link" were the only two rows in the
+     form whose label wrapped, which pushed those switches out of the rhythm the
+     other twelve rows keep. Costs the interval row 9px per time input, which
+     still leaves a 12-hour "09:00 AM" and its picker indicator room. */
+  --editor-label-w: 122px;
+}
+.bk-hours {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.bk-day {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  column-gap: var(--sp-3);
+  align-items: start;
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--grid-line);
+}
+.bk-day:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.bk-day__head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 38px;
+  cursor: pointer;
+}
+.bk-day__name {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+}
+.bk-day__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.bk-day__off {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  font-size: var(--fs-base);
+  color: var(--text-3);
+}
+.bk-day__add {
+  align-self: flex-start;
+  padding: var(--sp-1) var(--sp-2);
+  height: 30px;
+  font-size: var(--fs-sm);
+}
+.bk-interval {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.bk-interval .bk-time {
+  flex: 1;
+  min-width: 0;
+}
+.bk-interval .bk-time .input {
+  /* Tighter than the stock 12px input padding: a 12-hour time value needs the
+     room, and clipping it hides whether 9:00 is AM or PM. */
+  padding: 0 var(--sp-2);
+}
+/* Touch browsers (where the field is the native time input) open the picker
+   from the field itself, so the dropdown indicator only eats width the 16px
+   mobile font needs. */
+@media (pointer: coarse) {
+  .bk-interval .bk-time .input::-webkit-calendar-picker-indicator {
+    display: none;
+  }
+}
+.bk-interval__dash {
+  color: var(--text-3);
+  flex: none;
+}
+.bk-two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+}
+.bk-two__cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.bk-hint {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+/* Profile-picture row: the switch, then what it publishes. Keeps the 38px row
+   rhythm the inputs above it set, so the label column stays aligned. */
+.bk-avatar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 38px;
+  min-width: 0;
+}
+.bk-avatar {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  overflow: hidden; /* clip the picture to the circle */
+  flex: none;
+}
+.bk-avatar:empty {
+  display: none; /* nothing known to preview: no empty hole in the row */
+}
+.bk-avatar__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.bk-share {
+  display: flex;
+  gap: var(--sp-2);
+}
+.bk-share__url {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.bk-share__pending {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  font-size: var(--fs-base);
+  color: var(--text-3);
+}
+/* Stack day name over its intervals wherever the 16px mobile control font
+   applies (base.css bumps inputs at the same 720px) — the two-column day row
+   can't hold two 16px time inputs. */
+@media (max-width: 720px) {
+  .bk-day {
+    grid-template-columns: 1fr;
+    row-gap: var(--sp-1);
+  }
+}
+
+/* ---- Mail-detected invitations (sidebar section + dialog) --------------- */
+.mail-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.mail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.mail-item__title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.mail-item__meta {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+/* Why this row offers no primary action — a claim the calendar could not tie
+   to the event's own organizer. */
+.mail-item__warn {
+  color: var(--danger);
+}
+/* Same state-pill recipe as .view__badge / .book-item__off. */
+.mail-item__pill {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  padding: 1px 8px;
+}
+.mail-item__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-top: var(--sp-1);
+}
+/* Block asks for a second press instead of a dialog — this is what the first
+   press looks like while it waits for the second. */
+.mail-item__actions .icon-btn.is-confirm {
+  color: var(--danger-ink);
+  background: var(--danger-soft);
+}
+.mail-dialog__state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+}
+
+/* ---- Account & admin dialogs (0.1.2) ------------------------------- */
+.account-modal {
+  max-width: 480px;
+}
+.account-section + .account-section,
+.admin-section + .admin-section {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--border);
+}
+.account-section__title,
+.admin-section__title {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  color: var(--text-2);
+}
+.account-meta {
+  display: grid;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+}
+.account-meta__row {
+  display: flex;
+  gap: var(--sp-3);
+  font-size: var(--fs-md);
+}
+.account-meta__label {
+  flex: none;
+  min-width: 56px;
+  color: var(--text-3);
+}
+.account-meta__value {
+  color: var(--text);
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+.account-form .field + .field {
+  margin-top: var(--sp-3);
+}
+.account-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sp-3);
+}
+.account-form__status,
+.admin-status {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.account-form__status[data-variant="danger"],
+.admin-status[data-variant="danger"] {
+  color: var(--danger-ink);
+}
+.account-form__status[data-variant="success"],
+.admin-status[data-variant="success"] {
+  color: var(--success-ink);
+}
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.account-hint,
+.admin-hint,
+.field__hint {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+/* 0.2.3：CalDAV 账户页地址下方的 HTTPS 安全提示（12px、弱化色，无图标）。 */
+.account-hint--security {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.btn--sm {
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+}
+
+.admin-modal {
+  max-width: 680px;
+}
+.admin-users {
+  display: grid;
+  gap: var(--sp-2);
+}
+.admin-empty {
+  margin: 0;
+  font-size: var(--fs-md);
+  color: var(--text-3);
+}
+.admin-user {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.admin-user__id {
+  display: grid;
+  min-width: 0;
+}
+.admin-user__name {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-user__username {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.admin-user__role,
+.admin-user__status,
+.admin-user__created,
+.admin-user__self {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.admin-user__status.is-disabled {
+  color: var(--danger-ink);
+}
+.admin-user__self {
+  color: var(--text-3);
+}
+.admin-user__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+}
+.admin-create__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+}
+.admin-create__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sp-3);
+}
+.admin-reset-modal {
+  max-width: 400px;
+}
+.admin-reset__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
+}
+/* 0.2.9（用户 3）：「删除」放左下角（danger），取消/保存留右下角。 */
+.admin-reset__actions .btn--danger-outline {
+  margin-right: auto;
+}
+.admin-reset__actions-right {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+}
+/* 0.2.8：重置密码弹窗里显示固定默认密码（只读展示，不是可编辑输入框）。 */
+.admin-reset__code {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.95em;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+@media (max-width: 720px) {
+  .admin-user {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .admin-user__role,
+  .admin-user__created {
+    display: none;
+  }
+  .admin-create__grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* ---- 0.2.8（用户 8）：账号管理表格 ---- */
+.admin-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.admin-toolbar__create {
+  height: 32px;
+  gap: 6px;
+}
+.admin-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-base);
+}
+.admin-table thead th {
+  text-align: left;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.admin-table tbody td {
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.admin-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.admin-table__username,
+.admin-table__displayname {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-table__username {
+  font-variant-numeric: tabular-nums;
+}
+.admin-table__status.is-disabled {
+  color: var(--danger-ink);
+}
+.admin-table__cell-actions {
+  width: 1%;
+  white-space: nowrap;
+}
+.admin-table__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+}
+.admin-table tbody tr.is-self td {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+@media (max-width: 720px) {
+  .admin-table thead th:nth-child(3),
+  .admin-table tbody td:nth-child(3) {
+    display: none;
+  }
+  .admin-table__actions {
+    flex-wrap: wrap;
+  }
+}

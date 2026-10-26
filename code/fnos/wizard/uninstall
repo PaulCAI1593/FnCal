@@ -1,0 +1,21 @@
+[
+  {
+    "stepTitle": "卸载选项",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "保留数据会留下应用数据目录（账号、日历 .ics、日志）；重新安装同一应用后可直接继续使用。删除数据不可撤销，且不会影响应用目录之外的文件。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_keep_data",
+        "label": "应用数据",
+        "default": "keep",
+        "options": [
+          { "label": "保留数据（推荐）", "value": "keep" },
+          { "label": "删除全部应用数据（不可恢复）", "value": "delete" }
+        ]
+      }
+    ]
+  }
+]

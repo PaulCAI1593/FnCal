@@ -1,0 +1,91 @@
+#!/bin/bash
+# uninstall_callback：卸载清理阶段执行。
+# 尊重向导「保留/删除数据」选择：默认保留；只有明确选择 delete 才删除应用自有数据，
+# 且只删本应用数据目录内的已知条目，不碰应用目录之外的文件。
+set -u
+umask 027
+
+APP_NAME="FnCal"
+VAR_DIR="${TRIM_PKGVAR:-}"
+RUN_DIR="${VAR_DIR}/run"
+PID_FILE="${RUN_DIR}/service.pid"
+CHOICE_FILE="${VAR_DIR}/.uninstall-keep-data"
+
+log_info() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+fail() {
+  log_info "卸载清理失败：$1"
+  exit 1
+}
+
+[ -n "$VAR_DIR" ] || fail "缺少 TRIM_PKGVAR 环境变量。"
+
+# 卸载选择：优先用向导环境变量，其次用 uninstall_init 落盘的记录，最后默认保留
+KEEP_DATA="${wizard_keep_data:-}"
+if [ -z "$KEEP_DATA" ] && [ -f "$CHOICE_FILE" ]; then
+  KEEP_DATA="$(cat "$CHOICE_FILE" 2>/dev/null || true)"
+fi
+[ -n "$KEEP_DATA" ] || KEEP_DATA="keep"
+
+case "$KEEP_DATA" in
+  delete|DELETE|Delete|0|false) DO_DELETE=1 ;;
+  *) DO_DELETE=0 ;;
+esac
+
+# 0.2.7：清理运行期 PID（服务已由 uninstall_init → main stop 停止；这里同时清
+# service.pid 与 caldav.pid，避免重装后旧 pid 文件误导 status/stop）。
+rm -f "$PID_FILE" "$VAR_DIR/caldav.pid" 2>/dev/null || true
+
+if [ "$DO_DELETE" -ne 1 ]; then
+  log_info "已保留应用数据：${VAR_DIR}（卸载选择 keep）。删除 ${CHOICE_FILE} 标记。"
+  rm -f "$CHOICE_FILE" 2>/dev/null || true
+  exit 0
+fi
+
+# ---- 删除数据前的路径安全校验：绝不对空值、系统目录或非本应用目录执行 rm -rf ----
+case "$VAR_DIR" in
+  ''|'/'|'/var'|'/home'|'/root'|'/usr'|'/etc'|'/vol1'|'/vol2'|'/vol3')
+    fail "数据目录路径异常（${VAR_DIR}），拒绝删除。"
+    ;;
+esac
+case "$VAR_DIR" in
+  */FnCal|*/FnCal/*) : ;;
+  *)
+    fail "数据目录 ${VAR_DIR} 与应用名 ${APP_NAME} 不匹配，拒绝删除；请人工确认后处理。"
+    ;;
+esac
+
+if [ ! -d "$VAR_DIR" ]; then
+  log_info "数据目录不存在，无需删除：${VAR_DIR}"
+  exit 0
+fi
+
+rm -rf \
+  "${VAR_DIR}/calendars" \
+  "${VAR_DIR}/settings" \
+  "${VAR_DIR}/logs" \
+  "${VAR_DIR}/run" \
+  "${VAR_DIR}/backups" \
+  "${VAR_DIR}/data" \
+  2>/dev/null || true
+rm -f \
+  "${VAR_DIR}/accounts.json" \
+  "${VAR_DIR}/config.json" \
+  "${VAR_DIR}/secret.key" \
+  "${VAR_DIR}/caldav.pid" \
+  "${VAR_DIR}/admin-password.init" \
+  "${VAR_DIR}/admin-initial-password.txt" \
+  "${CHOICE_FILE}" \
+  2>/dev/null || true
+
+# 目录已空则一并移除；仍有未知文件则保留并提示
+rmdir "$VAR_DIR" 2>/dev/null || log_info "数据目录仍含未知文件，已保留：${VAR_DIR}"
+
+log_info "已删除应用数据（卸载选择 delete）：${VAR_DIR}。应用目录之外的文件未做任何改动。"
+exit 0

@@ -1,0 +1,480 @@
+#!/bin/bash
+# FnCal 生命周期脚本：start / stop / status
+#
+# 约定：
+#   - 只使用 fnOS 注入的 TRIM_* 环境变量，不硬编码安装卷路径。
+#   - 服务以 config/privilege 声明的 caldav 用户运行（run-as=package），由本脚本
+#     root 身份调用时用 runuser 降权；非 root 环境（本机调试）直接以当前用户运行。
+#   - 依赖 install_dep_apps=nodejs_v22：优先用 PATH 里的 node，其次从应用安装位置
+#     推导同卷安装的 nodejs_v22/target/bin/node。
+#   - status：运行返回 0，未运行返回 3；未知参数返回 1。
+#   - start：已运行直接返回 0；失败写 TRIM_TEMP_LOGFILE 并返回非 0。
+set -u
+umask 027
+
+APP_SERVER="${TRIM_APPDEST:-}/server/server.mjs"
+VAR_DIR="${TRIM_PKGVAR:-}"
+ETC_DIR="${TRIM_PKGETC:-${VAR_DIR}/etc}"
+CONFIG_FILE="${VAR_DIR}/config.json"
+RUN_DIR="${VAR_DIR}/run"
+PID_FILE="${RUN_DIR}/service.pid"
+SERVICE_LOG="${VAR_DIR}/logs/service.log"
+ADMIN_PWD_INIT="${VAR_DIR}/admin-password.init"
+# 0.1.6：fnOS 统一网关 Socket（官方要求 target 下；社区实测也有放应用根目录的，
+# 两个都尝试监听，避免赌错一边导致桌面卡片 502/404）。
+GATEWAY_SOCKET=""
+GATEWAY_SOCKET_ALT=""
+GATEWAY_PREFIX="/app/FnCal"
+if [ -n "${TRIM_APPDEST:-}" ]; then
+  GATEWAY_SOCKET="${TRIM_APPDEST}/app.sock"
+  GATEWAY_SOCKET_ALT="${TRIM_APPDEST}/../app.sock"
+fi
+DEFAULT_PORT=5280
+PORT_MIN=1024
+PORT_MAX=65535
+START_TIMEOUT=20
+STOP_TIMEOUT=20
+
+log_err() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || printf '%s\n' "$1" >&2
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+log_service() {
+  printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || echo '-')" "$1" >>"${SERVICE_LOG}" 2>/dev/null || true
+}
+
+# 只在启动失败时调用：打印排障所需的最小环境信息（不含密码/密钥/业务数据）。
+diag() {
+  log_err "---- 诊断信息（main）----"
+  log_err "uid=$(id -u 2>/dev/null || echo '?') user=$(id -un 2>/dev/null || echo '?') groups=$(id -Gn 2>/dev/null || echo '?')"
+  log_err "TRIM_APPNAME=${TRIM_APPNAME:-<未设置>} TRIM_APPVER=${TRIM_APPVER:-<未设置>}"
+  log_err "TRIM_APPDEST=${TRIM_APPDEST:-<未设置>}"
+  log_err "TRIM_PKGVAR=${VAR_DIR:-<未设置>}"
+  log_err "TRIM_PKGETC=${ETC_DIR:-<未设置>} TRIM_PKGHOME=${TRIM_PKGHOME:-<未设置>}"
+  for p in "$(dirname "$VAR_DIR" 2>/dev/null || echo '')" "$VAR_DIR"; do
+    [ -n "$p" ] || continue
+    log_err "path: $p"
+    log_err "$(ls -ld "$p" 2>&1 || true)"
+    log_err "$(findmnt -no FSTYPE,OPTIONS --target "$p" 2>/dev/null || mount 2>/dev/null | grep -m1 " $p " || echo 'mount: 未找到')"
+    log_err "$(df -h "$p" 2>/dev/null | tail -n 1 || echo 'df: 不可用')"
+  done
+  log_err "--------------------------"
+}
+
+# 进程存活 + 确实是本应用（有 /proc 时核对命令行，避免 PID 复用误判陈旧 PID）
+proc_alive() {
+  local pid="${1:-}"
+  case "$pid" in
+    ''|0|1|*[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  if [ -r "/proc/${pid}/cmdline" ]; then
+    tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null | grep -q 'server\.mjs' || return 1
+  fi
+  return 0
+}
+
+is_running() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  proc_alive "$pid"
+}
+
+# ---- 0.2.7：残留进程回收（覆盖升级/重装换 target 目录后 pid 文件丢失、端口被旧进程占住）----
+# 「自家进程」判定边界（只杀自家，绝不误伤别的 Node 服务）：
+#   1) /proc/<pid>/cmdline 含 server.mjs；且
+#   2) /proc/<pid>/environ 的 TRIM_PKGVAR 等于本应用数据目录（最强身份标记），
+#      或该进程确实在监听本应用配置端口（/proc/net/tcp 的 LISTEN inode 归属该 pid）。
+# 无 /proc 的平台（非 Linux）跳过，退化为仅按 pid 文件停止。
+listen_inodes() {
+  local port="$1" hex
+  hex="$(printf '%04X' "$port" 2>/dev/null)" || return 1
+  [ -n "$hex" ] || return 1
+  awk -v want=":${hex}" '
+    FNR > 1 && $4 == "0A" && substr($2, length($2) - length(want) + 1) == want { print $10 }
+  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null | sort -u
+}
+
+pid_listens_port() {
+  local pid="$1" port="$2" inode fd target
+  [ -d "/proc/${pid}/fd" ] || return 1
+  for inode in $(listen_inodes "$port"); do
+    for fd in "/proc/${pid}/fd/"*; do
+      target="$(readlink "$fd" 2>/dev/null || true)"
+      [ "$target" = "socket:[${inode}]" ] && return 0
+    done
+  done
+  return 1
+}
+
+pid_env_has_var() {
+  local pid="$1" want="$2"
+  [ -n "$want" ] || return 1
+  [ -r "/proc/${pid}/environ" ] || return 1
+  tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -Fqx "TRIM_PKGVAR=${want}"
+}
+
+own_server_pids() {
+  local port="${1:-}" d pid
+  [ -d /proc ] || return 0
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    [ "$pid" = "$$" ] && continue
+    [ -r "${d}/cmdline" ] || continue
+    tr '\0' ' ' <"${d}/cmdline" 2>/dev/null | grep -q 'server\.mjs' || continue
+    if pid_env_has_var "$pid" "${VAR_DIR:-}"; then
+      printf '%s\n' "$pid"
+      continue
+    fi
+    if [ -n "$port" ] && pid_listens_port "$pid" "$port"; then
+      printf '%s\n' "$pid"
+    fi
+  done
+  return 0
+}
+
+wait_port_free() {
+  local port="$1" limit="${2:-$STOP_TIMEOUT}" waited=0
+  while port_in_use "$port" && [ "$waited" -lt "$limit" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  ! port_in_use "$port"
+}
+
+# TERM → 等待 → KILL；输入为空格/换行分隔的 pid 串。
+stop_pids() {
+  local pids="$1" alive pid waited
+  [ -n "$pids" ] || return 0
+  for pid in $pids; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  waited=0
+  while [ "$waited" -lt "$STOP_TIMEOUT" ]; do
+    alive=""
+    for pid in $pids; do
+      proc_alive "$pid" && alive="${alive} ${pid}"
+    done
+    [ -z "$alive" ] && return 0
+    sleep 1
+    waited=$((waited + 1))
+  done
+  for pid in $alive; do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+  sleep 1
+  return 0
+}
+
+resolve_node() {
+  if [ -n "${CALDAV_NODE_BIN:-}" ] && [ -x "${CALDAV_NODE_BIN}" ]; then
+    printf '%s\n' "${CALDAV_NODE_BIN}"
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  # 依赖应用与主应用安装在同一应用根下：由 TRIM_APPDEST 推导，不写死卷路径
+  local apps_root candidate
+  apps_root="$(cd "${TRIM_APPDEST:-}/../.." 2>/dev/null && pwd)"
+  for candidate in \
+    "${apps_root:+${apps_root}/nodejs_v22/target/bin/node}" \
+    "${TRIM_APPDEST_VOL:+${TRIM_APPDEST_VOL}/@appcenter/nodejs_v22/target/bin/node}"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# 从 config.json 读字符串字段（config.json 由 install_callback 生成，键名固定）
+config_string() {
+  local key="$1" def="${2:-}" value=""
+  if [ -f "$CONFIG_FILE" ]; then
+    value="$(sed -n 's/.*"'"${key}"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n 1)"
+  fi
+  if [ -n "$value" ]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$def"
+  fi
+}
+
+config_number() {
+  local key="$1" def="${2:-}" value=""
+  if [ -f "$CONFIG_FILE" ]; then
+    value="$(sed -n 's/.*"'"${key}"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n 1)"
+  fi
+  if [ -n "$value" ]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$def"
+  fi
+}
+
+# 布尔字段在 config.json 里是 JSON 字面量 true/false（不带引号）
+config_bool() {
+  local key="$1" def="${2:-false}" value=""
+  if [ -f "$CONFIG_FILE" ]; then
+    value="$(sed -n 's/.*"'"${key}"'"[[:space:]]*:[[:space:]]*\([a-zA-Z]*\).*/\1/p' "$CONFIG_FILE" 2>/dev/null | head -n 1)"
+  fi
+  case "$value" in
+    true|false) printf '%s' "$value" ;;
+    *) printf '%s' "$def" ;;
+  esac
+}
+
+valid_port() {
+  case "${1:-}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge "$PORT_MIN" ] && [ "$1" -le "$PORT_MAX" ]
+}
+
+port_in_use() {
+  ( exec 3<>"/dev/tcp/127.0.0.1/${1}" ) 2>/dev/null
+}
+
+start_app() {
+  if is_running; then
+    return 0
+  fi
+
+  # 0.2.7：进程已不在 → 陈旧 pid 文件先清掉，避免误导后续判断与排障。
+  rm -f "$PID_FILE" 2>/dev/null || true
+
+  if [ -z "${TRIM_APPDEST:-}" ] || [ -z "${TRIM_PKGVAR:-}" ]; then
+    log_err "缺少 TRIM_APPDEST / TRIM_PKGVAR 环境变量；请由 fnOS 应用中心调用生命周期脚本。"
+    return 1
+  fi
+
+  if [ ! -f "$APP_SERVER" ]; then
+    log_err "服务端入口缺失：${APP_SERVER}。构建期应把 code/app 复制到 app/server。"
+    return 1
+  fi
+
+  local node_bin
+  if ! node_bin="$(resolve_node)"; then
+    log_err "未找到 Node.js 运行时（install_dep_apps=nodejs_v22 未安装或不在预期位置）。"
+    return 1
+  fi
+
+  # 写阶段：先尝试补齐目录；失败时带诊断（uid、VAR、父目录权限、mount、磁盘）。
+  if ! mkdir -p "$VAR_DIR/logs" "$RUN_DIR" "$VAR_DIR/calendars" "${TRIM_PKGHOME:-${VAR_DIR}/home}" 2>/dev/null; then
+    diag
+    log_err "无法创建应用数据目录：${VAR_DIR}（数据根不可写、安装卷未挂载或卷已满）。"
+    return 1
+  fi
+  chmod 750 "$VAR_DIR" 2>/dev/null || true
+  chmod 700 "$RUN_DIR" "$VAR_DIR/logs" 2>/dev/null || true
+  : >>"$SERVICE_LOG" 2>/dev/null || true
+  chmod 600 "$SERVICE_LOG" 2>/dev/null || true
+
+  local app_user="${TRIM_USERNAME:-${TRIM_RUN_USERNAME:-}}"
+  local app_group="${TRIM_GROUPNAME:-${TRIM_RUN_GROUPNAME:-${app_user}}}"
+  local run_as_root=0
+  [ "$(id -u)" -eq 0 ] && run_as_root=1
+
+  if [ "$run_as_root" -eq 1 ] && [ -n "$app_user" ]; then
+    chown "$app_user:$app_group" "$VAR_DIR" "$VAR_DIR/logs" "$RUN_DIR" "$VAR_DIR/calendars" 2>/dev/null || true
+    chown "$app_user:$app_group" "$SERVICE_LOG" 2>/dev/null || true
+    if [ -f "$ADMIN_PWD_INIT" ]; then
+      chown "$app_user:$app_group" "$ADMIN_PWD_INIT" 2>/dev/null || true
+    fi
+  fi
+
+  # 0.1.9：入口模板 port=${wizard_port} 与 config.json:port 绑定同一个安装时端口。
+  # 端口来源：config.json（install_callback 写入的 wizard_port）→ CALDAV_PORT 覆盖（仅测试）。
+  local port
+  port="$(config_number port "${TRIM_SERVICE_PORT:-$DEFAULT_PORT}")"
+  port="${CALDAV_PORT:-$port}"
+  if ! valid_port "$port"; then
+    log_err "配置端口非法：${port}（应为 ${PORT_MIN}-${PORT_MAX} 的整数）。若入口模板未展开，桌面卡片会指向空端口；"
+    log_err "请卸载时保留数据后重装并在安装向导里填写服务端口，或 SSH 修改 ${CONFIG_FILE} 的 port 后重启。"
+    return 1
+  fi
+  log_service "服务端口：${port}（config.json；入口模板 port=\${wizard_port} 应展开为该值）。"
+  # 入口端口就是监听端口：被占用则卡片与直连都不可用。
+  # 0.2.7：先判断占用者是不是**本应用自己的 server.mjs**（覆盖升级/重装后残留）：
+  #        是 → 收掉它（TERM→KILL）并等端口释放，然后照常启动一次；
+  #        不是 → 才报错，绝不误杀别的进程。
+  if port_in_use "$port"; then
+    local strays
+    strays="$(own_server_pids "$port" | tr '\n' ' ')"
+    if [ -n "${strays// /}" ]; then
+      log_err "端口 ${port} 被本应用上次运行的残留进程占用（pid: ${strays}），正在结束它并重试启动。"
+      log_service "端口 ${port} 被本应用残留进程占用：${strays}；回收后重试启动。"
+      stop_pids "$strays"
+      wait_port_free "$port" || true
+    fi
+    if port_in_use "$port"; then
+      log_err "端口 ${port} 被占用：请先停掉占用它的应用/进程，再启动本应用（可用 ss -ltnp 或 netstat 查看占用）。"
+      log_service "启动失败：端口 ${port} 被占用（入口端口与监听端口一致）。"
+      return 1
+    fi
+  fi
+
+  # 清理陈旧 socket：网关代码保留待用（默认不传 CALDAV_GATEWAY_SOCKETS，不监听）。
+  if [ -n "$GATEWAY_SOCKET" ]; then
+    rm -f "$GATEWAY_SOCKET" "$GATEWAY_SOCKET_ALT" 2>/dev/null || true
+  fi
+  local admin_user log_level
+  admin_user="$(config_string initialAdminUsername "${TRIM_USERNAME:-caldav}")"
+  log_level="$(config_string logLevel "info")"
+
+  local -a start_env=(
+    "TRIM_PKGVAR=${VAR_DIR}"
+    "TRIM_PKGETC=${ETC_DIR}"
+    "TRIM_APPDEST=${TRIM_APPDEST}"
+    "CALDAV_PORT=${port}"
+    "CALDAV_HOST=${CALDAV_HOST:-0.0.0.0}"
+    "CALDAV_USER=${admin_user}"
+    "CALDAV_PID=${VAR_DIR}/caldav.pid"
+    "CALDAV_LOG=${VAR_DIR}/logs/app.log"
+    "CALDAV_LOG_LEVEL=${log_level}"
+    "CALDAV_GATEWAY_PREFIX=${GATEWAY_PREFIX}"
+    "HOME=${TRIM_PKGHOME:-${VAR_DIR}/home}"
+    "PATH=$(dirname "$node_bin"):${PATH:-/usr/local/bin:/usr/bin:/bin}"
+  )
+
+  # 初始管理员密码：安装时提供则透传；未提供则显式传空串，让应用生成随机密码
+  # 并写入 <var>/admin-initial-password.txt（0600），绝不回落到内置默认密码。
+  local admin_pwd=""
+  if [ -f "$ADMIN_PWD_INIT" ]; then
+    admin_pwd="$(head -n 1 "$ADMIN_PWD_INIT" 2>/dev/null || true)"
+  fi
+  start_env+=("CALDAV_ADMIN_PASSWORD=${admin_pwd}")
+
+  local -a run_prefix=()
+  if [ "$run_as_root" -eq 1 ] && [ -n "$app_user" ]; then
+    if command -v runuser >/dev/null 2>&1; then
+      run_prefix=(runuser -u "$app_user" --)
+    else
+      log_err "缺少 runuser，无法以 ${app_user} 降权启动服务。"
+      return 1
+    fi
+  fi
+
+  local work_dir
+  work_dir="$(cd "${TRIM_APPDEST}/server" 2>/dev/null && pwd)" || {
+    log_err "无法进入服务端目录：${TRIM_APPDEST}/server"
+    return 1
+  }
+
+  cd "$work_dir" || return 1
+  nohup ${run_prefix[@]+"${run_prefix[@]}"} \
+    env ${start_env[@]+"${start_env[@]}"} \
+    "$node_bin" "$APP_SERVER" >>"$SERVICE_LOG" 2>&1 &
+  local pid=$!
+  printf '%s\n' "$pid" >"$PID_FILE" 2>/dev/null || {
+    log_err "无法写入 PID 文件：${PID_FILE}"
+    kill -TERM "$pid" 2>/dev/null || true
+    return 1
+  }
+
+  local waited=0
+  while [ "$waited" -lt "$START_TIMEOUT" ]; do
+    if ! proc_alive "$pid"; then
+      rm -f "$PID_FILE"
+      log_err "服务启动失败：进程已退出。详见 ${SERVICE_LOG} 与 ${VAR_DIR}/logs/app.log"
+      return 1
+    fi
+    # 就绪判定：TCP 已监听即就绪（入口端口=监听端口）；网关 socket 若将来重新启用，
+    # 也接受 socket 已创建。
+    if port_in_use "$port" || [ -S "$GATEWAY_SOCKET" ] || [ -S "$GATEWAY_SOCKET_ALT" ]; then
+      # 应用已完成首次初始化（accounts.json 已生成）→ 一次性密码文件不再需要
+      if [ -f "$ADMIN_PWD_INIT" ] && [ -s "${VAR_DIR}/accounts.json" ]; then
+        rm -f "$ADMIN_PWD_INIT"
+      fi
+      if [ ! -s "${VAR_DIR}/accounts.json" ]; then
+        log_service "首次启动：管理员初始密码见安装时填写值或 ${VAR_DIR}/admin-initial-password.txt（0600）。"
+      fi
+      log_service "服务已启动：pid=${pid} port=${port} node=${node_bin}"
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 1
+  proc_alive "$pid" && kill -KILL "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  log_err "服务在 ${START_TIMEOUT} 秒内未就绪（port=${port}）。请检查 ${SERVICE_LOG} 与 ${VAR_DIR}/logs/app.log；若日志显示端口未监听，请确认 config.json 的 port 与入口模板一致。"
+  return 1
+}
+
+stop_app() {
+  local pid="" port
+  port="$(config_number port "${TRIM_SERVICE_PORT:-$DEFAULT_PORT}")"
+  port="${CALDAV_PORT:-$port}"
+
+  if [ -f "$PID_FILE" ]; then
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  fi
+  case "$pid" in
+    ''|0|1|*[!0-9]*) pid="" ;;
+  esac
+
+  if [ -n "$pid" ] && proc_alive "$pid"; then
+    kill -TERM "$pid" 2>/dev/null || true
+    local waited=0
+    while proc_alive "$pid" && [ "$waited" -lt "$STOP_TIMEOUT" ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if proc_alive "$pid"; then
+      kill -KILL "$pid" 2>/dev/null || true
+      sleep 1
+    fi
+    log_service "服务已停止：pid=${pid}"
+  fi
+
+  # 0.2.7：pid 文件缺失/陈旧（覆盖升级、重装换 target 目录后常见）→
+  # 按「自家进程」标记回收残留，否则端口会被永久占住（旧版 stop 在这里静默跳过）。
+  if [ -d /proc ]; then
+    local strays
+    strays="$(own_server_pids "$port" | tr '\n' ' ')"
+    if [ -n "${strays// /}" ]; then
+      log_err "发现本应用残留进程（pid: ${strays}），正在回收。"
+      log_service "回收本应用残留进程：${strays}"
+      stop_pids "$strays"
+    fi
+  fi
+
+  # 尽力等端口释放（最多 STOP_TIMEOUT=20 秒），升级前停服尤其需要。
+  if valid_port "$port" && ! wait_port_free "$port" "$STOP_TIMEOUT"; then
+    log_err "端口 ${port} 在 ${STOP_TIMEOUT} 秒内仍未释放；如仍被占用，请用 ss -ltnp 查看占用进程。"
+    log_service "停止后端口仍被占用：${port}"
+  fi
+
+  rm -f "$PID_FILE" "$VAR_DIR/caldav.pid" "$GATEWAY_SOCKET" "$GATEWAY_SOCKET_ALT" 2>/dev/null || true
+  return 0
+}
+
+case "${1:-}" in
+  start)
+    start_app
+    exit $?
+    ;;
+  stop)
+    stop_app
+    exit $?
+    ;;
+  status)
+    if is_running; then
+      exit 0
+    fi
+    exit 3
+    ;;
+  *)
+    exit 1
+    ;;
+esac

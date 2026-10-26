@@ -1,0 +1,59 @@
+#!/bin/bash
+# config_init：应用配置变更之前执行。
+# 只校验，不改文件：非法配置返回非 0，让应用中心保留旧配置。
+set -u
+umask 027
+
+log_info() {
+  if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then
+    printf '%s\n' "$1" >>"${TRIM_TEMP_LOGFILE}" 2>/dev/null || true
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+fail() {
+  log_info "配置校验失败：$1（旧配置保持不变）"
+  exit 1
+}
+
+# 数据目录可能尚未创建（首次安装前的只读阶段）；配置校验不依赖它，直接通过。
+VAR_DIR="${TRIM_PKGVAR:-}"
+if [ -n "$VAR_DIR" ] && [ ! -d "$VAR_DIR" ]; then
+  log_info "数据目录尚未创建（${VAR_DIR}）；配置校验不依赖它，继续。"
+fi
+
+# 日志级别（向导 wizard/config 的 radio 字段）
+LOG_LEVEL="${wizard_log_level:-}"
+if [ -n "$LOG_LEVEL" ]; then
+  case "$LOG_LEVEL" in
+    debug|info|warn|error) : ;;
+    *) fail "日志级别只能为 debug / info / warn / error，收到：${LOG_LEVEL}" ;;
+  esac
+fi
+
+# 端口：与向导同一条 1024–65535 规则；报错文案统一（0.1.5 起不再只说「不能小于」）。
+if [ -n "${wizard_port:-}" ]; then
+  case "${wizard_port}" in
+    ''|*[!0-9]*) fail "端口必须是 1024–65535 之间的数字（例如 5290），收到：${wizard_port}" ;;
+  esac
+  if [ "${wizard_port}" -lt 1024 ] || [ "${wizard_port}" -gt 65535 ]; then
+    fail "端口必须是 1024–65535 之间的数字（例如 5290），收到：${wizard_port}"
+  fi
+fi
+
+# 0.2.13：HTTPS 端口（可留空表示沿用当前值）。规则与 HTTP 端口一致，且不得与 HTTP 端口相同。
+if [ -n "${wizard_https_port:-}" ]; then
+  case "${wizard_https_port}" in
+    ''|*[!0-9]*) fail "HTTPS 端口必须是 1024–65535 之间的数字（例如 5243），收到：${wizard_https_port}" ;;
+  esac
+  if [ "${wizard_https_port}" -lt 1024 ] || [ "${wizard_https_port}" -gt 65535 ]; then
+    fail "HTTPS 端口必须是 1024–65535 之间的数字（例如 5243），收到：${wizard_https_port}"
+  fi
+  if [ -n "${wizard_port:-}" ] && [ "$((10#${wizard_https_port}))" -eq "$((10#${wizard_port}))" ]; then
+    fail "HTTPS 端口不能与 HTTP 端口相同（都是 ${wizard_port}），请把其中一个改成别的端口。"
+  fi
+fi
+
+log_info "配置校验通过（日志级别：${LOG_LEVEL:-未变更}，HTTP 端口：${wizard_port:-未变更}，HTTPS 端口：${wizard_https_port:-未变更}）。"
+exit 0

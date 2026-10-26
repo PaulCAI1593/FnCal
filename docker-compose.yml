@@ -1,0 +1,35 @@
+# FnCal —— 实验性 compose 文件（草稿，未验证），与同目录 Dockerfile 配套。
+#
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# 数据默认放 named volume（fncal-data）；容器内以 uid 1000（node 用户）运行。
+# 想直接按文件备份，就把 volumes 换成 ./data:/data，并先执行
+#   chown -R 1000:1000 ./data        # Linux / NAS
+#   icacls 略，Windows Docker Desktop 下 bind mount 权限较松，一般可直接写
+services:
+  fncal:
+    build: .
+    image: fncal:dev
+    container_name: fncal
+    restart: unless-stopped
+    ports:
+      # 左边是 NAS 上对外的端口，改成你要的（≥ 1024；不要用 5232，那是 Radicale 默认端口）
+      - "5581:5280"
+    environment:
+      CALDAV_HOST: "0.0.0.0"
+      CALDAV_PORT: "5280"
+      CALDAV_USER: "caldav"
+      # 首次启动用它初始化管理员。装好之后再改这个值不会改已有密码。
+      CALDAV_ADMIN_PASSWORD: "换成你的强密码"
+    volumes:
+      - fncal-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5280/api/version').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  fncal-data:
