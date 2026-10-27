@@ -126,7 +126,9 @@ describe('M1 搜索时间范围：日期字段空态「年/月/日」', () => {
 
   it('源码口径：日期字段走 openDatePopover，且没有裸 input 的 type=date 直接渲染', () => {
     const src = readSrc('src/js/search.js');
-    expect(src).toContain("import { openDatePopover } from './date-popover.js'");
+    // 0.2.39：import 里多带了 isInsideDatePopover（点弹层不能被当成「点外面」）。
+    expect(src).toContain("from './date-popover.js'");
+    expect(src).toContain('isInsideDatePopover');
     expect(src).toContain('function buildDateField(');
     expect(src).toContain("t('search.filter.datePlaceholder')");
     // 空态文案必须走 i18n，不许在 JS 里硬写中文。

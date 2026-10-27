@@ -23,7 +23,7 @@ import {
 import { t } from '../i18n/index.js';
 // 0.2.36（M1）：时间范围的日期字段改用弹层日历（与编辑器 0.2.19 D3 同一套），
 // 这样空态文案是我们自己的「年/月/日」，不再由浏览器按 locale 画原生占位符。
-import { openDatePopover } from './date-popover.js';
+import { isInsideDatePopover, openDatePopover } from './date-popover.js';
 // 0.2.15（D6）：结果面板宽度与「展开态槽宽」同源（lib/segment.js），不再量搜索条自身宽度。
 import { searchPanelWidth } from './lib/segment.js';
 
@@ -437,6 +437,10 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
       // 0.2.4：点 header 里的「筛选」按钮不算「点外面」（否则面板刚开就被关）。
       if (e.target === dockedInput) return;
       if (filterBtn && (e.target === filterBtn || filterBtn.contains(e.target))) return;
+      // 0.2.39（M1）：日期弹层挂在 body 下、不在 dockedPanel 里。点日历格子或翻月
+      // 若被当成「点外面」，搜索条会连筛选一起收起——用户 m00633「筛选-选择日期
+      // 点击直接缩回去了」。弹层自己有单例与 outside 监听，这里放行即可。
+      if (isInsideDatePopover(e.target)) return;
       closeDocked();
     };
     document.addEventListener('pointerdown', outsideHandler, true);

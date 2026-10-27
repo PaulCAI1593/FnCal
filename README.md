@@ -5,7 +5,7 @@
 FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在本机，运行期不访问任何第三方云服务。
 装好之后在浏览器里管理日程；也可以把它当 CalDAV 服务器，让手机、电脑上的日历客户端直接读写同一批日程。
 
-当前版本：**0.2.38**
+当前版本：**0.2.42**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -33,7 +33,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 **CalDAV 服务**
 
 - 内置 CalDAV 服务器，按 RFC 4791 实现，支持事件（VEVENT）与任务（VTODO）
-- 覆盖客户端需要的创建 / 读取 / 修改 / 删除与增量同步；DAVx5、Thunderbird、eM Client 等标准客户端可直接连接
+- 覆盖客户端需要的创建 / 读取 / 修改 / 删除与增量同步；DAVx5、Thunderbird、eM Client、Windows「邮件和日历」等标准客户端可直接连接
 - 每个日历在 CalDAV 下是一个独立集合，各自颜色与只读标记会被客户端识别
 
 **中文与移动端**
@@ -64,7 +64,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 从本仓库 Release 下载 `FnCal-0.2.38.fpk`；
+1. 从本仓库 Release 下载 `FnCal-0.2.42.fpk`；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个 **≥ 1024** 的空闲端口（不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -72,8 +72,8 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.2.38.fpk
-# Windows: Get-FileHash .\FnCal-0.2.38.fpk -Algorithm SHA256
+sha256sum FnCal-0.2.42.fpk
+# Windows: Get-FileHash .\FnCal-0.2.42.fpk -Algorithm SHA256
 ```
 
 期望值见 `SHA256SUMS.txt`（正文内也附了一份）。

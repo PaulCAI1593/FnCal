@@ -940,6 +940,17 @@ export function createDavHandler({ store, config, logger, auth }) {
         return send(res, 400, { 'Content-Type': 'text/plain; charset=utf-8' }, 'invalid resource path\n');
       }
 
+      // 0.2.42（CalDAV 兼容）：OPTIONS 是能力探测，不携带凭据，也不该被认证拦下。
+      // Windows「邮件和日历」（Dav.Client）在账户创建阶段先发一条不带凭据的
+      // OPTIONS 取能力头，收到 401 就直接放弃，界面表现为「操作超时 / NO RESPONSE」
+      // （堆栈：Dav.Client.CalDav.CalDavServer.GetOptions → Create → CheckProviderAccountInfo）。
+      // RFC 4918 §10.1 未要求 OPTIONS 认证；公开的能力头不泄露账号、日历或事件数据。
+      // 其余方法（PROPFIND/REPORT/PUT/DELETE/…）仍在下方面对未认证请求返回 401。
+      if (req.method === 'OPTIONS') {
+        status = 200;
+        return await handleOptions(req, res, target);
+      }
+
       // 0.2.13：受限会话（mfa:1，含「必须先改密」）也要走到下面 403 分支，
       // 否则客户端只会看到 401 而不知道要先改密 / 完成两步验证。
       const identity = await auth.authenticate(req, { allowMfaPending: true });

@@ -101,6 +101,18 @@ export function closeDatePopover({ restoreFocus = false } = {}) {
 }
 
 /**
+ * 0.2.39（M1）：事件目标是否落在**当前打开的**日期弹层内。
+ *
+ * 弹层挂在 `document.body` 下，不在宿主浮层的 DOM 子树里。宿主的「点外面就关」
+ * 监听（常驻搜索条的 outsideHandler 等）若不做这个判定，就会把「点日历格子 /
+ * 翻月」当成点外面，连宿主一起收起——用户 m00633 报的「筛选里选日期，点一下
+ * 就缩回去了」正是这一条。
+ */
+export function isInsideDatePopover(target) {
+  return Boolean(currentPopover && currentPopover.contains(target));
+}
+
+/**
  * 打开日期弹层。
  * @param {{ anchor: HTMLElement, value?: string, lunar?: boolean, weekStartsOn?: number,
  *           showModeToggle?: boolean,
@@ -370,7 +382,13 @@ export function openDatePopover({
     ],
   );
 
-  const api = { anchor, close, isOpen: () => !closed };
+  const api = {
+    anchor,
+    close,
+    isOpen: () => !closed,
+    // 0.2.39（M1）：供宿主浮层判断「这次点击是不是落在我这个弹层里」。
+    contains: (node) => Boolean(node) && box.contains(node),
+  };
   currentPopover = api;
 
   render();

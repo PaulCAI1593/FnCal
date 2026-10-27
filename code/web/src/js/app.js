@@ -13,6 +13,9 @@ import { clearSnapshot } from './offline-store.js';
 import { isBlocked, isOfflineError } from './offline.js';
 import { createEventModal } from './modal.js';
 import { createSearch, attachSearchClear } from './search.js';
+// 0.2.40：日期弹层挂在 document.body 下（不在搜索条 DOM 子树里），常驻搜索条的
+// 「点外面就收起」判定必须显式问它，否则在弹层里点日期会被当成点外面。
+import { isInsideDatePopover } from './date-popover.js';
 // 0.2.11（C10）：搜索槽位宽度是共享常量（lib/segment.js），展开/收起都不变。
 import { searchSlotWidth } from './lib/segment.js';
 import { openImportDialog, openExportDialog } from './data-io.js';
@@ -890,7 +893,7 @@ export function createApp(root, { store, user }) {
       const target = e.target;
       searchPointerInsidePanel = Boolean(
         target && target.closest && target.closest('.search__panel--docked'),
-      );
+      ) || isInsideDatePopover(target);
     },
     true,
   );
@@ -911,11 +914,13 @@ export function createApp(root, { store, user }) {
     searchBarInput.blur();
   });
   // 点到搜索条和结果面板之外 → 折叠（结果面板的关闭由 search 自己的 outside 处理）。
+  // 0.2.40：筛选面板里的日期弹层挂在 body 下，点它内部不算「点外面」。
   document.addEventListener('pointerdown', (e) => {
     const target = e.target;
     if (!target || !target.closest) return;
     if (searchBar.contains(target)) return;
     if (target.closest('.search__panel--docked')) return;
+    if (isInsideDatePopover(target)) return;
     collapseSearch();
     search.closeDocked();
   });

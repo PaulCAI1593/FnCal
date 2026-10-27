@@ -1,5 +1,5 @@
 appname=FnCal
-version=0.2.38
+version=0.2.42
 display_name=FnCal
 desc=FnCal：本地优先的日程管理应用，自带 CalDAV 服务，数据只存放在本机，不访问任何云服务。
 maintainer=PaulCAI1593

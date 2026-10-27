@@ -64,7 +64,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 开关对比度、迷你月历点线、年视图换行断开、「四日」）——同样是纯前端。
 // 0.2.18：C 批七条（年视图圆几何、迷你点线一整条、四视图拼接条与箭头方向、
 // 搜索面板加宽、编辑弹窗农历日期选择、搜索胶囊圆头等高）——同样是纯前端。
-export const VERSION = '0.2.38';
+export const VERSION = '0.2.42';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';

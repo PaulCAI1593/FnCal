@@ -32,7 +32,7 @@
 }
 .month__dow {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   border-bottom: 1px solid var(--border);
 }
 .month__dow-cell {
@@ -46,7 +46,7 @@
 }
 .month__grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   grid-auto-rows: 1fr;
   min-height: 0;
 }
@@ -55,6 +55,9 @@
   border-bottom: 1px solid var(--grid-line);
   padding: var(--sp-1);
   min-height: 0;
+  /* 0.2.41（用户 12）：grid item 默认 min-width:auto，长条会把列撑宽，
+     与 afterMount 的等宽假设冲突 → 段与格错位、段间出缝。 */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;

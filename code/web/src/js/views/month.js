@@ -396,6 +396,12 @@ export function renderMonth(ctx) {
       const rowCells = cellData.slice(rowStart, rowStart + 7);
       const rowRect = rowCells[0].cell.getBoundingClientRect();
       const origin = rowRect.left;
+      // 0.2.41（用户 12 · m01444）：下面把「第 2 格左边界 − 第 1 格左边界」当成**七列统一
+      // 列宽**，前提是各列宽度严格相等——这由 views.css 的
+      // `.month__grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }` 与
+      // `.month__cell { min-width: 0; }` 保证。`1fr` 的最小值是 auto（min-content），
+      // 格内不换行的跨天条会把列撑成不同宽度 → 段按平均列宽摆位、与实际格错位，
+      // 表现为「开头不内缩 + 段间 6.4px 的缝」（真机实测 101.2 / 99.6 / 94.8）。
       const cellWidth = rowCells[1].cell.getBoundingClientRect().left - origin;
       if (!(cellWidth > 0)) continue;
       if (expectedCellWidth > 0 && Math.abs(cellWidth - expectedCellWidth) > 1) layoutDirty = true;
