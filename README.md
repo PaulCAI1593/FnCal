@@ -7,6 +7,10 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 
 当前版本：**0.2.38**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
+[![Platform](https://img.shields.io/badge/platform-fnOS%20%C2%B7%20Linux-4D6BFE)](https://www.fnnas.com/)
+
 ---
 
 ## 功能
@@ -162,6 +166,10 @@ MIT 许可证开放出来——没有它，这个项目不会存在。FnCal 在�
 - **[Node.js](https://nodejs.org/)** — 后端运行时。
 
 完整第三方代码清单、版本与来源见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。
+
+本项目的开发、评审与发布流程由 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的多 Bot 团队协作完成：
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
 
 ---
 
