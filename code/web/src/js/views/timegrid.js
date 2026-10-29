@@ -885,6 +885,11 @@ function buildAllDayChip(event, ctx, day, bounds, slot = null) {
         atRowEnd: Boolean(slot) && slot.index === slot.count - 1,
       })
     : { contBefore: false, contAfter: false };
+  // 0.2.43（用户 10-28）：与月视图统一口径——行首续段也渲染标题。这里**当前没有行为
+  // 变化**：时间网格的 bounds.labelFirst 就是第一列（timegrid.js 的 railBounds），第一列
+  // 的续段本来 showLabel 就为 true。仍写这一条是为了让两个视图的判定同源，日后谁改
+  // labelFirst 的语义，都不会让另一处静默退化。
+  const showTitle = showLabel || ends.contBefore;
   const node = el('div', {
     // 0.2.20（E20，口径 A）：按**列位置**而不是段位置决定是否吃边距——第一列那一段
     // 不吃 margin-left、最后一列那一段不吃 margin-right（事件是否继续出去都一样，
@@ -899,12 +904,13 @@ function buildAllDayChip(event, ctx, day, bounds, slot = null) {
   });
   if (event.ooo && showLabel) node.append(el('span', { class: 'allday-chip__icon', html: icon('plane', { size: 'sm' }) }));
   // 后续段不重复标题，但用零宽空格保住行高，连条在列与列之间不会变矮；
-  // 读屏仍拿到 chip 上完整的 aria-label。
+  // 读屏仍拿到 chip 上完整的 aria-label。0.2.43：被视图左缘截断的行首段例外
+  // （那里有「<」），补标题（见上面的 showTitle）。
   node.append(
     el('span', {
       class: 'allday-chip__title',
-      text: showLabel ? event.title || t('agenda.event.untitled') : '\u200b',
-      'aria-hidden': showLabel ? null : 'true',
+      text: showTitle ? event.title || t('agenda.event.untitled') : '\u200b',
+      'aria-hidden': showTitle ? null : 'true',
     }),
   );
   // 0.2.18（C4）：箭头指向继续方向——视图左缘被截断（继续到上一屏）画「<」、

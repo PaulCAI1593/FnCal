@@ -9,7 +9,7 @@
 
 export const DEFAULT_ACCENT = '#2f5e9e';
 
-/** 项目负责人定的 6 个预设（深蓝为默认）。 */
+/** 负责人定的 6 个预设（深蓝为默认）。 */
 export const ACCENT_PRESETS = [
   { key: 'deepBlue', hex: '#2f5e9e' },
   { key: 'teal', hex: '#1f9e8f' },

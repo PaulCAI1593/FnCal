@@ -831,6 +831,11 @@ function buildChip(event, day, ctx, cellData, bounds) {
         atRowEnd: dayMs === bounds.last,
       })
     : { contBefore: false, contAfter: false };
+  // 0.2.43（用户 10-28）：换行到下一行的那一段，行首以前只有「<」、没有名字，读者得
+  // 回上一行找这条是什么。现在行首续段（chip--cont-before）也补标题——**只补标题、
+  // 不补时间**（跨天定时事件在续段的时间是这一天的 00:00，显示反而误导）；行内中间
+  // 的续段仍不重复标题，否则一条横跨七格的事件会把名字重复七遍。
+  const showTitle = showLabel || ends.contBefore;
   // A timed event that crosses midnight gets its own chip in each day it touches.
   // Label it with its start *within this cell's day*, not the original start: on
   // the day after it began the event is present from midnight, so a 11:30 PM →
@@ -880,11 +885,13 @@ function buildChip(event, day, ctx, cellData, bounds) {
   }
   // 跨周后的后续段不重复标题；但保留行内盒高度（0.2.9：用零宽空格占位，
   // 段高才与首段一致，否则连条会在换格处变矮），读屏走 chip 的 aria-label。
+  // 0.2.43：行首续段例外——那一格的左边就是「<」，补上标题才认得出来（见上面的
+  // showTitle）。
   chip.append(
     el('span', {
       class: 'chip__title',
-      text: showLabel ? event.title || t('agenda.event.untitled') : '\u200b',
-      'aria-hidden': showLabel ? null : 'true',
+      text: showTitle ? event.title || t('agenda.event.untitled') : '\u200b',
+      'aria-hidden': showTitle ? null : 'true',
     }),
   );
 

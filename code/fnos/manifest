@@ -1,11 +1,11 @@
 appname=FnCal
-version=0.2.42
+version=0.3.4
 display_name=FnCal
-desc=FnCal：本地优先的日程管理应用，自带 CalDAV 服务，数据只存放在本机，不访问任何云服务。
+desc=FnCal：本地优先的日程管理应用，自带 CalDAV 服务与 AI 助手（MCP）接入。AI 可按日历授权只读或读写，写入默认先提案、你确认后才生效；数据只存放在本机，不访问任何云服务。
 maintainer=PaulCAI1593
-maintainer_url=https://github.com/PaulCAI1593/
+maintainer_url=https://github.com/PaulCAI1593/FnCal
 distributor=PaulCAI1593
-distributor_url=https://github.com/PaulCAI1593/
+distributor_url=https://github.com/PaulCAI1593/FnCal
 source=thirdparty
 platform=all
 install_dep_apps=nodejs_v22

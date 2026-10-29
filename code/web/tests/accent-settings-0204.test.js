@@ -138,7 +138,7 @@ describe('设置 → 一般：主题色', () => {
     expect(style.textContent).toContain('--accent:#6b4fa8');
     applyAccentColor(DEFAULT_ACCENT);
     expect(document.getElementById('fncal-accent-theme')).toBeNull();
-    // 预设清单与项目负责人口径一致
+    // 预设清单与负责人口径一致
     expect(ACCENT_PRESETS.map((p) => p.hex)).toEqual([
       '#2f5e9e', '#1f9e8f', '#6b4fa8', '#c26a1f', '#b3392f', '#4b5162',
     ]);

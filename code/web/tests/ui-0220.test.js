@@ -736,12 +736,12 @@ describe('0.2.20 E13–E16：设置页', () => {
     expect(i18n).not.toContain("'settings.admin.hint'");
   });
 
-  it('E14：快捷键是第 4 个页签，13 条直接平铺', async () => {
+  it('E14：快捷键是第 5 个页签，13 条直接平铺', async () => {
     const dialog = await openSettings({});
     const tabs = [...dialog.querySelectorAll('.settings__tabs [role="tab"]')].map((b) => b.textContent);
-    expect(tabs).toEqual(['一般', '日历', 'CalDAV 账户', '快捷键']);
-    tabs.length;
-    [...dialog.querySelectorAll('.settings__tabs [role="tab"]')][3].click();
+    // 0.3.0（P4）：五个页签（CalDAV 文案收短、新增 AI）
+    expect(tabs).toEqual(['一般', '日历', 'CalDAV', 'AI', '快捷键']);
+    [...dialog.querySelectorAll('.settings__tabs [role="tab"]')][4].click();
     const page = dialog.querySelector('#settings-page-shortcuts');
     expect(page).toBeTruthy();
     expect(page.hidden).toBe(false);

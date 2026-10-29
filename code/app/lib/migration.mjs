@@ -16,7 +16,7 @@
 //      old `holidayCountry`, new default keys, and a `.data/settings.backup.*`
 //      copy of the pre-migration value.
 //
-// Safety (项目决策):
+// Safety (既定口径):
 //   - before touching anything, copy the data part of `<var>` to
 //     `<var>/backups/migration-<timestamp>/` (excludes logs/run/backups/*.pid);
 //   - any error -> restore that backup, write `migration.json:{status:'failed'}`,
@@ -40,8 +40,11 @@ import {
 import { runWithContext } from './request-context.mjs';
 import { eventToIcs, taskToIcs } from './ical.mjs';
 import { needsSettingsMigration, normalizeSettings } from './settings.mjs';
+import { createAiStore } from './ai-store.mjs';
 
-export const MIGRATION_VERSION = 3;
+// 0.3.0：v4 = v3 的全部步骤 + 「AI 数据集合就位」（ai-credentials / ai-proposals /
+// ai-settings.json）。只加不改：旧数据没有这两个集合时按空处理，已有内容一律保留。
+export const MIGRATION_VERSION = 4;
 const MARKER_FILE = 'migration.json';
 const BACKUP_PREFIX = 'migration-';
 const SKIP_ENTRIES = new Set(['logs', 'run', 'backups']);
@@ -105,7 +108,7 @@ export function createMigration({ store, accounts, varDir, logger = null, option
   const root = path.resolve(varDir);
   const markerPath = path.join(root, MARKER_FILE);
   const backupRoot = path.join(root, 'backups');
-  let state = { status: 'pending', version: MIGRATION_VERSION, at: null, lastError: null, counts: {} };
+  let state = { status: 'pending', version: MIGRATION_VERSION, at: null, lastError: null, counts: {}, ai: null };
 
   function logEvent(event, detail = {}) {
     if (logger && typeof logger.event === 'function') logger.event(event, detail);
@@ -385,6 +388,36 @@ export function createMigration({ store, accounts, varDir, logger = null, option
     return { needed: false };
   }
 
+  let aiState = null;
+
+  /**
+   * 0.3.0 v4：AI 数据集合就位（幂等，只新建/修复，不动已有内容）。
+   *
+   * 失败语义（负责人 2026-10-27）：**不阻塞启动**——AI 只是新增能力，缺了它日历/
+   * 任务照常可用，不能因为一个 AI 集合建不出来就让应用中心反复重启。失败时：
+   * 保留旧数据（损坏文件改名留证，不删除）、中文日志、标记 `ai.status='failed'`，
+   * 并让 `--migrate`（升级回调）以非 0 退出，便于升级脚本看见「这次没完全就绪」。
+   */
+  async function ensureAiReady() {
+    const at = new Date().toISOString();
+    try {
+      const aiStore = createAiStore({ store, accounts, varDir: root, logger });
+      const result = await aiStore.ensureAiCollections();
+      aiState = { status: 'done', at, ...result };
+      logEvent('migration-ai-ready', aiState);
+      return aiState;
+    } catch (err) {
+      const message = String(err && err.message ? err.message : err);
+      aiState = { status: 'failed', at, error: message, users: 0, created: 0, repaired: 0 };
+      logEvent('migration-ai-failed', { message });
+      log(
+        `AI 数据初始化失败：${message}；旧数据保持不变（未删除任何文件），日历/任务照常可用，`
+        + '仅 AI 功能本次不可用。排查后删除 ' + `${markerPath} 可重试（升级回调会以非 0 退出）。`,
+      );
+      return aiState;
+    }
+  }
+
   async function run() {
     state = { ...state, status: 'running' };
     if (options.disable) {
@@ -398,8 +431,19 @@ export function createMigration({ store, accounts, varDir, logger = null, option
       return state;
     }
     const marker = await readMarker();
-    if (marker && Number(marker.version) >= MIGRATION_VERSION && marker.status === 'done') {
-      state = { ...state, status: 'done', at: marker.at || null, counts: marker.users || {} };
+    if (marker && marker.status === 'done' && Number(marker.version) >= 3) {
+      // v3+ 的老标记：数据迁移早已完成，**不重跑对账**（重跑会重复统计补写条数）。
+      const storedAi = marker.ai && typeof marker.ai === 'object' ? marker.ai : null;
+      if (Number(marker.version) >= MIGRATION_VERSION) {
+        aiState = storedAi || { status: 'done', at: marker.at || null };
+        state = { ...state, status: 'done', at: marker.at || null, counts: marker.users || {}, ai: aiState };
+        return state;
+      }
+      // v3 -> v4：只补建 AI 数据集合（只加不改），保留原 marker 的对账记录。
+      const ready = await ensureAiReady();
+      await writeMarker({ ...marker, version: MIGRATION_VERSION, status: 'done', ai: ready });
+      state = { ...state, status: 'done', at: marker.at || null, counts: marker.users || {}, ai: ready };
+      log(`迁移标记已升级到 v${MIGRATION_VERSION}：只补建 AI 数据集合（空集合/实例设置），未重跑对账。`);
       return state;
     }
     if (marker && marker.status === 'failed') {
@@ -430,10 +474,11 @@ export function createMigration({ store, accounts, varDir, logger = null, option
             users[account.id] = await reconcileLegacyKv(account.id);
             logEvent('migration-user-reconciled', { userId: account.id, ...users[account.id] });
           }
+          const ai = await ensureAiReady();
           await writeMarker({
-            version: MIGRATION_VERSION, status: 'done', at: doneAt, users, backup: null, reconcileOnly: true,
+            version: MIGRATION_VERSION, status: 'done', at: doneAt, users, backup: null, reconcileOnly: true, ai,
           });
-          state = { ...state, status: 'done', at: doneAt, counts: users, backup: null };
+          state = { ...state, status: 'done', at: doneAt, counts: users, backup: null, ai };
           const totals = Object.values(users).reduce((acc, item) => {
             const legacy = (item && item.legacy) || {};
             acc.imported += (legacy.importedEvents || 0) + (legacy.importedTasks || 0);
@@ -453,8 +498,10 @@ export function createMigration({ store, accounts, varDir, logger = null, option
           return state;
         }
       }
-      await writeMarker({ version: MIGRATION_VERSION, status: 'done', at: doneAt, users: {}, backup: null, noop: true });
-      state = { ...state, status: 'done', at: doneAt, counts: {}, backup: null };
+      // v3 -> v4：老库没有 AI 集合，这里补建（空集合）+ 实例设置文件；只加不改。
+      const ai = await ensureAiReady();
+      await writeMarker({ version: MIGRATION_VERSION, status: 'done', at: doneAt, users: {}, backup: null, noop: true, ai });
+      state = { ...state, status: 'done', at: doneAt, counts: {}, backup: null, ai };
       logEvent('migration-noop', { reason: 'nothing-to-migrate' });
       return state;
     }
@@ -471,15 +518,17 @@ export function createMigration({ store, accounts, varDir, logger = null, option
         users[account.id] = await migrateUser(account.id);
         logEvent('migration-user-done', { userId: account.id, ...users[account.id] });
       }
+      const ai = await ensureAiReady();
       const done = {
         version: MIGRATION_VERSION,
         status: 'done',
         at: new Date().toISOString(),
         backup: backup.dir,
         users,
+        ai,
       };
       await writeMarker(done);
-      state = { ...state, status: 'done', at: done.at, counts: users, backup: backup.dir };
+      state = { ...state, status: 'done', at: done.at, counts: users, backup: backup.dir, ai };
       log(`数据迁移完成（v1 -> v2）：备份 ${backup.dir}；用户 ${Object.keys(users).length} 个。`);
       return state;
     } catch (err) {
@@ -497,7 +546,7 @@ export function createMigration({ store, accounts, varDir, logger = null, option
         error: String(err && err.message ? err.message : err),
       });
       state = { ...state, status: 'failed', at: new Date().toISOString(), lastError: String(err && err.message ? err.message : err) };
-      // 项目负责人 2026-10-23 拍板：迁移失败**不退出进程**。退出会让应用中心反复重启/
+      // 负责人 2026-10-23 拍板：迁移失败**不退出进程**。退出会让应用中心反复重启/
       // 安装失败，用户反而看不到可用界面。这里回滚到迁移前数据、写 failed 标记、
       // 健康接口标记失败、中文日志提示人工处理，然后以旧键只读兼容模式继续启动。
       log(

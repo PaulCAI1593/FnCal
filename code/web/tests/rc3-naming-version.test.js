@@ -18,9 +18,10 @@ describe('0.2.3 命名与署名', () => {
     const m = read('../fnos/manifest');
     expect(m).toMatch(/^display_name=FnCal$/m);
     expect(m).toMatch(/^maintainer=PaulCAI1593$/m);
-    expect(m).toMatch(/^maintainer_url=https:\/\/github\.com\/PaulCAI1593\/$/m);
+    // 0.2.44（用户：应用开发者和发布者连接到该项目仓库）：两处 URL 由个人主页改为项目仓库。
+    expect(m).toMatch(/^maintainer_url=https:\/\/github\.com\/PaulCAI1593\/FnCal$/m);
     expect(m).toMatch(/^distributor=PaulCAI1593$/m);
-    expect(m).toMatch(/^distributor_url=https:\/\/github\.com\/PaulCAI1593\/$/m);
+    expect(m).toMatch(/^distributor_url=https:\/\/github\.com\/PaulCAI1593\/FnCal$/m);
     expect(m).not.toContain('display_name=日历');
     expect(m).not.toContain('FnCal 日历');
   });

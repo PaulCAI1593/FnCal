@@ -3,7 +3,7 @@
 本目录冻结的是 **0.2.3 已发布**的图标字节（包根 ICON/ICON_256、应用内
 icon_64/256、web/public 全套 favicon 与 PWA 图标）。
 
-- 0.2.4 起 logo 换成项目确认的 **A 版**（见 `design/logo-fn/`），`check-icons.mjs`
+- 0.2.4 起 logo 换成负责人确认的 **A 版**（见 `design/logo-fn/`），`check-icons.mjs`
   的设计源核对已改回 `design/logo-fn/`；本目录只用于**反向断言**：
   「新图 sha 必须与 0.2.3 全部不同」，防止旧图残留。
 - 包内 `www` 也会扫一遍，确认没有 0.2.3 旧图标残留（0.2.2 时代的更旧清单已不再使用）。

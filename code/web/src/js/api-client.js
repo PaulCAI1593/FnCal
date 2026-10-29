@@ -667,3 +667,50 @@ export function clearSessionCache() {
 }
 
 export { BASE, SESSION_PATH };
+
+/* ---- AI 接入（0.3.0 P4）：设置页「AI」页签用的用户侧接口 ---- */
+/* 契约见 `code/app/api/ai.mjs`：写操作一律经 `apiRequest` 自动带 `X-CSRF-Token`。 */
+
+const AI_BASE = '/api/v1/ai';
+
+export function getAiSettings() {
+  return apiRequest(`${AI_BASE}/settings`);
+}
+
+export function updateAiSettings(enabled) {
+  return apiRequest(`${AI_BASE}/settings`, { method: 'PUT', body: { enabled } });
+}
+
+export function listAiCredentials() {
+  return apiRequest(`${AI_BASE}/credentials`);
+}
+
+/** 创建凭据；响应里的 `token` 是明文令牌，只在这一次出现。 */
+export function createAiCredential(payload) {
+  return apiRequest(`${AI_BASE}/credentials`, { method: 'POST', body: payload });
+}
+
+export function updateAiCredential(id, patch) {
+  return apiRequest(`${AI_BASE}/credentials/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
+}
+
+export function deleteAiCredential(id) {
+  return apiRequest(`${AI_BASE}/credentials/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function revokeAiCredential(id) {
+  return apiRequest(`${AI_BASE}/credentials/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
+}
+
+export function listAiProposals({ status = 'pending' } = {}) {
+  const query = status ? `?status=${encodeURIComponent(status)}` : '';
+  return apiRequest(`${AI_BASE}/proposals${query}`);
+}
+
+export function acceptAiProposal(id) {
+  return apiRequest(`${AI_BASE}/proposals/${encodeURIComponent(id)}/accept`, { method: 'POST' });
+}
+
+export function rejectAiProposal(id, reason = '') {
+  return apiRequest(`${AI_BASE}/proposals/${encodeURIComponent(id)}/reject`, { method: 'POST', body: { reason } });
+}

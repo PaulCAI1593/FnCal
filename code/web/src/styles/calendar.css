@@ -619,6 +619,29 @@ body.is-reordering {
 .settings__about .settings__version {
   margin-left: 0;
 }
+/* 0.2.44：页脚关于区再加一行「开发者 · 项目仓库」，右对齐、与版本号同列；
+   链接沿用全局 a 的强调色，hover 下划线按惯例门控在精确指针设备上。 */
+.settings__about-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.settings__about-meta .settings__about-dot {
+  color: var(--text-3);
+}
+.settings__about-meta .settings__repo {
+  font-size: var(--fs-xs);
+}
+@media (hover: hover) and (pointer: fine) {
+  .settings__about-meta .settings__repo:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
 /* 0.2.8（用户追加）：设置「应用」失败时留在弹窗内的中文错误（不关闭对话框）。 */
 .settings__apply-error {
   margin: 0;
@@ -2259,4 +2282,448 @@ label,
   margin: 0;
   font-size: var(--fs-sm);
   color: var(--text-2);
+}
+
+/* =============================================================================
+   0.3.0（P4）：设置 → 「AI」页签
+   设计侧真源：design/M8-AI接入设置页-规范.md（§8 类名与变量）。
+   只用 tokens.css 既有颜色/圆角/间距；不新增颜色档、不新增字体档；
+   栅格一律 minmax(0,1fr)；触控目标 ≥44px（按钮沿用 .btn 既有尺寸）。
+   ============================================================================= */
+.ai-page__title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
+/* 三块共用外壳：服务 / 凭据 / 提案队列。 */
+.ai-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.ai-section__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 32px;
+}
+.ai-section__title {
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-section__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.ai-count {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.ai-hint,
+.ai-hint-inline {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.ai-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  color: var(--danger-ink);
+}
+.ai-danger-hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--warning);
+}
+/* 服务块：MCP 地址只读框 + 复制。 */
+.ai-mcp-address {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: var(--surface-3);
+}
+/* 0.3.2（用户）：「MCP连接，也显示json设置」——配置片段等宽只读块，可横向滚动，不撑宽设置弹窗。 */
+.ai-mcp-json {
+  margin: 0;
+  padding: var(--sp-2);
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre;
+}
+.ai-mcp-json code {
+  font: inherit;
+  color: var(--text-2);
+}
+.ai-mcp-json:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 0.3.2：「未应用」提示，只在服务总开关有暂存值时出现。 */
+.ai-staged {
+  color: var(--warning);
+}
+/* 凭据列表。 */
+.ai-creds,
+.ai-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ai-cred-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.ai-cred-row__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.ai-cred-row__summary {
+  grid-column: 1;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.ai-cred-row__meta {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.ai-cred-row__used {
+  white-space: nowrap;
+}
+.ai-cred-row__revoked {
+  padding: 0 6px;
+  border-radius: var(--r-xs);
+  background: var(--surface-3);
+  color: var(--text-3);
+}
+.ai-cred-row__actions {
+  grid-row: 1 / span 3;
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.ai-empty {
+  margin: 0;
+  padding: 10px 2px;
+}
+/* 就地编辑器（不套第二层弹窗）。 */
+.ai-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.ai-editor__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ai-editor__title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ai-editor__name {
+  width: 100%;
+  min-height: 32px;
+}
+.ai-editor__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ai-editor__error {
+  min-height: 18px;
+}
+/* 权限矩阵：一行一张日历 + 三档单选组。 */
+.ai-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  /* 0.3.1（设计侧 P1-2）：矩阵区独立滚动，24 个日历时只滚日历行。 */
+  max-height: min(40vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ai-matrix__setall {
+  /* 0.3.1（设计侧 P1-2）：工具条在矩阵滚动区内吸顶，不许被滚走。 */
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-block: 4px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.ai-matrix__setall-label {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.ai-matrix__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ai-matrix__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+}
+.ai-matrix__row:nth-child(odd) {
+  background: var(--surface-3);
+}
+.ai-matrix__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-base);
+  color: var(--text);
+}
+.ai-matrix__name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-matrix__dot,
+.ai-proposal__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--cal-color, var(--accent));
+}
+.segmented.ai-seg {
+  flex: none;
+}
+.segmented.ai-seg button {
+  height: 28px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-sm);
+}
+@media (pointer: coarse) {
+  /* 0.3.1（设计侧 P1-1）：触屏命中区 ≥44px（规范 §6）。 */
+  .segmented.ai-seg button {
+    height: auto;
+    min-height: 44px;
+    padding-block: 8px;
+  }
+}
+/* 时间窗。 */
+.ai-window {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ai-window__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ai-window__label {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.ai-window__input,
+.ai-window .select {
+  width: 104px;
+  min-height: 32px;
+}
+.ai-window__unlimited-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.ai-window__unlimited {
+  margin: 0;
+}
+@media (pointer: coarse) {
+  .ai-window__unlimited-wrap {
+    min-height: 44px;
+  }
+}
+.ai-field-row .switch {
+  justify-self: start;
+}
+/* 令牌一次性面板。 */
+.ai-token {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.ai-token__value {
+  width: 100%;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.ai-token__warn {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.ai-token__copy,
+.ai-token__ack {
+  align-self: flex-start;
+}
+/* 提案队列。 */
+.ai-proposals__empty {
+  margin: 0;
+}
+.ai-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+.ai-proposal__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.ai-proposal__calendar {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.ai-proposal__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.ai-proposal__expires {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.ai-proposal__diff {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.ai-proposal__diff-label {
+  color: var(--text-3);
+}
+.ai-proposal__diff-arrow {
+  color: var(--text-3);
+}
+.ai-proposal__diff-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ai-proposal__diff-value--next {
+  color: var(--text);
+}
+.ai-proposal__note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.ai-proposal__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ai-proposal__state {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.ai-proposal__state--conflict {
+  color: var(--danger-ink);
+}
+/* 0.3.0（P4）：五个页签在 375px 下每格约 62px（规范 §1.1 的临界值）；
+   再窄就把横向内边距收到 6px —— 仍然等分、单行、不横滚、不换行。 */
+@media (max-width: 400px) {
+  .settings__tabs button {
+    padding-inline: 6px;
+  }
+}
+/* 窄屏：矩阵行改成上下排，单选组靠左，避免三档被裁。 */
+@media (max-width: 720px) {
+  .ai-matrix__row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .ai-cred-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ai-cred-row__actions {
+    grid-row: auto;
+    grid-column: 1;
+    justify-content: flex-start;
+  }
 }

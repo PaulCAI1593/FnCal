@@ -18,6 +18,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { MIGRATION_VERSION } from '../lib/migration.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
@@ -232,7 +233,8 @@ async function main() {
   check('老任务已补写成 tasks/objects/*.ics', 1, tasksObjects, tasksObjects === 1);
 
   const marker = JSON.parse(await fs.readFile(path.join(VAR, 'migration.json'), 'utf8'));
-  check('迁移标记升到 v3', 3, marker.version, Number(marker.version) === 3);
+  check(`迁移标记升到 v${MIGRATION_VERSION}`, MIGRATION_VERSION, marker.version,
+    Number(marker.version) === MIGRATION_VERSION);
   const legacyCounts = (Object.values(marker.users || {})[0] || {}).legacy || {};
   check('标记记录对账条数（补写 2 / 跳过 0）', '2/0',
     `${legacyCounts.importedEvents + legacyCounts.importedTasks}/${legacyCounts.skipped}`,

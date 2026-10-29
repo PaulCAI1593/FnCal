@@ -337,7 +337,7 @@ async function phase1() {
     `${restoredEvt.status} ${restoredEvt.json && restoredEvt.json.value && restoredEvt.json.value.title}`,
     restoredEvt.status === 200 && restoredEvt.json.value.title === '方案会');
 
-  /* ------------------- 删除 → 撤销（项目决策：重建 + 原 id 逐条 PUT） ------------------- */
+  /* ------------------- 删除 → 撤销（负责人指定：重建 + 原 id 逐条 PUT） ------------------- */
   const undoCreated = await rest(session, 'POST', '/api/v1/calendars', {
     body: { displayName: '撤销测试', color: '#ff8800' },
   });
@@ -652,7 +652,7 @@ async function phase4() {
 }
 
 async function phase5() {
-  // 迁移失败策略（项目决策：回滚 + failed 标记 + 不退出）。
+  // 迁移失败策略（既定口径：回滚 + failed 标记 + 不退出）。
   const userId = await accountId();
   const userDir = path.join(VAR, 'calendars', userId);
   const metaFile = path.join(userDir, 'default', 'meta.json');

@@ -32,9 +32,16 @@ import { createKvApi } from './api/kv.mjs';
 import { createAdminApi } from './api/admin.mjs';
 import { createDataApi } from './api/data.mjs';
 import { createCalendarsApi } from './api/calendars.mjs';
+import { createAiApi } from './api/ai.mjs';
+import { createAiRest } from './api/ai-rest.mjs';
+import { createMcp } from './api/mcp.mjs';
+import { createAiService } from './lib/ai-service.mjs';
+import { createAiRateLimiter } from './lib/ai-rate-limit.mjs';
+import { NOT_FOUND_JSON } from './lib/ai-grants.mjs';
 import { createLogger } from './lib/log.mjs';
 import { createMigration, resolveMigrationOptions } from './lib/migration.mjs';
 import { createReconciler } from './lib/reconcile.mjs';
+import { createAiStore } from './lib/ai-store.mjs';
 import { createAccountStore } from './auth/accounts.mjs';
 import { loadOrCreateSecret, createSessionCodec } from './auth/session.mjs';
 import { createRateLimiter } from './auth/rate-limit.mjs';
@@ -64,7 +71,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 开关对比度、迷你月历点线、年视图换行断开、「四日」）——同样是纯前端。
 // 0.2.18：C 批七条（年视图圆几何、迷你点线一整条、四视图拼接条与箭头方向、
 // 搜索面板加宽、编辑弹窗农历日期选择、搜索胶囊圆头等高）——同样是纯前端。
-export const VERSION = '0.2.42';
+export const VERSION = '0.3.4';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -416,6 +423,49 @@ export async function createApp(
   });
   const adminApi = createAdminApi({ accounts, store, auth, audit, logger });
   const dataApi = createDataApi({ store, logger });
+  // 0.3.0 P1：AI 数据层 + 用户侧 REST。凭据单独一张表（ai-credentials），
+  // 与 CalDAV 专用密码表完全分离；令牌只在创建时返回明文。
+  const aiStore = createAiStore({ store, accounts, varDir: config.varDir, logger });
+  const aiApi = createAiApi({ aiStore, auth, logger });
+  // 0.3.0 P2：AI 侧 Bearer REST（/api/ai/v1/*）。`health()` 同步返回迁移状态，
+  // 供它判断「AI 集合 failed → 整个前缀 404」。
+  const healthState = () => {
+    const state = migration.state();
+    const ai = state.ai && typeof state.ai === 'object' ? state.ai : null;
+    return {
+      migration: {
+        status: state.status,
+        at: state.at || null,
+        lastError: state.lastError || null,
+      },
+      // 0.3.0：AI 数据集合就绪状态（failed 时日历/任务照常，只是 AI 不可用）。
+      ai: {
+        status: ai && ai.status ? ai.status : 'unknown',
+        at: (ai && ai.at) || null,
+        error: (ai && ai.error) || null,
+      },
+      // 0.1.9 诊断：本次实际监听端口 / config.json 端口 / 安装入口模板。
+      // 覆盖升级时入口模板可能仍是未展开的 `${wizard_port}` 或为空，
+      // 与 listening port 对照即可判断「卡片地址无端口」是否由此引起。
+      port: config.port,
+      configPort: config.configPort,
+      entryPortTemplate: config.entryPortTemplate,
+    };
+  };
+  // 0.3.0 P3：AI 服务层与限流桶由 REST 与 MCP **共用**——「同一凭据的 REST + MCP
+  // 合起来算 60/60s」，且授权/掩码/窗界只有 `lib/ai-service.mjs` 一处实现。
+  const aiService = createAiService({ aiStore, health: healthState });
+  const aiRateLimiter = createAiRateLimiter();
+  const aiRest = createAiRest({ aiStore, aiService, audit, logger, health: healthState, limiter: aiRateLimiter });
+  const mcpApi = createMcp({
+    aiStore,
+    aiService,
+    audit,
+    logger,
+    health: healthState,
+    version: VERSION,
+    limiter: aiRateLimiter,
+  });
   const apiHandler = createApiHandler({
     version: config.version,
     auth,
@@ -423,6 +473,8 @@ export async function createApp(
     admin: adminApi,
     data: dataApi,
     calendars: calendarsApi,
+    ai: aiApi,
+    aiRest,
     audit,
     securityApi,
     // 0.2.14（P0-2）：/api/version 带上 HTTPS 运行态（公开、只含布尔/端口/原因代码，
@@ -442,22 +494,7 @@ export async function createApp(
     reconcileDiagnostics: () => reconciler.diagnostics({ version: config.version }),
     // 0.2.10（1-17）：自检行「修复为可读写」按钮——只改自己的默认日历 davAccess。
     reconcileFixDavAccess: (userId) => reconciler.normalizeDefaultDavAccess(userId, { source: 'api' }),
-    health: () => {
-      const state = migration.state();
-      return {
-        migration: {
-          status: state.status,
-          at: state.at || null,
-          lastError: state.lastError || null,
-        },
-        // 0.1.9 诊断：本次实际监听端口 / config.json 端口 / 安装入口模板。
-        // 覆盖升级时入口模板可能仍是未展开的 `${wizard_port}` 或为空，
-        // 与 listening port 对照即可判断「卡片地址无端口」是否由此引起。
-        port: config.port,
-        configPort: config.configPort,
-        entryPortTemplate: config.entryPortTemplate,
-      };
-    },
+    health: healthState,
   });
   const staticHandler = config.webDir
     ? createStaticHandler({
@@ -576,6 +613,26 @@ export async function createApp(
       const behindProxy = httpsSettings.behindProxy === true;
       const httpsMode = httpsServing || behindProxy;
       if (httpsMode && !isSecure) {
+        // 0.3.0 P3：`/mcp` 不是 DAV 请求 —— 绝不能把「请把 CalDAV 客户端地址改为 https://…」
+        // 这句 DAV 指引回给 MCP 客户端。对外仍回 404（与「不存在」逐字节一致），
+        // 只在日志里说明「实例要求 HTTPS，MCP 请求来自 HTTP」。
+        if (pathname === '/mcp' || pathname === '/mcp/') {
+          logger.event('mcp-http-blocked', {
+            reason: 'https-required',
+            path: pathname,
+            method: req.method,
+            httpsPort: httpsSettings.httpsPort,
+            remoteAddress: remoteAddress || null,
+          });
+          const body = Buffer.from(NOT_FOUND_JSON, 'utf8');
+          res.writeHead(404, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Content-Length': body.length,
+            'Cache-Control': 'no-store',
+          });
+          res.end(body);
+          return;
+        }
         // CalDAV 客户端（非 /api/ 的非 GET，或 DAV 路径）在 HTTP 端口上返回 403 中文
         // 指引，而不是 301：301 会让客户端重发凭据或直接断流。
         const isDavRequest = !pathname.startsWith('/api/')
@@ -632,6 +689,28 @@ export async function createApp(
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'same-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+
+    // 0.3.0 P3：MCP 端点（`POST /mcp`）**必须**挂在 `/api/` 分支与 DAV 分支之前：
+    // 否则 `POST /mcp` 会落进「非 GET → DAV」，先被 Basic 认证拦、再被 httpsMode 判成
+    // DAV 请求。放在这里也顺带覆盖 gateway listener（它原本「非 GET 一律 404」）。
+    if (pathname === '/mcp' || pathname === '/mcp/') {
+      const start = Date.now();
+      res.on('finish', () => {
+        logger.access({
+          method: req.method,
+          path: pathname,
+          status: res.statusCode,
+          ms: Date.now() - start,
+          ua: req.headers['user-agent'] ?? null,
+          remoteAddress: source.ip || null,
+          gateway: gateway || undefined,
+        });
+      });
+      return guarded(
+        () => runWithContext({ userId: null }, () => mcpApi.handle(req, res, { remoteAddress: source.ip || null })),
+        'mcp',
+      );
+    }
 
     if (pathname.startsWith('/api/')) {
       const start = Date.now();
@@ -1040,7 +1119,10 @@ async function main() {
   // 不监听端口、不写 pid；成功（done/disabled）退出 0，失败（failed/rolled_back）退出 1。
   if (process.argv.includes('--migrate')) {
     const st = migration.state();
-    const ok = st.status === 'done' || st.status === 'disabled';
+    const ai = st.ai && typeof st.ai === 'object' ? st.ai : null;
+    const aiFailed = Boolean(ai && ai.status === 'failed');
+    // 0.3.0：AI 集合初始化失败不阻塞启动，但升级回调要能看见「没完全就绪」→ 非 0。
+    const ok = (st.status === 'done' || st.status === 'disabled') && !aiFailed;
     let counts = {};
     try {
       counts = st.counts && typeof st.counts === 'object' ? st.counts : {};
@@ -1055,6 +1137,15 @@ async function main() {
         + ` objects ${legacy.objectsBefore}->${legacy.objectsAfter}`;
     });
     console.log(`[caldav] 升级迁移/对账：status=${st.status}${st.lastError ? ` error=${st.lastError}` : ''}`);
+    if (ai) {
+      console.log(
+        `[caldav] AI 数据集合：${ai.status}`
+        + (ai.users ? ` 用户 ${ai.users} 个` : '')
+        + (ai.created ? ` 新建 ${ai.created}` : '')
+        + (ai.repaired ? ` 修复 ${ai.repaired}` : '')
+        + (ai.error ? ` error=${ai.error}` : ''),
+      );
+    }
     for (const line of summary) console.log(`[caldav]   ${line}`);
     // 0.2.9：启动自愈对账也在 createApp 里跑过，一并打印（这是真正修老数据的那一步）。
     const rec = reconciler.state();

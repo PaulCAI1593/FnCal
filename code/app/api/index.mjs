@@ -20,6 +20,7 @@
 // in the web UI.
 
 import { currentContext } from '../lib/request-context.mjs';
+import { NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -66,7 +67,7 @@ function readJsonBody(req) {
   });
 }
 
-export function createApiHandler({ version, auth, kv, admin, data, calendars, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
+export function createApiHandler({ version, auth, kv, admin, data, calendars, ai = null, aiRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
   async function handleAuth(req, res, pathnameIn) {
     const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
     // M2 §6.2 paths are `/api/v1/auth/*`; the M3.2 implementation used
@@ -312,16 +313,34 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, he
       return handleAuth(req, res, pathname);
     }
 
+    // 0.3.0 P2：AI 侧 Bearer REST（/api/ai/v1/*）。与用户侧 /api/v1/ai/* 是两套：
+    // 这里只认 `Authorization: Bearer`，绝不回落到 cookie 会话，因此放在改密闸门之前。
+    // 未装配（降级启动）时也回 404 同字节——不向外证明这个实例有 AI 功能。
+    if (pathname === '/api/ai' || pathname.startsWith('/api/ai/')) {
+      if (!aiRest) return sendJson(res, 404, { ...NOT_FOUND_BODY });
+      return aiRest.handle(req, res, url, {
+        remoteAddress: (req.socket && req.socket.remoteAddress) || null,
+      });
+    }
+
     // 0.2.8：被要求改密的账号，改密前只放行认证类接口（上面已处理）与身份读取
     // （GET /api/v1/me，前端用它刷新会话）；其余业务 API 一律 403 + 中文。
     const identityRead = pathname === '/api/v1/me' || pathname === '/api/me';
     const gated = pathname.startsWith('/api/v1/kv')
       || pathname.startsWith('/api/v1/calendars')
+      || pathname.startsWith('/api/v1/ai')
       || pathname === '/api/v1/import'
       || pathname === '/api/v1/export'
       || pathname.startsWith('/api/v1/admin/users')
       || (identityRead && req.method !== 'GET');
     if (gated && (await rejectIfPasswordChangeRequired(req, res))) return;
+
+    // 0.3.0：AI 用户侧（设置 / 凭据 / 提案）。鉴权与会话/CSRF 判定在 api/ai.mjs 内，
+    // 与用户侧其它接口同一口径；未装配时按未实现处理（老数据/降级启动）。
+    if (pathname === '/api/v1/ai' || pathname.startsWith('/api/v1/ai/')) {
+      if (!ai) return sendJson(res, 501, { ok: false, code: 'ai_unavailable', message: 'AI 功能未启用' });
+      return ai.handle(req, res, url);
+    }
 
     // 0.2.9：设置 → CalDAV 账户页的同步自检状态（最近一次启动自愈结果 + 当前缺失）。
     if (pathname === '/api/v1/caldav/status') {

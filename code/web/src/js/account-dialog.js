@@ -18,6 +18,8 @@ import { changePassword, logoutAll, updateProfile, ApiError, getCalDavSyncStatus
 import { t } from '../i18n/index.js';
 import { colorHex, customColorSwatch } from './colors.js';
 import { openCalendarSettings } from './calendar-dialog.js';
+// 0.3.0（P4）：设置 → 「AI」页签（设计侧真源 design/M8-AI接入设置页-规范.md）。
+import { createAiSettingsPage } from './ai-settings.js';
 import { getAppVersion } from './app-version.js';
 import { getFrontendVersion } from './build-info.js';
 import { ACCENT_PRESETS, normalizeAccent } from './accent-theme.js';
@@ -124,9 +126,14 @@ export function openAccountDialog({
   let selectedCalendarId = '';
   let confirmOpen = false;
 
-  /** 0.2.2（⑤）：所有设置页统一「暂存 → 应用 → 取消」。
-   *  一般页的开关/下拉只改本地暂存，点「应用」才落库；未应用离开要二次确认。 */
+  /**
+   * 0.2.2（⑤）：所有设置页统一「暂存 → 应用 → 取消」。
+   *  一般页的开关/下拉只改本地暂存，点「应用」才落库；未应用离开要二次确认。
+   * 0.3.2：AI 页的服务总开关也归这条流程（用户：「应该要点底下的应用按钮才应用」），
+   *  它的暂存数由 `aiPage.pendingCount()` 提供；`aiPendingCount` 在 aiPage 建好后接上。
+   */
   const pendingSettings = {};
+  let aiPendingCount = () => 0;
   const settingsBaseline = { ...settings };
 
   function stageSettings(patch) {
@@ -138,7 +145,7 @@ export function openAccountDialog({
   }
 
   function pendingCount() {
-    return pending.size + Object.keys(pendingSettings).length;
+    return pending.size + Object.keys(pendingSettings).length + aiPendingCount();
   }
 
   function refreshApplyState() {
@@ -494,11 +501,14 @@ export function openAccountDialog({
   async function applyPending() {
     const settingsPatch = { ...pendingSettings };
     const hasSettings = Object.keys(settingsPatch).length > 0;
-    if (!pending.size && !hasSettings) return;
+    const hasAi = aiPendingCount() > 0;
+    if (!pending.size && !hasSettings && !hasAi) return;
     const entries = [...pending.entries()];
     applyBtn.disabled = true;
     setApplyError('');
     try {
+      // 0.3.2：AI 服务总开关先落库（单项请求，失败即整体失败、暂存保留可重试）。
+      if (hasAi) await aiPage.applyStaged();
       if (hasSettings) {
         await store.saveSettings(settingsPatch);
         for (const key of Object.keys(settingsPatch)) delete pendingSettings[key];
@@ -782,11 +792,21 @@ export function openAccountDialog({
 
   /* ---- 页签 ---- */
 
+  // 0.3.0（P4）：第 4 个页签是「AI」——页签下标题才是「AI 接入」（规范 §1.1）。
+  // 0.3.2：AI 页的服务总开关走「暂存 → 应用」，改动时通知这里刷新页脚按钮状态。
+  const aiPage = createAiSettingsPage({
+    user,
+    store,
+    onStagedChange: () => refreshApplyState(),
+  });
+  aiPendingCount = () => aiPage.pendingCount();
+
   const tabs = [
     { id: 'general', label: t('settings.tab.general'), page: generalPage },
     { id: 'calendar', label: t('settings.tab.calendar'), page: calendarPage },
     { id: 'account', label: t('settings.tab.account'), page: accountPage },
-    // 0.2.20（E14）：快捷键成为第 4 个页签。
+    { id: 'ai', label: t('settings.tab.ai'), page: aiPage.page },
+    // 0.2.20（E14）：快捷键成为最后 1 个页签。
     { id: 'shortcuts', label: t('settings.tab.shortcuts'), page: shortcutsPage },
   ];
   const tabbar = el('div', { class: 'segmented settings__tabs', role: 'tablist', 'aria-label': t('settings.title') });
@@ -813,6 +833,8 @@ export function openAccountDialog({
       tabButtons[i].setAttribute('aria-selected', String(active));
       tabButtons[i].tabIndex = active ? 0 : -1;
       if (tabDef.id === 'calendar' && active) renderTable();
+      // AI 页每次切入都重新拉一次（服务开关/凭据/提案都可能被其它会话改过）。
+      if (tabDef.id === 'ai' && active) aiPage.refresh();
     });
     if (tabButtons[index]) tabButtons[index].focus();
   }
@@ -840,6 +862,7 @@ export function openAccountDialog({
       confirmOpen = false;
       if (dismiss) dismiss();
       if (discard) {
+        aiPage.discardStaged();
         pending.clear();
         closeDialog();
       }
@@ -885,6 +908,22 @@ export function openAccountDialog({
     versionEl.textContent = `${t('settings.version', { version: frontendVersion })}${t('settings.needReload')}`;
   });
 
+  // 0.2.44：页脚再补一行「开发者 / 项目仓库」——fnOS 应用中心里的 maintainer / distributor
+  // 与界面上这一行都指向同一个仓库地址，两处必须同源（另一处在 code/fnos/manifest）。
+  const REPO_URL = 'https://github.com/PaulCAI1593/FnCal';
+  const aboutMeta = el('div', { class: 'settings__about-meta' }, [
+    el('span', { text: t('settings.about.developer', { name: 'PaulCAI1593' }) }),
+    el('span', { class: 'settings__about-dot', 'aria-hidden': 'true', text: '·' }),
+    el('a', {
+      class: 'settings__repo',
+      href: REPO_URL,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      text: t('settings.about.repository'),
+      'aria-label': t('settings.about.repositoryAria'),
+    }),
+  ]);
+
   dialog = el('div', {
     class: 'modal account-modal settings-modal',
     role: 'dialog',
@@ -903,7 +942,7 @@ export function openAccountDialog({
     ]),
     el('div', { class: 'modal__body settings__body' }, [
       tabbar,
-      el('div', { class: 'settings__pages' }, [generalPage, calendarPage, accountPage, shortcutsPage]),
+      el('div', { class: 'settings__pages' }, [generalPage, calendarPage, accountPage, aiPage.page, shortcutsPage]),
     ]),
     // 0.2.9（用户 9）/ 0.2.10（1-7）：常驻底部，不参与 .modal__body 滚动；
     // 提示与版本号同一行，按钮紧跟其下。
@@ -911,7 +950,7 @@ export function openAccountDialog({
       footHintWrap,
       // 0.2.4（真机 P0-8）：HTTPS 明文提示只在「CalDAV 账户」页出现一次。
       // 0.2.24（I3）：版本号一行（前端内嵌版本，见上），不再有指纹行。
-      el('div', { class: 'settings__about' }, [versionEl]),
+      el('div', { class: 'settings__about' }, [versionEl, aboutMeta]),
     ]),
     el('div', { class: 'modal__foot settings__actions' }, [
       // 0.2.8（用户追加）：应用失败时留在弹窗内给中文错误（不只是 toast）。

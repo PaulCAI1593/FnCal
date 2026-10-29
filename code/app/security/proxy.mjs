@@ -1,7 +1,7 @@
 // 0.2.37（S1）：可信反向代理 —— 真实来源 IP 与外部协议解析。
 //
-// 为什么必须有这一层：本服务在公网部署时前面一定有反向代理（用户的是
-// https://paulcai.ipyingshe.net/ → 内网 FnCal），此时 `req.socket.remoteAddress`
+// 为什么必须有这一层：本服务在公网部署时前面一定有反向代理（例如
+// https://cal.example.com/ → 内网 FnCal），此时 `req.socket.remoteAddress`
 // 永远是代理自己的地址。直接拿它做「登录失败锁定」会把所有人算进同一个桶
 // （一个人被锁 = 全家被锁），审计里的来源也会全变成代理 IP，等于没有溯源能力。
 //

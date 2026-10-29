@@ -1,5 +1,5 @@
 // 通用版本号落点：后端 server.mjs 的 VERSION 与 fnOS manifest（从当前值自愈式升到目标值）。
-// 用法：node code/build/bump-version.mjs 0.2.28     （cwd = 仓库根）
+// 用法：node code/build-tmp/bump-version.mjs 0.2.28     （cwd = 仓库根）
 // 只改这两个文件；前端版本串/指纹由 scripts/stamp-version.mjs 在构建时生成。
 import fs from 'node:fs';
 
@@ -20,7 +20,7 @@ function bump(file, pairs) {
 }
 
 const server = fs.readFileSync('code/app/server.mjs', 'utf8');
-const from = /export const VERSION = '(0\.2\.\d+)'/.exec(server)?.[1];
+const from = /export const VERSION = '(\d+\.\d+\.\d+)'/.exec(server)?.[1];
 if (!from) throw new Error('[miss] server.mjs VERSION');
 const manifestFrom = /^version=(.+)$/m.exec(fs.readFileSync('code/fnos/manifest', 'utf8'))?.[1];
 

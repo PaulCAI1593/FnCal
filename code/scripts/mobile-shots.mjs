@@ -8,7 +8,7 @@
  * 用法：node scripts/mobile-shots.mjs
  * 产物：code/M5-移动端走查/harness/*.html、code/M5-移动端走查/*.png、code/M5-移动端走查/result.txt
  * 说明：这是**布局走查**（真实 CSS + 真实组件 DOM、假数据），不是真机截图；
- *      真机验收仍按方案 §14 清单由项目负责人执行。
+ *      真机验收仍按方案 §14 清单由负责人执行。
  */
 import fs from 'node:fs';
 import path from 'node:path';

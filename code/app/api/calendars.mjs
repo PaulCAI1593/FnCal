@@ -7,7 +7,7 @@
 //   DELETE /api/v1/calendars/<id>?confirm=1[&deleteEvents=1] -> soft delete (undo supported)
 //   POST   /api/v1/calendars/<id>/restore    -> undo a soft delete
 //
-// Rules from the M5 plan / 项目决策:
+// Rules from the M5 plan / 既定口径:
 //   - `default` ("我的日历") and `tasks` ("任务") can be renamed but never deleted;
 //   - deleting a non-empty calendar needs `deleteEvents=1` (the UI confirms with
 //     "将删除 N 个事件" first). The backend moves the calendar into `.trash`

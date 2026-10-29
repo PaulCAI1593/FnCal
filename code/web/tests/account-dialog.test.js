@@ -1,5 +1,5 @@
 /**
- * 设置对话框（0.2.0 B3：一般 / 日历 / CalDAV 账户三页签）。
+ * 设置对话框（0.2.0 B3 三页签；0.3.0 P4 起五页签：一般 / 日历 / CalDAV / AI / 快捷键）。
  *
  * 覆盖：三页签切换与键盘、一般页/日历页即时保存、改密前端校验、旧密码 401
  * 留在表单（不触发全局登出）、改密成功提示、普通用户看不到「账号管理」、
@@ -96,14 +96,15 @@ describe('设置对话框', () => {
     document.body.replaceChildren();
   });
 
-  it('四个页签的标题正确；默认停在「一般」；不显示角色', () => {
+  it('五个页签的标题正确；默认停在「一般」；不显示角色', () => {
     opened = openAccountDialog({
       user: { username: 'alice', displayName: 'Alice', role: 'user' },
       store,
     });
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')].map((n) => n.textContent);
-    expect(tabs).toEqual(['一般', '日历', 'CalDAV 账户', '快捷键']);
+    // 0.3.0（P4）：第 3 枚文案收短为「CalDAV」，第 4 枚新增「AI」。
+    expect(tabs).toEqual(['一般', '日历', 'CalDAV', 'AI', '快捷键']);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(false);
     expect(dialog.querySelector('#settings-page-calendar').hidden).toBe(true);
     expect(dialog.textContent).not.toContain('普通用户');

@@ -2,7 +2,7 @@
 /**
  * 0.2.10（批 1）：CalDAV 协议面 + davAccess 三层回归。
  *
- * 覆盖（与项目确认 1 要求一一对应）：
+ * 覆盖（与既定要求一一对应）：
  *   A. PROPPATCH 3 条：
  *      1) default 整包改 displayname+color → 207，两条 propstat 均 200 且 meta 落库；
  *      2) tasks 整包改 displayname+color → 207，color 200 生效、displayname 403，

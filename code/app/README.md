@@ -251,7 +251,7 @@ node test/m4-accounts.test.mjs  # 36 项：全新安装随机密码→强制改�
 `DAYLIGHT`/`STANDARD` 观测（`DTSTART` + `RDATE`，RFC 5545 §3.6.5）。Intl 不可用时该事件退化为
 UTC 并写日志「无法为时区 … 生成 VTIMEZONE」。
 
-**往返验收**：`data/ical-samples/` 的 S1–S8（样本集未随源码发布）由
+**往返验收**：`data/ical-samples/` 的 S1–S8 由
 `node test/m39-roundtrip.test.mjs` 跑「原始 → 模型 A → 导出 → 模型 B」，A/B 都按
 `expected.json` 断言，再用独立比对器 `compare_roundtrip.mjs` 判 **pass=8 fail=0**
 （`TZID` 被降级成 UTC 即 FAIL）。
