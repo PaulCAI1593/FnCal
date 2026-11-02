@@ -93,6 +93,9 @@ export const zhCN = {
   // 0.2.4 ⑮：账号菜单「立即同步」。
   'menu.sync': '立即同步',
   'menu.syncing': '同步中…',
+  // 0.3.8（v1.1 安全界面接线，M12 §1.2）：头像菜单的两枚安全入口。
+  'menu.mySecurity': '我的安全',
+  'menu.securitySettings': '安全设置',
   'toast.synced': '已同步（{time}）',
   'toast.syncFailed': '同步失败，请稍后重试',
   'toast.syncOffline': '已离线，无法同步',
@@ -168,7 +171,8 @@ export const zhCN = {
   // 0.2.0（B2）：编辑器里的日历下拉。
   'calendar.field': '日历',
   'calendar.taskFixed': '任务固定在「任务」日历。',
-  'calendar.seriesLocked': '重复事件的日历暂不支持修改。',
+  // 0.3.9：重复系列改所属日历时的说明行。{name} 是目标日历显示名。
+  'calendar.seriesMoveHint': '将把整个重复系列移动到「{name}」',
 
   /* ---- 空态 ---- */
   // 0.2.17（B3.3）：窗口天数走 {days} 插值，唯一定义在 views/agenda.js 的 WINDOW_DAYS。
@@ -575,6 +579,9 @@ export const zhCN = {
 
   /* ---- 账号与设置（0.1.2） ---- */
   'toolbar.settings': '设置',
+  // 0.3.7（用户 m00779 / 规范 M11 §6）：有未过期待审批 AI 提案时，齿轮的
+  // aria-label 与 title 换成这句；红点本身只有点、不显示数字。
+  'toolbar.settingsWithPending': '设置（{n} 条 AI 提案待审批）',
   'account.title': '账号与设置',
   'account.section.account': '账号',
   'account.username': '用户名',
@@ -622,6 +629,9 @@ export const zhCN = {
   // 窄屏就是它把页签撑爆的），第 4 枚新增「AI」。
   'settings.tab.account': 'CalDAV',
   'settings.tab.ai': 'AI',
+  // 0.3.7（用户 m00779 / 规范 M11 §6）：AI 页签红点的可访问名。页签可见文字
+  // 恒为「AI」；n=0 时移除 aria-label，回落成文本名。
+  'settings.tab.aiWithPending': 'AI（{n} 条待审批）',
   'settings.tab.shortcuts': '快捷键',
   // ---- 0.3.0（P4）：设置 → 「AI」页签（文案与键名照 design/M8-AI接入设置页-规范.md §7）----
   'settings.ai.title': 'AI 接入',
@@ -987,12 +997,22 @@ export const zhCN = {
   'security.title': '安全设置',
   'security.adminOnlyTitle': '无权访问安全设置',
   'security.adminOnlyText': '只有管理员可以打开安全设置。请返回一般设置，或联系管理员。',
+  // 0.3.8（M12 §5.2）：安全模块懒加载失败时的提示（重试按钮复用 common.retry）。
+  'security.loadFailed': '安全设置加载失败，请检查网络后重试',
   'security.section.https': 'HTTPS',
   'security.section.cert': '证书',
   'security.section.policy': '会话、登录保护与访问控制',
   'security.section.totp': '两步验证（TOTP）',
   'security.section.audit': '安全审计',
   'security.section.dav': 'CalDAV 专用密码',
+  // 0.3.10（M13 §2.1/§6）：管理员「安全设置」分 4 页；② 的账号区只放其他账号。
+  'security.tabs.self': '我的安全',
+  'security.tabs.login': '登录访问',
+  'security.tabs.cert': '加密证书',
+  'security.tabs.audit': '审计',
+  'security.tabs.label': '安全设置分页',
+  'security.section.otherTotp': '其他账号的两步验证',
+  'security.accounts.othersEmpty': '没有其他账号。',
   'security.status.https': 'HTTPS',
   'security.status.httpsPort': 'HTTPS 端口',
   'security.status.totp': '两步验证',
@@ -1024,6 +1044,9 @@ export const zhCN = {
   'security.https.davAllowHttp': 'CalDAV 允许 HTTP 直连',
   'security.https.davAllowHttpHint': '默认关闭：开启 HTTPS 后，CalDAV 客户端走 HTTP 端口会被拒绝并提示改用 https。仅局域网过渡期临时打开；明文传输会暴露凭据与日历内容。',
   'security.https.restartHint': '端口与证书改动需要重启服务后生效。',
+  // v1.1.0（P1）：behindProxy / HSTS 由关改开前的危险确认（确认后才发 PATCH）。
+  'security.https.behindProxyConfirm': '开启后，浏览器用 HTTP 访问会被 301 到 https://主机（不带端口，即 443）。反向代理没配好就会打不开；真打不开时只能停应用后改 var/security.json 里的 https.behindProxy 再启动。',
+  'security.https.hstsConfirm': '开启后浏览器会记住这一年内只走 HTTPS，回退需要清浏览器 HSTS 记录。',
   // 0.2.37（S1/S2）：可信反向代理与「反代提供 HTTPS」。
   'security.section.proxy': '反向代理与真实来源',
   'security.proxy.enabled': '启用可信反向代理',

@@ -111,6 +111,24 @@ export function createAiRest({
         },
       };
     }
+    // 0.3.6：写请求的拒绝原因分开映射，别把「只读档位」说成「日历不存在」。
+    // 必须排在下面通用的 `status === 400` 分支之前（writeReject 自带 status=400）。
+    //   not-found     → 404 同字节（不可见 ≡ 不存在，不泄露存在性）
+    //   not-writable  → 403 forbidden/read_only（日历本来就在 list_calendars 里，不算泄露）
+    //   out-of-window → 404（沿用 P2 既定契约：窗外写入回 404 同字节）
+    //   bad-range     → 400 invalid/end
+    if (err.code === 'write_reject') {
+      if (err.reason === 'not-writable') {
+        return {
+          status: 403,
+          body: { ok: false, code: 'forbidden', reason: 'read_only', message: err.message },
+        };
+      }
+      if (err.reason === 'bad-range') {
+        return { status: 400, body: { ok: false, code: 'invalid', field: 'end', message: err.message } };
+      }
+      return notFound();
+    }
     if (err.code === 'invalid' || err.status === 400) {
       return {
         status: 400,

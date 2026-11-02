@@ -39,6 +39,7 @@ const WHITELIST = new Map([
   ['recurrence.action.editSeries', '确认对话框标题（编辑重复事件），不是按钮'],
   ['recurrence.action.deleteSeries', '确认对话框标题（删除重复事件），不是按钮'],
   ['editor.action.notificationsEnable', '权限提示里的动作句（开启通知），不是紧凑按钮'],
+  ['security.tabs.label', '页签容器的 aria-label（只给读屏，不渲染成按钮），不是可见按钮文案'],
 ]);
 
 const HAN_RE = /[\u4e00-\u9fa5]/g;

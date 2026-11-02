@@ -107,6 +107,9 @@ export function createEventModal({
   let viewing = false; // true while the read-only details card (not the editor) is up
   // 0.2.0（B2）：事件/任务所属日历。'' 表示后端不支持多日历（旧部署），此时不渲染日历下拉。
   let calendarId = '';
+  // 0.3.9：系列事件打开时的原始日历（出现对象不带 calendarId，日历挂在 master 上）。
+  // 用于判断「是否真的换了日历」——显示提示、限制「仅此事件」范围都要它。
+  let seriesCalendarId = '';
   // 0.2.8（用户）：事件模式最后选的日历。新建弹窗在「事件 / 任务」之间切换时，
   // 切到任务 = 任务日历（色随日历），切回事件 = 回到这个日历（没有则用默认日历）。
   let lastEventCalendarId = '';
@@ -184,14 +187,23 @@ export function createEventModal({
     fields.calendarDot.style.background = cal ? colorHex(cal.color) : 'transparent';
     fields.calendarName.textContent = cal ? cal.displayName : '';
     fields.calendarName.title = cal ? cal.displayName : '';
-    // 重复事件（系列）本次只改内容：移动日历要重写键空间，0.2.0 不含，故只读。
-    const seriesEdit = Boolean(current && current.seriesId);
+    // 0.3.9：系列事件也能改所属日历（store.updateSeries / updateFuture 会重写
+    // 键空间）。只有「任务日历唯一」时才锁死。
     const singleTaskCalendar = mode === 'task' && calendarOptions().length <= 1;
-    const disabled = seriesEdit || singleTaskCalendar;
-    fields.calendarTrigger.disabled = disabled;
-    fields.calendarTrigger.setAttribute('aria-disabled', String(disabled));
+    fields.calendarTrigger.disabled = singleTaskCalendar;
+    fields.calendarTrigger.setAttribute('aria-disabled', String(singleTaskCalendar));
     fields.calendarHint.style.display = mode === 'task' && singleTaskCalendar ? '' : 'none';
-    if (disabled && fields.calendarList && !fields.calendarList.hidden) closeCalendarList();
+    // 0.3.9：系列被移到另一个日历时，给一行说明（未改时隐藏）。
+    const movedSeries = Boolean(
+      current && current.seriesId && seriesCalendarId && calendarId !== seriesCalendarId,
+    );
+    if (fields.calendarSeriesHint) {
+      fields.calendarSeriesHint.textContent = movedSeries
+        ? t('calendar.seriesMoveHint', { name: cal ? cal.displayName : '' })
+        : '';
+      fields.calendarSeriesHint.style.display = movedSeries ? '' : 'none';
+    }
+    if (singleTaskCalendar && fields.calendarList && !fields.calendarList.hidden) closeCalendarList();
   }
 
   function closeCalendarList() {
@@ -604,6 +616,13 @@ export function createEventModal({
         class: 'cal-hint',
         style: { display: 'none' },
         text: t('calendar.taskFixed'),
+      }),
+      // 0.3.9：系列换日历的说明行，只在真的改了目标日历时显示。
+      fields.calendarSeriesHint = el('p', {
+        class: 'cal-hint cal-hint--series-move',
+        // 读屏要听到「整个系列会被移动」：说明行是操作后动态出现的，必须 announce。
+        'aria-live': 'polite',
+        style: { display: 'none' },
       }),
     ]);
 
@@ -1600,9 +1619,9 @@ export function createEventModal({
       // Null removes an existing link (see store.updateSeries); out-of-office
       // blocks never carry one.
       meeting: !isOoo && meeting ? { ...meeting } : null,
-      // 0.2.0（B2）：所属日历。系列事件本次只改内容（移动日历要重写键空间，
-      // 0.2.0 不含），故系列编辑不传 calendarId。
-      ...(multiCalendar() && calendarId && !(current && current.seriesId) ? { calendarId } : {}),
+      // 0.3.9：所属日历。系列编辑也传——store.updateSeries / updateFuture 会校验，
+      // 并在真的换日历时重写键空间（新键落地后再删旧键）。
+      ...(multiCalendar() && calendarId ? { calendarId } : {}),
       // 0.2.12（C11-3）：农历标记。单次=记下农历月日、公历时间点不变；
       // 「每年（农历）」另写 lunarRule，服务端据此展开 RDATE（绝不写 RRULE）。
       ...(lunar && !isOoo
@@ -1630,9 +1649,12 @@ export function createEventModal({
       const guestsChanged = guestsJsonBeforeAutoAdd !== openedGuestsJson;
       // Nor a meeting link — one room serves the whole series.
       const meetingChanged = JSON.stringify(meeting ?? null) !== openedMeetingJson;
+      // 0.3.9：换日历只能选「整个系列」或「此事件及以后」——单次覆盖项带不动
+      // 日历（日历挂在系列 master 上）。
+      const calendarChanged = calendarId !== seriesCalendarId;
       openScopeDialog({
         mode: 'edit',
-        allowOne: !ruleChanged && !guestsChanged && !meetingChanged,
+        allowOne: !ruleChanged && !guestsChanged && !meetingChanged && !calendarChanged,
         onConfirm: (scope) => {
           // 0.2.12：农历每年重复不写 RRULE，规则在这里显式置空。
           // 0.2.16（A1）：close() 交给 applySeriesSave 在成功后执行——写失败时
@@ -2016,6 +2038,16 @@ export function createEventModal({
     preOooState = null; // the modal instance is reused across opens; don't carry state over
     // 0.2.0（B2）：起始日历在 buildForm 之前确定，触发器首次渲染即是正确项。
     calendarId = initialCalendarId(event, defaults);
+    // 0.3.9：系列编辑的起点必须是 master 的日历。出现对象（recurrence.js 的
+    // buildOccurrence）不带 calendarId，只沿用 initialCalendarId 会退回默认
+    // 日历——用户不动下拉也会把整个系列搬走。
+    seriesCalendarId = '';
+    if (event && event.seriesId) {
+      const openedMaster = store.getEvent(event.seriesId);
+      if (openedMaster && openedMaster.calendarId) calendarId = openedMaster.calendarId;
+      // 记下打开时的日历：「是否真的换了日历」靠它判断（提示行、范围限制）。
+      seriesCalendarId = calendarId;
+    }
     // 0.2.8：只有从事件模式打开时才有「上次事件日历」可回；任务模式打开时留空，
     // 之后切回事件会退回设置的默认日历。
     lastEventCalendarId = mode === 'task' ? '' : calendarId;

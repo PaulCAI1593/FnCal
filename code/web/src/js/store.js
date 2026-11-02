@@ -1493,6 +1493,25 @@ export function createStore(backend) {
   }
 
   /**
+   * 0.3.9：系列编辑采用的新所属日历；不采用时返回 null（沿用 master 原值）。
+   * 口径与 saveEvent 一致：多日历开启、目标日历存在、且不是任务日历。
+   */
+  function adoptedSeriesCalendar(master, patch) {
+    if (!multiCalendar || patch.calendarId == null) return null;
+    const next = patch.calendarId;
+    if (!next || !calendars.has(next)) return null;
+    if (getCalendarType(next) === 'vtodo') return null;
+    return next;
+  }
+
+  /** 0.3.9：日历变了且事件没有手动色时，颜色跟随新日历（同 saveEvent）。 */
+  function followCalendarColor(ev, calendarId) {
+    const cal = calendars.get(calendarId);
+    if (cal && !ev.colorOverride && !ev.ooo) ev.color = cal.color;
+    return ev;
+  }
+
+  /**
    * Edit the whole series (entire-series scope). Content-only edits keep
    * exceptions; changing the time, duration, all-day flag or rule clears them.
    * The occurrence's DATE is not moved — the pattern owns the dates — only its
@@ -1514,9 +1533,16 @@ export function createStore(backend) {
       start !== master.start || end - start !== master.end - master.start || allDay !== master.allDay;
     const ruleChanged = !rulesEqual(recurrence, master.recurrence, start);
     const keepExceptions = !timeChanged && !ruleChanged;
+    // 0.3.9：整个系列也可以换所属日历。键空间由 eventKey 决定，所以换日历
+    // 等于「写新键 + 删旧键」，与 saveEvent 的移动写法一致。
+    const adoptedCalendarId = adoptedSeriesCalendar(master, patch);
+    const currentCalendarId = master.calendarId || DEFAULT_CALENDAR_ID;
+    const targetCalendarId = adoptedCalendarId || currentCalendarId;
+    const movedCalendar = targetCalendarId !== currentCalendarId;
 
     const updated = normalizeEvent({
       ...master,
+      ...(adoptedCalendarId ? { calendarId: adoptedCalendarId } : {}),
       title: patch.title != null ? patch.title : master.title,
       description: patch.description != null ? patch.description : master.description,
       location: patch.location != null ? patch.location : master.location,
@@ -1535,10 +1561,26 @@ export function createStore(backend) {
       overrides: keepExceptions ? master.overrides : {},
     });
 
+    if (movedCalendar) followCalendarColor(updated, targetCalendarId);
+
     events.set(updated.id, updated);
     emit();
     await writeOrRevert(events, updated.id, updated, master, () => kv.set(eventKey(updated), updated));
-    return { event: updated, undo: () => restoreSnapshot(snap) };
+    // 0.3.9：换日历后必须显式删旧键。reconcile 只补不删（repairUser 里「已存在
+    // 即跳过」），旧日历的 .ics 会留着，下次加载又把一份旧日历的事件读回来。
+    // 顺序同 saveEvent：新键落地成功后才删，写失败时上面已经抛出。
+    if (movedCalendar) {
+      await kv.del(eventKey(master)).catch(() => {});
+      await revealCalendarIfExplicitlyHidden(targetCalendarId).catch(() => {});
+    }
+    return {
+      event: updated,
+      undo: async () => {
+        // 0.3.9：撤销移动 = 恢复原键 + 删掉新键，否则两份同时存在。
+        await restoreSnapshot(snap);
+        if (movedCalendar) await kv.del(eventKey(updated)).catch(() => {});
+      },
+    };
   }
 
   /**
@@ -1622,8 +1664,15 @@ export function createStore(backend) {
           Object.entries(master.overrides || {}).filter(([k]) => Number(k) > rid),
         );
 
+    // 0.3.9：尾系列可以换所属日历；被截断的原系列留在原日历。
+    const adoptedCalendarId = adoptedSeriesCalendar(master, patch);
+    const currentCalendarId = master.calendarId || DEFAULT_CALENDAR_ID;
+    const targetCalendarId = adoptedCalendarId || currentCalendarId;
+    const movedCalendar = targetCalendarId !== currentCalendarId;
+
     const newMaster = normalizeEvent({
       id: undefined,
+      ...(adoptedCalendarId ? { calendarId: adoptedCalendarId } : {}),
       title: patch.title != null ? patch.title : master.title,
       description: patch.description != null ? patch.description : master.description,
       location: patch.location != null ? patch.location : master.location,
@@ -1648,6 +1697,8 @@ export function createStore(backend) {
       createdAt: master.createdAt,
     });
 
+    if (movedCalendar) followCalendarColor(newMaster, targetCalendarId);
+
     events.set(truncated.id, truncated);
     events.set(newMaster.id, newMaster);
     emit();
@@ -1670,6 +1721,9 @@ export function createStore(backend) {
     // the full original PLUS the tail. Mirror exactly that in memory rather
     // than show a split that never happened.
     await writeOrRevert(events, truncated.id, truncated, master, () => cacheAndWrite(truncated));
+    // 0.3.9：尾系列换了日历的话，它本来就是新 id（没有旧键要删），键落在新日历
+    // 下；目标日历若在「只显示」之外，按新事件的口径把它加回可见集合。
+    if (movedCalendar) await revealCalendarIfExplicitlyHidden(targetCalendarId).catch(() => {});
 
     const undo = async () => {
       events.delete(newMaster.id);
@@ -1678,7 +1732,8 @@ export function createStore(backend) {
       emit();
       // Same reasoning in reverse: restore the full original before deleting
       // the tail, so a failure between the writes duplicates occurrences
-      // rather than losing them.
+      // rather than losing them. 0.3.9：尾系列的键按它自己的 calendarId 现算，
+      // 换了日历也能删对地方。
       await kv.set(eventKey(restored), restored);
       await kv.del(eventKey(newMaster));
     };

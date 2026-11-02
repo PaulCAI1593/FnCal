@@ -127,7 +127,8 @@ function buttonByText(root, text) {
 let openHandle = null;
 
 function openAdmin() {
-  openHandle = openSecuritySettingsDialog({ user: { id: 'acc-1', role: 'admin', username: 'admin' } });
+  // 0.3.10（M13 §2.1）：② 页排除登录者自己，测试登录者用「me」。
+  openHandle = openSecuritySettingsDialog({ user: { id: 'me', role: 'admin', username: 'me' } });
   return openHandle;
 }
 
@@ -208,6 +209,12 @@ describe('0.2.37 安全设置：反代 HTTPS 与 reset 2FA', () => {
     behindSwitch.click();
     buttonByText(httpsSection, t('security.action.saveHttps')).click();
     await flush();
+    // v1.1.0（P1）：behindProxy 由关改开要先过危险确认，确认后才发 PATCH。
+    const confirmModal = document.querySelector('.security-confirm-modal');
+    expect(confirmModal).toBeTruthy();
+    expect(confirmModal.textContent).toContain(t('security.https.behindProxyConfirm'));
+    buttonByText(confirmModal, t('security.confirm.ok')).click();
+    await flush();
     const patch = mocks.updateSecuritySettings.mock.calls.at(-1)[0];
     expect(patch.https).toBeTruthy();
     expect(patch.https.behindProxy).toBe(true);
@@ -219,7 +226,9 @@ describe('0.2.37 安全设置：反代 HTTPS 与 reset 2FA', () => {
     const modal = document.querySelector('.security-modal');
     const resetBtn = buttonByText(modal, t('security.totp.reset'));
     expect(resetBtn).toBeTruthy();
-    expect(resetBtn.classList.contains('btn--danger')).toBe(true);
+    // 0.3.8（M12 §3.2-9）：分区内危险按钮改描边，实心红只留确认弹窗。
+    expect(resetBtn.classList.contains('btn--danger-outline')).toBe(true);
+    expect(resetBtn.classList.contains('btn--danger')).toBe(false);
 
     resetBtn.click();
     await flush();

@@ -22,7 +22,11 @@ import { openImportDialog, openExportDialog } from './data-io.js';
 import { openAdminUsersDialog } from './admin-users.js';
 import { openAccountDialog, openAccountSecurityDialog } from './account-dialog.js';
 import { bindCalendarFileDrop } from './file-drop.js';
+// 0.3.7（用户 m00779）：AI 待审批提案红点——顶栏齿轮与设置「AI」页签同源。
+import { startAiBadge, stopAiBadge, onAiBadgeChange, getAiBadgeState, paintAiBadge } from './ai-badge.js';
 import { openScopeDialog } from './recurrence-dialog.js';
+// 0.3.8（v1.1 安全界面接线，M12 §5）：安全模块的懒加载壳（骨架 + 失败重试）。
+import { openSecurityDialogWithLoader } from './security-lazy.js';
 import { openCategoryRename } from './category-dialog.js';
 import {
   openCalendarName,
@@ -759,6 +763,19 @@ export function createApp(root, { store, user }) {
     },
   });
 
+  // 0.3.7（用户 m00779 / 规范 design/M11-设置红点-规范.md §6）：齿轮是纯图标按钮，
+  // 红点用 `has-badge` 类 + `::after` 伪元素画（不进无障碍树、不占布局、不吃点击）。
+  // 条数只体现在 aria-label 与 title 里：视觉上只有点，读屏能听到「几条」。
+  // 贴法本身在 ai-badge.js 的 paintAiBadge() 里，与设置「AI」页签共用同一份，免得
+  // 一处改了另一处忘；这里只决定「用哪两个文案键」。
+  function paintSettingsBadge(current = getAiBadgeState()) {
+    paintAiBadge(settingsBtn, {
+      state: current,
+      labelKey: 'toolbar.settingsWithPending',
+      idleLabel: 'toolbar.settings',
+    });
+  }
+
   const avatarBtn = el('button', {
     class: 'avatar',
     type: 'button',
@@ -996,6 +1013,13 @@ export function createApp(root, { store, user }) {
   clear(root);
   root.removeAttribute('aria-busy');
   root.append(shell);
+
+  // 0.3.7（用户 m00779）：header 拼好之后再启动红点轮询（首次立刻拉一次，不等 60 秒）。
+  // 齿轮节点只在挂载时建一次——分钟 tick 的 render() 换的是侧栏与视图，不重建 header，
+  // 所以这里不需要每次 render 重贴；订阅仍然要留，状态一变就得同步类名与 aria-label。
+  paintSettingsBadge();
+  const unsubscribeAiBadge = onAiBadgeChange((next) => paintSettingsBadge(next));
+  startAiBadge();
 
   // 0.2.1（#15）/ 0.2.2（⑧）：侧栏滚动条隐藏 + 底部渐变遮罩（仅还有内容可滚时显示）。
   // 状态只在「真的不可再滚 / 不溢出」时移除，且布局未就绪（scrollHeight=0）时
@@ -1363,6 +1387,30 @@ export function createApp(root, { store, user }) {
     }
   }
 
+  // 0.3.8（v1.1 安全界面接线，M12 §1）：头像菜单的两枚安全入口。安全模块约 50 KB，
+  // 只在这两处使用，走动态 import 独立分包（不进首屏主包）；点开先挂骨架壳，
+  // 载入成功后由真实对话框接管，失败给提示 + 重试。
+  function securityEntry(kind) {
+    const admin = kind === 'admin';
+    return el('button', {
+      class: 'menu-item',
+      type: 'button',
+      html: icon('shield', { size: 'sm' }) + `<span>${t(admin ? 'menu.securitySettings' : 'menu.mySecurity')}</span>`,
+      on: {
+        click: () => {
+          closeUserMenu();
+          openSecurityDialogWithLoader({
+            title: t(admin ? 'security.title' : 'security.self.title'),
+            load: () => import('./security-settings.js'),
+            open: (mod) => (admin
+              ? mod.openSecuritySettingsDialog({ user })
+              : mod.openMySecurityDialog({ user })),
+          });
+        },
+      },
+    });
+  }
+
   function openUserMenu() {
     if (popover) closeUserMenu();
 
@@ -1416,6 +1464,12 @@ export function createApp(root, { store, user }) {
               },
             },
           }),
+      // 0.3.10（M13 §1.1，取代 M12 §1.1）：管理员只有「安全设置」（自己的安全并入
+      // 其第 ① 页），普通用户只有「我的安全」；两角色都是 4 项菜单。不留空位——
+      // 按角色给数组，不用 null 占位。
+      ...(user && user.role === 'admin'
+        ? [securityEntry('admin')]
+        : [securityEntry('self')]),
       // 0.2.4 ⑮：「用户管理」下面的「立即同步」（普通用户在同一区域、账号相关项之前）。
       el('button', {
         class: 'menu-item popover__sync',
@@ -1701,6 +1755,8 @@ export function createApp(root, { store, user }) {
         /* 没有打开窗口时忽略 */
       }
       unbindFileDrop();
+      unsubscribeAiBadge();
+      stopAiBadge();
       unsub();
       unsubDragEnd();
       unsubMenuClose();

@@ -528,8 +528,36 @@ describe('0.3.0 P4 · AI 页纯函数口径', () => {
     });
   });
 
-  it('排序与天数夹取：正常 → 冲突 → 过期（过期沉底），天数按上下限夹住', () => {
-    const now = Date.parse('2026-10-29T12:00:00.000Z');
+  it('0.3.6 提案标题：新建取新标题、修改显示「原标题 → 新标题」、删除取被删标题', () => {
+    // update：两个快照都带 title（后端 0.3.6 起落库就带，旧提案由 ICS 兜底解析）
+    const update = proposalDiff({
+      action: 'update',
+      uid: 'evt-9',
+      before: { etag: 'sha256:a', title: '原标题' },
+      after: { etag: null, title: '新标题' },
+    });
+    expect(update).toMatchObject({ action: 'update', before: '原标题', after: '新标题', title: '新标题' });
+    // delete：只有「前」，标题取被删事件
+    const removed = proposalDiff({
+      action: 'delete',
+      uid: 'evt-10',
+      before: { etag: 'sha256:b', title: '要删的事件' },
+      after: null,
+    });
+    expect(removed).toMatchObject({ action: 'delete', before: '要删的事件', after: '', title: '要删的事件' });
+    // create：只有「后」，标题取新事件
+    const created = proposalDiff({
+      action: 'create',
+      uid: 'evt-11',
+      before: null,
+      after: { etag: null, title: '新建的会' },
+    });
+    expect(created).toMatchObject({ action: 'create', before: '', after: '新建的会', title: '新建的会' });
+    // 一个标题都没有（旧提案解析失败）才退到 uid —— 也不会是空行
+    expect(proposalDiff({ action: 'update', uid: 'evt-12', before: { etag: 'x' }, after: { etag: null } }).title).toBe('evt-12');
+  });
+
+  it('排序与天数夹取：正常 → 冲突 → 过期（过期沉底），天数按上下限夹住', () => {    const now = Date.parse('2026-10-29T12:00:00.000Z');
     const list = [
       { id: 'a', expiresAt: new Date(now - 1000).toISOString() },
       { id: 'b', expiresAt: new Date(now + 1000).toISOString() },

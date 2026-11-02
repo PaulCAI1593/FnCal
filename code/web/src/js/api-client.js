@@ -707,6 +707,15 @@ export function listAiProposals({ status = 'pending' } = {}) {
   return apiRequest(`${AI_BASE}/proposals${query}`);
 }
 
+/**
+ * 0.3.7（用户 m00779）：待审批提案计数 —— 只回 `{ ok, pending, enabled }`。
+ * 顶栏齿轮与「AI」页签的红点都用它，别在别处自己数 `listAiProposals()` 的条数：
+ * 那份列表是给「提案队列」渲染用的，红点每 60 秒拉一次不该把正文一起搬过来。
+ */
+export function getAiProposalCount() {
+  return apiRequest(`${AI_BASE}/proposals/count`);
+}
+
 export function acceptAiProposal(id) {
   return apiRequest(`${AI_BASE}/proposals/${encodeURIComponent(id)}/accept`, { method: 'POST' });
 }

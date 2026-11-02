@@ -537,6 +537,11 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
   const top = (startMin / 60) * HOUR_H;
   const height = Math.max((durMin / 60) * HOUR_H, MIN_EVENT_H);
   const isShort = height < 34;
+  // 0.3.5（M10 §1）：三档按渲染块高判定——A(<34) 单行横排、B(34≤h<50) 两行、
+  // C(≥50) 三行含地点。三行内容预算 49.6px，1 小时块 52px 刚好进 C 档。
+  const isTall = height >= 50;
+  // 0.3.5（M10 §4）：空地点 / 只有空格按「无地点」处理，不留空行（同 agenda.js:337）。
+  const location = String(source.location || '').trim();
 
   const hex = colorHex(source.color);
   const node = el('div', {
@@ -553,7 +558,7 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
     role: 'button',
     dataset: { focusKey: `ev:${source.id}` },
     title: source.title || t('agenda.event.untitled'),
-    'aria-label': `${source.title || t('agenda.event.untitledAria')}，${formatTimeRange(new Date(source.start), new Date(source.end), { hour12: ctx.settings.hour12 })}`,
+    'aria-label': `${source.title || t('agenda.event.untitledAria')}，${formatTimeRange(new Date(source.start), new Date(source.end), { hour12: ctx.settings.hour12 })}${location ? '，' + location : ''}`,
   });
 
   node.append(el('span', { class: 'tevent__title', text: source.title || t('agenda.event.untitled') }));
@@ -573,6 +578,12 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
         text: formatTime(new Date(source.start), { hour12: ctx.settings.hour12 }),
       }),
     );
+  }
+  // 0.3.5（M10 §3）：C 档且地点非空才生成第三行。A/B 档不生成节点（不靠 CSS 隐藏）。
+  // 窄块（容器宽 <108px）由 views.css 的容器查询隐藏——列宽是 CSS 布局结果，
+  // 渲染期拿不到，也不该为它测量重排。
+  if (isTall && location) {
+    node.append(el('span', { class: 'tevent__loc', text: location }));
   }
 
   attachEventHandlers(node, source, ctx);

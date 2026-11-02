@@ -12,8 +12,23 @@
 
 import { NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
 import { publicCredential } from '../lib/ai-store.mjs';
+import { summaryOfIcs } from '../lib/ical.mjs';
 
 const MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * 提案快照的标题（0.3.6 缺陷 2）。
+ *
+ * 新提案落库时已经带 `title`；旧提案（0.3.6 之前）只存 `{etag, ics}`，这里从 ICS 的
+ * 首个 VEVENT SUMMARY 兜底解析——用户侧提案队列看到的是「新建 · 周五评审」而不是空行。
+ * 解析失败返回空串，绝不让列表接口 500。
+ */
+function proposalTitle(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return '';
+  const stored = typeof snapshot.title === 'string' ? snapshot.title : '';
+  if (stored) return stored;
+  return summaryOfIcs(snapshot.ics);
+}
 
 function json(res, status, body) {
   const payload = JSON.stringify(body);
@@ -202,10 +217,23 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
           decidedReason: proposal.decidedReason || '',
           // 用户在日历里只该看到目标日历的显示名，不需要整份 ICS。
           calendarExists: calendarIds.includes(proposal.calendarId),
-          before: proposal.before ? { etag: proposal.before.etag || null } : null,
-          after: proposal.after ? { title: proposal.after.title || '', summary: proposal.after.summary || '' } : null,
+          before: proposal.before ? { etag: proposal.before.etag || null, title: proposalTitle(proposal.before) } : null,
+          after: proposal.after
+            ? { title: proposalTitle(proposal.after), summary: proposal.after.summary || '', etag: proposal.after.etag || null }
+            : null,
         })),
       });
+    }
+
+    // 0.3.7（用户 m00779）：顶栏齿轮与「AI」页签的红点只显示「有 / 无」，不显示数字。
+    // 这里只回两个数，绝不回提案正文——红点轮询（60s 一次）不该把队列内容反复搬给前端。
+    // pending 的判定交给 ai-store.listProposals：它按 effective status 过滤并把过期写回，
+    // 前端与这里都不许自己算过期（否则读一次和读两次的答案会不一样）。
+    if (rest === 'count' || rest === 'count/') {
+      if (req.method !== 'GET') return methodNotAllowed(res, 'GET');
+      const list = await aiStore.listProposals(userId, { status: 'pending' });
+      const settings = await aiStore.readSettings();
+      return json(res, 200, { ok: true, pending: list.length, enabled: settings.enabled === true });
     }
 
     const matched = /^([^/]+)\/(accept|reject)$/.exec(rest);

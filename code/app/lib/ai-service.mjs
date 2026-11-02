@@ -42,6 +42,38 @@ export function invalidError(field, message) {
   return Object.assign(new Error(message || '参数不合法'), { code: 'invalid', status: 400, field });
 }
 
+/**
+ * 写请求被拒的四种原因，各给一句**可操作**的话（0.3.6 缺陷 1 的修复）。
+ *
+ * 修前三种原因共用一句「未找到该日历：它可能不存在、不在你的时间窗口内，或对你的凭据不可见」，
+ * 于是「用户自己可见、只是档位为只读」的日历也会被告知「不存在/不可见」——用户无从下手。
+ * 文案逐字定稿，`/mcp` 工具结果原样使用，`/api/ai/v1/*` 复用同一份常量。
+ *
+ * `not-found` 必须同时覆盖「不可见」与「不存在」：两者逐字相同，不向外证明存在性。
+ */
+export const WRITE_REJECT_TEXT = Object.freeze({
+  'not-writable': '该日历只有「只读」权限：请在 FnCal 的 AI 凭据里把这个日历改成「读写」后再试。',
+  'out-of-window': '这个时间在你的凭据时间窗外：请在 FnCal 里放宽这个凭据的时间窗，或换一个窗口内的时间。',
+  'not-found': '未找到该日历：它可能不存在，或对你的凭据不可见。',
+  'bad-range': '结束时间必须晚于开始时间。',
+});
+
+/** 结构化拒绝：带 `code: 'write_reject'` 与 `reason`，由 REST / MCP 各自映射。 */
+export function writeReject(reason) {
+  const key = Object.prototype.hasOwnProperty.call(WRITE_REJECT_TEXT, reason) ? reason : 'not-found';
+  return Object.assign(new Error(WRITE_REJECT_TEXT[key]), { code: 'write_reject', reason: key, status: 400 });
+}
+
+/**
+ * 结束时间早于开始时间 = 数据错误（0.3.6 缺陷 1 附带校验：此前 `end < start` 能生成提案）。
+ * 全天事件的 `end` 是「次日零点」（exclusive），不适用此判定；零长事件（`end === start`）允许。
+ */
+export function isBadRange(event) {
+  if (!event || event.allDay) return false;
+  if (!Number.isFinite(event.start) || !Number.isFinite(event.end)) return false;
+  return event.end < event.start;
+}
+
 export function isoOf(ms) {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
@@ -396,8 +428,11 @@ export function createAiService({
   async function createEvent(ctx, body) {
     const calendarId = String((body && body.calendarId) || '').trim();
     if (!calendarId) throw invalidError('calendarId', '需要 calendarId');
-    if (!isWritable(ctx.credential, calendarId)) return null;
-    if (!(await aiStore.calendarExistsFor(ctx.userId, calendarId))) return null;
+    // 0.3.6：拒绝原因分开判、分开说。顺序 = 可见性 → 存在性 → 档位 → 数据 → 时间窗，
+    // 用户先看到最根本的那一句（不可见 ≡ 不存在，逐字相同）。
+    if (!isReadable(ctx.credential, calendarId)) throw writeReject('not-found');
+    if (!(await aiStore.calendarExistsFor(ctx.userId, calendarId))) throw writeReject('not-found');
+    if (!isWritable(ctx.credential, calendarId)) throw writeReject('not-writable');
     const ics = buildIcs(body);
     const event = await eventFromIcs(ics);
     // 文件名必须与 ICS 里的 UID 一致（与 DAV PUT 同一约束），否则下次按 uid 取不到。
@@ -406,7 +441,8 @@ export function createAiService({
     if (!uid) throw invalidError('ics', 'ics 缺少 UID');
     if (requestedUid && requestedUid !== uid) throw invalidError('uid', 'body.uid 与 ics 里的 UID 不一致');
     if (!UID_RE.test(uid)) throw invalidError('uid', 'ics 里的 UID 含非法字符');
-    if (!writeWithinWindow(ctx.credential, event, ctx.nowMs)) return null;
+    if (isBadRange(event)) throw writeReject('bad-range');
+    if (!writeWithinWindow(ctx.credential, event, ctx.nowMs)) throw writeReject('out-of-window');
     ctx.action = 'create';
 
     if (writeModeOf(ctx.credential) === WRITE_MODE_DIRECT) {
@@ -433,7 +469,9 @@ export function createAiService({
       uid,
       credentialId: ctx.credential.id,
       before: null,
-      after: { etag: null, ics },
+      // `title` 是 0.3.6 加的：用户侧提案队列要「一眼看出这条提案要干什么」，
+      // 只存 ICS 时前端拿不到标题（旧接口只暴露 after.title/summary，恒为空）。
+      after: { etag: null, ics, title: event.title || '' },
       note: typeof body.note === 'string' ? body.note : '',
     });
     return { applied: false, proposal: proposalView(proposal, ctx.nowMs) };
@@ -444,7 +482,7 @@ export function createAiService({
     const calendarId = String(payload.calendarId || '').trim();
     const located = await locateEvent(ctx, uid, calendarId);
     if (!located) return null;
-    if (!isWritable(ctx.credential, located.calendarId)) return null;
+    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
 
     let current;
     try {
@@ -453,7 +491,7 @@ export function createAiService({
       return null;
     }
     const currentEnd = Number.isFinite(current.end) ? current.end : current.start;
-    if (!isWithinWindow(ctx.credential, current.start, currentEnd, ctx.nowMs)) return null;
+    if (!isWithinWindow(ctx.credential, current.start, currentEnd, ctx.nowMs)) throw writeReject('out-of-window');
 
     let ics;
     if (typeof payload.ics === 'string' && payload.ics.trim()) {
@@ -477,7 +515,8 @@ export function createAiService({
 
     const next = await eventFromIcs(ics);
     if (next.uid && String(next.uid) !== uid) throw invalidError('uid', 'UID 不可修改');
-    if (!writeWithinWindow(ctx.credential, next, ctx.nowMs)) return null;
+    if (isBadRange(next)) throw writeReject('bad-range');
+    if (!writeWithinWindow(ctx.credential, next, ctx.nowMs)) throw writeReject('out-of-window');
     ctx.action = 'update';
 
     if (writeModeOf(ctx.credential) === WRITE_MODE_DIRECT) {
@@ -503,8 +542,8 @@ export function createAiService({
       calendarId: located.calendarId,
       uid,
       credentialId: ctx.credential.id,
-      before: { etag: located.object.etag || null, ics: located.object.content },
-      after: { etag: null, ics },
+      before: { etag: located.object.etag || null, ics: located.object.content, title: current.title || '' },
+      after: { etag: null, ics, title: next.title || '' },
       note: typeof payload.note === 'string' ? payload.note : '',
     });
     return { applied: false, proposal: proposalView(proposal, ctx.nowMs) };
@@ -513,7 +552,7 @@ export function createAiService({
   async function deleteEvent(ctx, uid, { calendarId = '', note = '' } = {}) {
     const located = await locateEvent(ctx, uid, calendarId);
     if (!located) return null;
-    if (!isWritable(ctx.credential, located.calendarId)) return null;
+    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
     let current;
     try {
       current = await eventFromIcs(located.object.content);
@@ -521,7 +560,7 @@ export function createAiService({
       return null;
     }
     const currentEnd = Number.isFinite(current.end) ? current.end : current.start;
-    if (!isWithinWindow(ctx.credential, current.start, currentEnd, ctx.nowMs)) return null;
+    if (!isWithinWindow(ctx.credential, current.start, currentEnd, ctx.nowMs)) throw writeReject('out-of-window');
     ctx.action = 'delete';
 
     // 删除不可逆：即使 writeMode === 'direct' 也只出提案（canDelete() 恒 false）。
@@ -541,7 +580,7 @@ export function createAiService({
       calendarId: located.calendarId,
       uid,
       credentialId: ctx.credential.id,
-      before: { etag: located.object.etag || null, ics: located.object.content },
+      before: { etag: located.object.etag || null, ics: located.object.content, title: current.title || '' },
       after: null,
       note: note || 'AI 请求删除',
     });

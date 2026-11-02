@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   addDays,
@@ -296,35 +298,25 @@ describe('roundToNearestMinutes', () => {
 });
 
 describe('minutesIntoDay (DST-at-midnight safety)', () => {
-  // 平台条件跳过（不是「未实现」）：本用例运行时把 process.env.TZ 切到
-  // America/Santiago。Linux/CI 的 V8 会即时重读 TZ，**必须真跑并通过**；
-  // Windows 的 V8/ICU 不重读 TZ（Node 平台限制），切换无效，故仅在 win32 跳过
-  // ——所以本机 1 条跳过、Linux/CI 上为 0 跳过。功能本身（startOfDay 固定步进）
-  // 另有同组普通日用例覆盖，见 src/js/date-utils.js。
-  const isWindows = process.platform === 'win32';
-  (isWindows ? it.skip : it)('holds the wall clock on a day whose midnight does not exist', () => {
-    // Chile's spring-forward lands AT midnight: on 2022-09-11 (a fixed,
-    // historical transition) clocks jumped 00:00 -> 01:00 in Santiago, so
-    // startOfDay can only land on 01:00. Building times off that with a bare
-    // setMinutes shifted the whole day one hour; minutesIntoDay must not.
-    const savedTZ = process.env.TZ;
-    process.env.TZ = 'America/Santiago';
-    try {
-      const day = new Date(2022, 8, 11, 12, 0);
-      expect(startOfDay(day).getHours()).toBe(1); // the trap this guards against
-      const at = minutesIntoDay(day, 10 * 60 + 30);
-      expect(at.getHours()).toBe(10);
-      expect(at.getMinutes()).toBe(30);
-      expect(at.getDate()).toBe(11);
-      // …and the callers that delegate to it: rounding stays on the wall clock.
-      const rounded = roundToNearestMinutes(new Date(2022, 8, 11, 10, 20), 30);
-      expect(rounded.getHours()).toBe(10);
-      expect(rounded.getMinutes()).toBe(30);
-    } finally {
-      // Restore precisely: assigning `undefined` would set TZ to "undefined" (→UTC).
-      if (savedTZ === undefined) delete process.env.TZ;
-      else process.env.TZ = savedTZ;
-    }
+  // 同一组断言放进独立 Node 进程跑：vitest 的隔离环境在启动时定下本机时区，
+  // 运行期再改 process.env.TZ 不生效（Windows 与 Linux 都是这样），所以用子进程
+  // 以 TZ=America/Santiago 启动，Windows 与 Linux/CI 都真跑，不再按平台跳过。
+  // 断言正文见 tests/fixtures/minutes-into-day-santiago.mjs。
+  it('holds the wall clock on a day whose midnight does not exist', () => {
+    // 路径不用 import.meta.url：vite 的 asset-import-meta-url 插件会把它当资源
+    // 去解析；vitest 的 cwd 是 code/web，直接按仓库结构拼路径。
+    const root = process.cwd();
+    const run = spawnSync(
+      process.execPath,
+      [path.join(root, 'tests', 'fixtures', 'minutes-into-day-santiago.mjs')],
+      {
+        cwd: root,
+        env: { ...process.env, TZ: 'America/Santiago' },
+        stdio: 'inherit',
+      },
+    );
+    expect(run.error, `spawn failed: ${run.error?.message}`).toBeUndefined();
+    expect(run.status, 'santiago midnight-gap guard exit code').toBe(0);
   });
 
   it('is a plain minutes offset on ordinary days', () => {

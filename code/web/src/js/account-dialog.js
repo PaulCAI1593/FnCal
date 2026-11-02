@@ -20,6 +20,13 @@ import { colorHex, customColorSwatch } from './colors.js';
 import { openCalendarSettings } from './calendar-dialog.js';
 // 0.3.0（P4）：设置 → 「AI」页签（设计侧真源 design/M8-AI接入设置页-规范.md）。
 import { createAiSettingsPage } from './ai-settings.js';
+// 0.3.7（用户 m00779）：「AI」页签右上角的红点与顶栏齿轮同源（ai-badge.js 是唯一状态源）。
+import {
+  onAiBadgeChange,
+  getAiBadgeState,
+  paintAiBadge,
+  refreshAiBadge,
+} from './ai-badge.js';
 import { getAppVersion } from './app-version.js';
 import { getFrontendVersion } from './build-info.js';
 import { ACCENT_PRESETS, normalizeAccent } from './accent-theme.js';
@@ -824,6 +831,18 @@ export function openAccountDialog({
     tabbar.append(btn);
     return btn;
   });
+
+  // 0.3.7（用户 m00779）：第 4 枚「AI」页签的红点。与齿轮同一份状态，同一拍亮灭；
+  // 页签文字保持「AI」不动，条数只进 aria-label/title；n=0 时把 aria-label 摘掉，
+  // 让按钮的可访问名回落成文本「AI」（规范 §6）。
+  const aiTabBtn = tabButtons[tabs.findIndex((tabDef) => tabDef.id === 'ai')];
+  function paintAiTabBadge(current = getAiBadgeState()) {
+    // 贴法与齿轮共用 paintAiBadge()；页签不传 idleLabel，于是 n=0 时只摘属性、
+    // 不动文本，可访问名回落成「AI」。
+    paintAiBadge(aiTabBtn, { state: current, labelKey: 'settings.tab.aiWithPending' });
+  }
+  paintAiTabBadge();
+  const unsubscribeAiBadge = onAiBadgeChange((next) => paintAiTabBadge(next));
   function selectTab(id) {
     const index = tabs.findIndex((tabDef) => tabDef.id === id);
     tabs.forEach((tabDef, i) => {
@@ -834,7 +853,13 @@ export function openAccountDialog({
       tabButtons[i].tabIndex = active ? 0 : -1;
       if (tabDef.id === 'calendar' && active) renderTable();
       // AI 页每次切入都重新拉一次（服务开关/凭据/提案都可能被其它会话改过）。
-      if (tabDef.id === 'ai' && active) aiPage.refresh();
+      // 0.3.7：列表拉完再补一次红点计数——用户可能正好停在 AI 页看着队列，
+      // 受理/驳回后这里也要跟着灭掉（ai-settings.js 里已经直接刷过一次）。
+      if (tabDef.id === 'ai' && active) {
+        Promise.resolve(aiPage.refresh())
+          .then(() => refreshAiBadge())
+          .catch(() => {});
+      }
     });
     if (tabButtons[index]) tabButtons[index].focus();
   }
@@ -971,7 +996,11 @@ export function openAccountDialog({
   }
   document.addEventListener('keydown', onEscGuard, true);
   const removeEscGuard = () => document.removeEventListener('keydown', onEscGuard, true);
-  closeDialog = mountDialog(dialog, removeEscGuard);
+  // 0.3.7：关窗时连同红点订阅一起退订（顶栏齿轮那边的订阅仍在，红点不会因此停更）。
+  closeDialog = mountDialog(dialog, () => {
+    removeEscGuard();
+    unsubscribeAiBadge();
+  });
   selectTab(tab);
   void refreshSyncStatus();
   return { dialog, close: closeDialog };

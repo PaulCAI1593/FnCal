@@ -163,7 +163,7 @@ describe('B2 编辑器日历下拉', () => {
     expect(saved.colorOverride).toBe(false);
   });
 
-  it('系列事件的日历只读（0.2.0 不移动键空间）', () => {
+  it('0.3.9：系列事件的日历可改（不再只读），未改时不显示移动说明', () => {
     const store = makeStore();
     modal = createEventModal({ store });
     modal.openEdit({
@@ -177,7 +177,9 @@ describe('B2 编辑器日历下拉', () => {
       seriesId: 's1',
       recurrenceId: new Date(2026, 6, 16, 9, 0).getTime(),
     });
-    expect(trigger().disabled).toBe(true);
+    expect(trigger().disabled).toBe(false);
+    expect(label()).toBe('工作');
+    expect(document.querySelector('.cal-hint--series-move').style.display).toBe('none');
   });
 
   it('末尾「新建日历」先建日历再自动选中', async () => {

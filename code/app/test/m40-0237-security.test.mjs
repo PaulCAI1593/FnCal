@@ -187,16 +187,27 @@ try {
   eq('状态含 proxy 运行态', false, readDefault.json.status.proxy.enabled);
 
   // S2：开启反代 HTTPS 后，可信代理带来的 https 请求 → Secure Cookie + HSTS
+  // v1.1.0（P1）：behindProxy 关→开现在要求「当前请求本身是外部 HTTPS」，
+  // 而可信代理配置在本次请求里还没生效，所以拆成两步：先启用代理，再以
+  // X-Forwarded-Proto: https 开启 behindProxy。
   const enableProxy = await call('/api/v1/admin/security', {
     method: 'PATCH',
     session: adminSession,
     body: {
       proxy: { enabled: true, trusted: ['127.0.0.1'] },
-      https: { behindProxy: true, hsts: true },
     },
   });
   eq('保存反代设置', 200, enableProxy.status);
   eq('反代已启用', true, enableProxy.json.settings.proxy.enabled);
+
+  const enableBehindProxy = await call('/api/v1/admin/security', {
+    method: 'PATCH',
+    session: adminSession,
+    body: { https: { behindProxy: true, hsts: true } },
+    headers: { 'x-forwarded-proto': 'https' },
+  });
+  eq('保存反代 HTTPS 设置', 200, enableBehindProxy.status);
+  eq('反代 HTTPS 已开启', true, enableBehindProxy.json.settings.https.behindProxy);
 
   const secureLogin = await call('/api/v1/auth/login', {
     method: 'POST',

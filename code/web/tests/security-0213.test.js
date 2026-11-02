@@ -103,7 +103,9 @@ function buttonByText(root, text) {
 let openHandle = null;
 
 function openAdmin(overrides = {}) {
-  openHandle = openSecuritySettingsDialog({ user: { id: 'acc-1', role: 'admin', username: 'admin' } });
+  // 0.3.10（M13 §2.1）：② 页排除当前管理员自己，所以测试用「me」当登录者，
+  // 列表里的 acc-1 才是「其他账号」，账号行断言仍成立。
+  openHandle = openSecuritySettingsDialog({ user: { id: 'me', role: 'admin', username: 'me' } });
   return openHandle;
 }
 
@@ -142,7 +144,7 @@ describe('安全设置：入口与权限', () => {
     if (handle && handle.close) handle.close();
   });
 
-  it('管理员打开后渲染状态摘要与七个分区', async () => {
+  it('管理员打开后渲染状态摘要、4 页签与九个分区', async () => {
     openAdmin();
     await flush();
     expect(mocks.getSecuritySettings).toHaveBeenCalledTimes(1);
@@ -152,14 +154,17 @@ describe('安全设置：入口与权限', () => {
     expect(status.textContent).toContain(t('security.status.https'));
     expect(status.textContent).toContain('2'); // 最近 24h 失败数
     const titles = [...modal.querySelectorAll('.security-section__title')].map((n) => n.textContent);
-    // 0.2.37 起分区从 5 个变 7 个：最上面「登录活动」（S7），HTTPS 下面多「反向代理与真实来源」（S1）。
+    // 0.3.10（M13 §2.1）：4 个面板共 9 张卡——① 自己的两步验证 + 专用密码，
+    // ② 登录活动/会话策略/反代/其他账号，③ HTTPS + 证书，④ 审计。
     expect(titles).toEqual([
-      t('security.section.activity'),
-      t('security.section.https'),
-      t('security.section.proxy'),
-      t('security.section.cert'),
-      t('security.section.policy'),
       t('security.section.totp'),
+      t('security.section.dav'),
+      t('security.section.activity'),
+      t('security.section.policy'),
+      t('security.section.proxy'),
+      t('security.section.otherTotp'),
+      t('security.section.https'),
+      t('security.section.cert'),
       t('security.section.audit'),
     ]);
   });
@@ -179,6 +184,12 @@ describe('安全设置：HTTPS 与证书', () => {
     expect(inputs).toHaveLength(2);
     inputs[0].value = '8443'; // HTTPS 端口
     buttonByText(https, t('security.action.saveHttps')).click();
+    await flush();
+    // v1.1.0（P1）：HSTS 由关改开要先过危险确认，确认后才发 PATCH。
+    const confirmModal = document.querySelector('.security-confirm-modal');
+    expect(confirmModal).toBeTruthy();
+    expect(confirmModal.textContent).toContain(t('security.https.hstsConfirm'));
+    buttonByText(confirmModal, t('security.confirm.ok')).click();
     await flush();
     expect(mocks.updateSecuritySettings).toHaveBeenCalledTimes(1);
     const payload = mocks.updateSecuritySettings.mock.calls[0][0];
@@ -225,7 +236,7 @@ describe('安全设置：2FA 绑定与专用密码', () => {
     openAdmin();
     await flush();
     const modal = document.querySelector('.security-modal');
-    const totp = sectionByTitle(modal, t('security.section.totp'));
+    const totp = sectionByTitle(modal, t('security.section.otherTotp'));
     const toggle = totp.querySelector('input[role="switch"]');
     toggle.checked = true;
     toggle.dispatchEvent(new Event('change', { bubbles: true }));
@@ -251,13 +262,23 @@ describe('安全设置：2FA 绑定与专用密码', () => {
   });
 
   it('新建专用密码后明文只展示在一次性提示框里', async () => {
-    vi.stubGlobal('prompt', vi.fn(() => '手机'));
+    // 0.3.8（M12 §3.2-2）：名称改用对话框内联输入框，不再调用 window.prompt。
+    const promptSpy = vi.fn(() => '不该被调用');
+    vi.stubGlobal('prompt', promptSpy);
     openAdmin();
     await flush();
     const modal = document.querySelector('.security-modal');
-    const totp = sectionByTitle(modal, t('security.section.totp'));
+    const totp = sectionByTitle(modal, t('security.section.otherTotp'));
     buttonByText(totp, t('security.dav.createAction')).click();
+    const form = totp.querySelector('.security-app-password-create');
+    expect(form).not.toBeNull();
+    const nameInput = form.querySelector('input');
+    expect(nameInput.value).toBe(t('security.dav.defaultName'));
+    nameInput.value = '手机';
+    buttonByText(form, t('security.action.confirm')).click();
     await flush();
+    await flush();
+    expect(promptSpy).not.toHaveBeenCalled();
     expect(mocks.createAppPasswordFor).toHaveBeenCalledWith('acc-1', '手机');
     const box = totp.querySelector('.security-secret');
     expect(box).not.toBeNull();
@@ -285,7 +306,7 @@ describe('安全设置：锁定解锁与审计', () => {
     openAdmin();
     await flush();
     const modal = document.querySelector('.security-modal');
-    const totpSection = sectionByTitle(modal, t('security.section.totp'));
+    const totpSection = sectionByTitle(modal, t('security.section.otherTotp'));
     buttonByText(totpSection, t('security.lockout.unlock')).click();
     await flush();
     expect(mocks.unlockSecurityTarget).toHaveBeenCalledWith({ username: 'bob' });
@@ -318,13 +339,18 @@ const rows = [...audit.querySelectorAll('.security-audit')];
 
 describe('我的安全：自助页', () => {
   it('展示 2FA 状态并可自助新建专用密码', async () => {
-    vi.stubGlobal('prompt', vi.fn(() => '手机'));
     openHandle = openMySecurityDialog({ user: { id: 'acc-1', username: 'bob' } });
     await flush();
     const modal = document.querySelector('.security-modal');
     expect(modal).not.toBeNull();
     expect(modal.textContent).toContain(t('security.self.totpOff'));
     buttonByText(modal, t('security.dav.createAction')).click();
+    // 0.3.8（M12 §3.2-2）：行内输入框替代 window.prompt。
+    const form = modal.querySelector('.security-app-password-create');
+    expect(form).not.toBeNull();
+    form.querySelector('input').value = '手机';
+    buttonByText(form, t('security.action.confirm')).click();
+    await flush();
     await flush();
     expect(mocks.createOwnAppPassword).toHaveBeenCalledWith('手机');
     expect(modal.textContent).toContain('OWN-ONCE-PW');

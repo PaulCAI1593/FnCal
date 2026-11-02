@@ -26,9 +26,13 @@ const FREE_SLOT_DAYS = 7;
 const FREE_SLOT_MIN_MINUTES = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 「不存在 / 不可见 / 窗外」共用一个说法：不向外证明存在性。 */
+/** 「不存在 / 不可见」共用一个说法：不向外证明存在性。 */
 const MISSING_EVENT_TEXT = '未找到该事件：它可能不存在、不在你的时间窗口内，或对你的凭据不可见。';
-const MISSING_CALENDAR_TEXT = '未找到该日历：它可能不存在、不在你的时间窗口内，或对你的凭据不可见。';
+/**
+ * 0.3.6：日历的「不可见 ≡ 不存在」只保留这两层语义。
+ * 时间窗与只读档位各有自己的文案（见 `WRITE_REJECT_TEXT`），不再混进「不存在」。
+ */
+const MISSING_CALENDAR_TEXT = '未找到该日历：它可能不存在，或对你的凭据不可见。';
 
 /* ------------------------------------------------------------------ 工具定义 */
 
@@ -562,6 +566,11 @@ export function createMcp({
       action = ctx.action || message.method;
       if (err && typeof err.rpcCode === 'number') {
         return finish(200, { jsonrpc: '2.0', id, error: { code: err.rpcCode, message: err.message } });
+      }
+      // 写请求被拒（只读档位 / 时间窗外 / 日历不存在 / 时间区间颠倒）：文案逐字透传，
+      // 不用「操作失败：」前缀——这是给用户看、能照着操作的一句话（0.3.6 缺陷 1）。
+      if (err && err.code === 'write_reject') {
+        return finish(200, { jsonrpc: '2.0', id, result: toolFailure(String(err.message)) });
       }
       // 服务层错误（冲突/参数不合法/日历不存在）在 MCP 面上是工具结果，不是协议错误。
       if (err && (err.code === 'conflict' || err.code === 'invalid' || err.code === 'missing_calendar')) {

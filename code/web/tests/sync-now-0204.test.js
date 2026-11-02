@@ -86,8 +86,13 @@ describe('0.2.4 ⑮ 账号菜单「立即同步」', () => {
     openMenu();
     const labels = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
     const manageAt = labels.findIndex((l) => l.includes('用户管理') || l.includes('账号管理'));
+    const selfAt = labels.findIndex((l) => l.includes('我的安全'));
+    const securityAt = labels.findIndex((l) => l.includes('安全设置'));
     const syncAt = labels.findIndex((l) => l.includes('立即同步'));
-    expect(syncAt).toBeGreaterThan(manageAt);
+    // 0.3.10（M13 §1.1）：管理员只有「安全设置」；自己的安全并入其 ① 页。
+    expect(selfAt).toBe(-1);
+    expect(securityAt).toBeGreaterThan(manageAt);
+    expect(syncAt).toBeGreaterThan(securityAt);
     expect(labels[syncAt + 1]).toContain('登出');
     expect(labels.some((l) => l.includes('账号安全'))).toBe(false);
 
@@ -98,12 +103,14 @@ describe('0.2.4 ⑮ 账号菜单「立即同步」', () => {
     app = createApp(root, { store: makeStore(), user: { username: 'dave', role: 'user' } });
     openMenu();
     const labels2 = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
-    // 0.2.8：普通用户菜单 = 我的账号 / 立即同步 / 登出（管理员多一项「账号管理」在最前）。
+    // 0.3.8：普通用户 = 我的账号 / 我的安全 / 立即同步 / 登出（没有「安全设置」，也不留空位）。
     const syncAt2 = labels2.findIndex((l) => l.includes('立即同步'));
-    expect(syncAt2).toBe(1);
-    expect(labels2[syncAt2 - 1]).toContain('我的账号');
+    expect(syncAt2).toBe(2);
+    expect(labels2[syncAt2 - 2]).toContain('我的账号');
+    expect(labels2[syncAt2 - 1]).toContain('我的安全');
     expect(labels2[syncAt2 + 1]).toContain('登出');
     expect(labels2.some((l) => l.includes('账号安全'))).toBe(false);
+    expect(labels2.some((l) => l.includes('安全设置'))).toBe(false);
   });
 
   it('点击：关闭菜单 → store.load 全量拉取 → 成功 toast；当前视图日期不跳', async () => {

@@ -1,11 +1,15 @@
 /**
- * 安全设置（0.2.13）。
+ * 安全设置（0.2.13；0.3.8 接回入口）。
  *
- * - `openSecuritySettingsDialog({ user })`：管理员专用的「安全设置」页。入口放在
- *   设置 → 账号页的「管理员」区（与「账号管理」同级）；普通用户不渲染该入口，
+ * - `openSecuritySettingsDialog({ user })`：管理员专用的「安全设置」页。入口在
+ *   头像菜单（`app.js` `openUserMenu()`）的「安全设置」项，仅管理员渲染；普通用户
  *   直接访问也只会看到中文提示（后端 `/api/v1/admin/security*` 另有管理员鉴权兜底）。
  * - `openMySecurityDialog({ user })`：任何登录用户管理自己的两步验证（TOTP）与
- *   CalDAV 专用密码。开了两步验证后 DAV 客户端必须用专用密码，主密码一律 401。
+ *   CalDAV 专用密码，入口是头像菜单的「我的安全」项。开了两步验证后 DAV 客户端
+ *   必须用专用密码，主密码一律 401。
+ *
+ * 本模块只被头像菜单的两枚入口使用，由 `app.js` 动态 `import()` 独立分包；分包加载
+ * 期的骨架与失败重试在 `security-lazy.js`（不进本模块）。
  *
  * 所有密钥/私钥/恢复码明文只在服务端创建响应里出现一次，页面不做持久保存。
  */
@@ -13,6 +17,7 @@ import { el } from './dom.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
 import { mountDialog } from './recurrence-dialog.js';
+import { securitySkeleton } from './security-lazy.js';
 import { t } from '../i18n/index.js';
 import {
   getSecuritySettings,
@@ -57,13 +62,21 @@ function row(labelText, control, hintText = '') {
 }
 
 function switchInput(checked) {
-  const input = el('input', { class: 'switch__input', type: 'checkbox', role: 'switch' });
+  // 0.3.11：去掉历史残留的 `switch__input` 类（base.css 无对应规则，命中靠 `.switch input`）。
+  const input = el('input', { type: 'checkbox', role: 'switch' });
   input.checked = Boolean(checked);
   return wrapSwitch(input);
 }
 
 function wrapSwitch(input) {
-  const label = el('label', { class: 'switch' }, [input, el('span', { class: 'switch__track' })]);
+  // 0.3.11：与 account-dialog.js `switchToggle()`（:169-182）结构一致——input 之后必须
+  // 依次是 `switch__track` 与真实滑块 `switch__thumb`。缺 thumb 时只剩纯色药丸，没有
+  // 白色圆点与 `translateX(16px)` 位移动画（base.css:388-405 用 `~` 兄弟选择器）。
+  const label = el('label', { class: 'switch' }, [
+    input,
+    el('span', { class: 'switch__track' }),
+    el('span', { class: 'switch__thumb' }),
+  ]);
   // 调用方拿到的是 input，需要把它包进 .switch 才有点击区域；用 input.parentNode 无法在
   // 创建时立刻判断，所以这里返回包装元素本身的行为：设置 input.__switch = label。
   input.__switch = label;
@@ -115,12 +128,52 @@ function appPasswordGuideBox(onCreate) {
   return el('div', { class: 'security-callout security-callout--warn security-callout--action', role: 'status' }, [
     el('span', { class: 'security-callout__text', text: t('security.totp.needAppPassword') }),
     el('button', {
-      class: 'btn btn--primary btn--sm',
+      // 0.3.10（M13 §3.4）：① 页的主按钮只留给「开启两步验证 / 新建专用密码」，
+      // 引导块里这个快捷入口保持默认层级，避免同页出现两个 primary。
+      class: 'btn btn--sm',
       type: 'button',
       text: t('security.totp.goCreateAppPassword'),
       on: { click: () => onCreate() },
     }),
   ]);
+}
+
+/**
+ * 0.3.8（M12 §3.2-2）：专用密码名称改用对话框内联输入框。原实现用 `window.prompt`，
+ * 浏览器原生弹窗不可样式化、移动端差、与页面其余表单不一致；此处确认/取消都留在
+ * 对话框内，失败由调用方 setError 展示。
+ * 0.3.10（M13 §3.4）：② 页不允许可见 primary，管理员「其他账号」的新建表单传
+ * `primary: false`；① 页自己的表单仍是 primary（此时页内「新建」按钮让位）。
+ */
+function appPasswordCreateForm({ onConfirm, onCancel, primary = true }) {
+  const input = textInput(t('security.dav.defaultName'), {
+    placeholder: t('security.dav.namePrompt'),
+    width: '100%',
+  });
+  const confirmBtn = el('button', {
+    class: primary ? 'btn btn--primary btn--sm' : 'btn btn--sm',
+    type: 'button',
+    text: t('security.action.confirm'),
+  });
+  const cancelBtn = el('button', { class: 'btn btn--sm', type: 'button', text: t('common.cancel') });
+  confirmBtn.addEventListener('click', async () => {
+    const name = String(input.value).trim() || t('security.dav.defaultName');
+    confirmBtn.disabled = true;
+    try {
+      await onConfirm(name);
+    } finally {
+      confirmBtn.disabled = false;
+    }
+  });
+  cancelBtn.addEventListener('click', () => {
+    if (onCancel) onCancel();
+  });
+  const form = el('div', { class: 'field security-app-password-create' }, [
+    el('label', { class: 'field__label', text: t('security.dav.namePrompt') }),
+    input,
+    el('div', { class: 'security-inline' }, [confirmBtn, cancelBtn]),
+  ]);
+  return { form, input };
 }
 
 function errorText(err, fallback) {
@@ -204,6 +257,7 @@ export function openSecuritySettingsDialog({ user } = {}) {
     error: '',
   };
 
+  const bodyEl = el('div', { class: 'modal__body security-body' });
   const statusBox = el('div', { class: 'security-status', role: 'status' });
   const httpsBody = el('div', { class: 'security-body' });
   const proxyBody = el('div', { class: 'security-body' });
@@ -215,12 +269,101 @@ export function openSecuritySettingsDialog({ user } = {}) {
   const oneTimeHost = el('div', { class: 'security-onetime' });
   const auditBody = el('div', { class: 'security-body' });
   const errorEl = el('p', { class: 'security-error', role: 'alert', hidden: true });
-  const saveBtn = el('button', { class: 'btn btn--primary', type: 'button', text: t('security.action.save') });
+  // 0.3.8（M12 §3.2-6）：首屏不再白屏——先给静态骨架，数据到再显示分区；
+  // 首屏加载失败时给「重试」（不自动重试，避免断网时反复打后端）。
+  const loadingHost = el('div', { class: 'security-loading' }, [securitySkeleton()]);
+  const retryBtn = el('button', {
+    class: 'btn btn--sm',
+    type: 'button',
+    text: t('common.retry'),
+    hidden: true,
+    on: { click: () => { void refresh(); } },
+  });
+  const errorHost = el('div', { class: 'security-error-row', hidden: true }, [errorEl, retryBtn]);
+  // 0.3.8（M12 §3.2-1）：footer 的全局「保存」是死按钮（各分区各有保存按钮），已删除；
+  // busy 态改挂各分区自己的操作按钮（见 withSave 的 button 参数）。
+  // 0.3.8（M12 §3.2-6）：分区整体包一层，加载期隐藏，避免出现只有标题没有内容的空壳。
+  const sectionsHost = el('div', { class: 'security-sections', hidden: true });
 
-  function setError(message) {
+  function setError(message, { retry = false } = {}) {
     errorEl.textContent = message || '';
     errorEl.hidden = !message;
+    retryBtn.hidden = !(message && retry);
+    errorHost.hidden = !message;
   }
+
+  // 0.3.10（M13 §1–§2）：管理员对话框改为 4 页签；① 页与普通用户的「我的安全」同源
+  // （buildSelfSecurity），页签用 hidden 切换面板、不销毁 DOM——切页零请求，
+  // 证书 PEM / 白名单等未保存输入切走再切回仍在（M13 §5）。
+  const selfBlock = buildSelfSecurity({
+    user,
+    setError: (message) => setError(message),
+    onChange: () => { void refresh(); },
+  });
+
+  const TABS = [
+    { id: 'self', label: t('security.tabs.self') },
+    { id: 'login', label: t('security.tabs.login') },
+    { id: 'cert', label: t('security.tabs.cert') },
+    { id: 'audit', label: t('security.tabs.audit') },
+  ];
+  const panelHosts = {
+    self: el('div', { class: 'security-tabpanel', role: 'tabpanel', id: 'sec-panel-self', 'aria-labelledby': 'sec-tab-self', tabindex: '0' }),
+    login: el('div', { class: 'security-tabpanel', role: 'tabpanel', id: 'sec-panel-login', 'aria-labelledby': 'sec-tab-login', tabindex: '0' }),
+    cert: el('div', { class: 'security-tabpanel', role: 'tabpanel', id: 'sec-panel-cert', 'aria-labelledby': 'sec-tab-cert', tabindex: '0' }),
+    audit: el('div', { class: 'security-tabpanel', role: 'tabpanel', id: 'sec-panel-audit', 'aria-labelledby': 'sec-tab-audit', tabindex: '0' }),
+  };
+  const tabList = el('div', {
+    class: 'settings__tabs security-tabs',
+    role: 'tablist',
+    'aria-label': t('security.tabs.label'),
+  });
+  const tabButtons = TABS.map(({ id, label }) => {
+    const button = el('button', {
+      type: 'button',
+      role: 'tab',
+      id: `sec-tab-${id}`,
+      'aria-controls': `sec-panel-${id}`,
+      'aria-selected': 'false',
+      tabindex: '-1',
+      text: label,
+      on: { click: () => selectTab(id) },
+    });
+    tabList.append(button);
+    return button;
+  });
+
+  let activeTab = 'self';
+
+  function selectTab(id, { focus = false } = {}) {
+    if (!panelHosts[id]) return;
+    activeTab = id;
+    TABS.forEach((tab, index) => {
+      const selected = tab.id === id;
+      tabButtons[index].setAttribute('aria-selected', String(selected));
+      tabButtons[index].tabIndex = selected ? 0 : -1;
+      panelHosts[tab.id].hidden = !selected;
+    });
+    // M13 §5：切页回到顶部；不销毁 DOM，未保存输入保留。
+    bodyEl.scrollTop = 0;
+    if (focus) {
+      const index = TABS.findIndex((tab) => tab.id === id);
+      if (tabButtons[index]) tabButtons[index].focus();
+    }
+  }
+
+  // M13 §6：←/→ 立即切页并移动焦点，Home/End 跳首末；roving tabindex 已由 selectTab 维护。
+  tabList.addEventListener('keydown', (ev) => {
+    const index = TABS.findIndex((tab) => tab.id === activeTab);
+    let next = -1;
+    if (ev.key === 'ArrowRight') next = (index + 1) % TABS.length;
+    else if (ev.key === 'ArrowLeft') next = (index - 1 + TABS.length) % TABS.length;
+    else if (ev.key === 'Home') next = 0;
+    else if (ev.key === 'End') next = TABS.length - 1;
+    if (next < 0) return;
+    ev.preventDefault();
+    selectTab(TABS[next].id, { focus: true });
+  });
 
   function renderStatus() {
     const status = state.status || {};
@@ -311,8 +454,13 @@ export function openSecuritySettingsDialog({ user } = {}) {
           type: 'button',
           text: t('security.action.saveHttps'),
           on: {
-            click: () => withSave(() => updateSecuritySettings({
-              https: {
+            // v1.1.0（P1）：behindProxy / hsts 由关改开是「可能把自己锁在门外」的两个
+            // 动作。先弹危险确认（沿用 confirmDialogThen，焦点自动落「取消」），
+            // 确认后才 PATCH；取消则不发任何请求，并把这两个开关拨回已保存的值。
+            click: async (ev) => {
+              const button = ev.currentTarget;
+              const saved = (state.settings && state.settings.https) || {};
+              const payload = {
                 enabled: enabledSwitch.checked,
                 httpsPort: parseNum(httpsPortInput, 5243),
                 redirectHttp: redirectSwitch.checked,
@@ -321,8 +469,26 @@ export function openSecuritySettingsDialog({ user } = {}) {
                 allowHttp: allowHttpSwitch.checked,
                 davAllowHttp: davAllowHttpSwitch.checked,
                 behindProxy: behindProxySwitch.checked,
-              },
-            })),
+              };
+              const turnsOnBehindProxy = payload.behindProxy === true && saved.behindProxy !== true;
+              const turnsOnHsts = payload.hsts === true && saved.hsts !== true;
+              const revertDangerous = () => {
+                behindProxySwitch.checked = saved.behindProxy === true;
+                hstsSwitch.checked = saved.hsts === true;
+              };
+              const ask = (message) => new Promise((resolve) => {
+                confirmDialogThen(message, async () => resolve(true), { onCancel: () => resolve(false) });
+              });
+              if (turnsOnBehindProxy && !(await ask(t('security.https.behindProxyConfirm')))) {
+                revertDangerous();
+                return;
+              }
+              if (turnsOnHsts && !(await ask(t('security.https.hstsConfirm')))) {
+                revertDangerous();
+                return;
+              }
+              await withSave(() => updateSecuritySettings({ https: payload }), { button });
+            },
           },
         }),
       ]),
@@ -351,16 +517,17 @@ export function openSecuritySettingsDialog({ user } = {}) {
       ]),
       el('div', { class: 'security-actions' }, [
         el('button', {
-          class: 'btn btn--primary',
+          // 0.3.10（M13 §3.4-2）：保存类一律 default，主按钮只留给「创建 / 开启」。
+          class: 'btn',
           type: 'button',
           text: t('security.action.saveProxy'),
           on: {
-            click: () => withSave(() => updateSecuritySettings({
+            click: (ev) => withSave(() => updateSecuritySettings({
               proxy: {
                 enabled: enabledSwitch.checked,
                 trusted: trustedArea.value.split('\n').map((s) => s.trim()).filter(Boolean),
               },
-            })),
+            }), { button: ev.currentTarget }),
           },
         }),
       ]),
@@ -445,15 +612,15 @@ export function openSecuritySettingsDialog({ user } = {}) {
           class: 'btn',
           type: 'button',
           text: t('security.cert.generate'),
-          on: { click: () => withSave(async () => {
+          on: { click: (ev) => withSave(async () => {
             const sans = sansInput.value.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
             await generateSelfSignedCertificate({ sans });
             toast(t('security.toast.certGenerated'), { variant: 'success' });
-          }) },
+          }, { button: ev.currentTarget }) },
         }),
         certificate && certificate.source
           ? el('button', {
-              class: 'btn btn--danger',
+              class: 'btn btn--danger-outline',
               type: 'button',
               text: t('security.cert.clear'),
               on: { click: () => confirmDialogThen(t('security.cert.clearConfirm'), () => withSave(async () => {
@@ -488,17 +655,18 @@ export function openSecuritySettingsDialog({ user } = {}) {
       ]),
       el('div', { class: 'security-actions' }, [
         el('button', {
-          class: 'btn btn--primary',
+          // 0.3.10（M13 §3.4-2）：上传证书是保存类，收到 default。
+          class: 'btn',
           type: 'button',
           text: t('security.action.uploadCert'),
-          on: { click: () => withSave(async () => {
+          on: { click: (ev) => withSave(async () => {
             if (!certPemArea.value.trim() || !keyPemArea.value.trim()) {
               setError(t('security.cert.pemRequired'));
               return;
             }
             await uploadSecurityCertificate({ certPem: certPemArea.value, keyPem: keyPemArea.value });
             toast(t('security.toast.certUploaded'), { variant: 'success' });
-          }) },
+          }, { button: ev.currentTarget }) },
         }),
       ]),
       el('p', { class: 'security-hint', text: t('security.cert.privacyHint') }),
@@ -541,10 +709,11 @@ export function openSecuritySettingsDialog({ user } = {}) {
       ]),
       el('div', { class: 'security-actions' }, [
         el('button', {
-          class: 'btn btn--primary',
+          // 0.3.10（M13 §3.4-2）：保存访问策略是保存类，收到 default。
+          class: 'btn',
           type: 'button',
           text: t('security.action.savePolicy'),
-          on: { click: () => withSave(() => updateSecuritySettings({
+          on: { click: (ev) => withSave(() => updateSecuritySettings({
             session: {
               idleMinutes: parseNum(idleInput, 720),
               absoluteDays: parseNum(absoluteInput, 7),
@@ -562,7 +731,7 @@ export function openSecuritySettingsDialog({ user } = {}) {
               enabled: whitelistSwitch.checked,
               entries: whitelistArea.value.split('\n').map((s) => s.trim()).filter(Boolean),
             },
-          })) },
+          }), { button: ev.currentTarget }) },
         }),
       ]),
     );
@@ -570,12 +739,22 @@ export function openSecuritySettingsDialog({ user } = {}) {
 
   function renderAccounts() {
     const accounts = Array.isArray(state.accounts) ? state.accounts : [];
+    // 0.3.10（M13 §2.1）：② 页只放「其他账号」的两步验证——自己只在 ① 页改，
+    // 同一状态只留一个可写入口，避免两处改同一开关（产品裁定，见 M13 §1.1）。
+    const others = accounts.filter((account) => {
+      if (!user) return true;
+      if (user.id && String(account.id) === String(user.id)) return false;
+      if (user.username && String(account.username || '') === String(user.username)) return false;
+      return true;
+    });
     const lockout = (state.status && state.status.lockout) || {};
     const lockedAccounts = Array.isArray(lockout.accounts) ? lockout.accounts : [];
     const lockedIps = Array.isArray(lockout.addresses) ? lockout.addresses : [];
 
     accountsBody.replaceChildren(...compact([
-      el('div', { class: 'security-accounts' }, accounts.map((account) => accountRow(account))),
+      others.length
+        ? el('div', { class: 'security-accounts' }, others.map((account) => accountRow(account)))
+        : el('p', { class: 'security-hint', text: t('security.accounts.othersEmpty') }),
       lockedAccounts.length || lockedIps.length
         ? el('div', { class: 'security-locks' }, [
             el('h4', { class: 'security-locks__title', text: t('security.lockout.current') }),
@@ -585,10 +764,10 @@ export function openSecuritySettingsDialog({ user } = {}) {
                 class: 'btn btn--sm',
                 type: 'button',
                 text: t('security.lockout.unlock'),
-                on: { click: () => withSave(async () => {
+                on: { click: (ev) => withSave(async () => {
                   await unlockSecurityTarget({ username: entry.username });
                   toast(t('security.toast.unlocked'), { variant: 'success' });
-                }) },
+                }, { button: ev.currentTarget }) },
               }),
             ])),
             ...lockedIps.map((entry) => el('div', { class: 'security-lock' }, [
@@ -597,10 +776,10 @@ export function openSecuritySettingsDialog({ user } = {}) {
                 class: 'btn btn--sm',
                 type: 'button',
                 text: t('security.lockout.unlock'),
-                on: { click: () => withSave(async () => {
+                on: { click: (ev) => withSave(async () => {
                   await unlockSecurityTarget({ ip: entry.ip });
                   toast(t('security.toast.unlocked'), { variant: 'success' });
-                }) },
+                }, { button: ev.currentTarget }) },
               }),
             ])),
           ])
@@ -616,14 +795,28 @@ export function openSecuritySettingsDialog({ user } = {}) {
     // 0.2.14（P1-1）：开了 2FA 但还没建专用密码 → 就地提醒 + 一键去建。
     const davWarnHost = el('div', { class: 'security-account__warn' });
 
-    async function createAppPasswordFlow() {
-      const name = window.prompt(t('security.dav.namePrompt'), t('security.dav.defaultName'));
-      if (name == null) return;
-      const result = await createAppPasswordFor(account.id, String(name).trim() || t('security.dav.defaultName'));
-      if (result.password) {
-        setupHost.append(secretBox({ title: t('security.dav.createdTitle'), items: result.password, hint: t('security.dav.createdHint') }));
-      }
-      loadAppPasswords();
+    // 0.3.8（M12 §3.2-2）：名称改用行内输入框（原 `window.prompt` 不可样式化、移动端差）。
+    const createFormHost = el('div', { class: 'security-app-password-create-host' });
+
+    function openCreateForm() {
+      const { form, input } = appPasswordCreateForm({
+        // M13 §3.4：② 页无可见 primary，确认键与其余动作同为 default。
+        primary: false,
+        onConfirm: async (name) => {
+          // 一次性明文要留在屏幕上给用户抄，所以 refreshAfter: false；列表单独重载。
+          await withSave(async () => {
+            const result = await createAppPasswordFor(account.id, name);
+            if (result.password) {
+              setupHost.append(secretBox({ title: t('security.dav.createdTitle'), items: result.password, hint: t('security.dav.createdHint') }));
+            }
+            createFormHost.replaceChildren();
+            loadAppPasswords();
+          }, { refreshAfter: false });
+        },
+        onCancel: () => createFormHost.replaceChildren(),
+      });
+      createFormHost.replaceChildren(form);
+      input.focus();
     }
 
     function loadAppPasswords() {
@@ -633,21 +826,21 @@ export function openSecuritySettingsDialog({ user } = {}) {
             el('span', { class: 'security-app-password__name', text: item.name || '-' }),
             el('span', { class: 'security-app-password__meta', text: item.lastUsedAt ? t('security.dav.lastUsed', { time: formatDate(item.lastUsedAt) }) : t('security.dav.neverUsed') }),
             el('button', {
-              class: 'btn btn--sm btn--danger',
+              class: 'btn btn--sm btn--danger-outline',
               type: 'button',
               text: t('security.dav.revoke'),
-              on: { click: () => withSave(async () => {
+              on: { click: (ev) => withSave(async () => {
                 await revokeAppPasswordFor(account.id, item.id);
                 toast(t('security.toast.appPasswordRevoked'), { variant: 'success' });
                 loadAppPasswords();
-              }) },
+              }, { button: ev.currentTarget }) },
             }),
           ])),
           items.length ? null : el('p', { class: 'security-hint', text: t('security.dav.empty') }),
         ]));
         davWarnHost.replaceChildren(...compact([
           totp.confirmedAt && items.length === 0
-            ? appPasswordGuideBox(() => { void createAppPasswordFlow(); })
+            ? appPasswordGuideBox(openCreateForm)
             : null,
         ]));
       }).catch((err) => toast(errorText(err, t('security.error.load')), { variant: 'danger' }));
@@ -691,8 +884,9 @@ export function openSecuritySettingsDialog({ user } = {}) {
           class: 'btn btn--sm',
           type: 'button',
           text: t('security.dav.createAction'),
-          on: { click: () => withSave(createAppPasswordFlow, { refreshAfter: false }) },
+          on: { click: () => openCreateForm() },
         }), t('security.dav.createHint')),
+        createFormHost,
         appPasswordList,
         totp.confirmedAt
           ? el('button', {
@@ -710,7 +904,7 @@ export function openSecuritySettingsDialog({ user } = {}) {
         // 0.2.37（S6）：对方换手机/丢了恢复码时，管理员可重置其两步验证。
         totp.confirmedAt
           ? el('button', {
-              class: 'btn btn--sm btn--danger',
+              class: 'btn btn--sm btn--danger-outline',
               type: 'button',
               text: t('security.totp.reset'),
               on: { click: () => confirmDialogThen(t('security.totp.resetConfirm', { username: account.username }), () => withSave(async () => {
@@ -731,7 +925,8 @@ export function openSecuritySettingsDialog({ user } = {}) {
     codeInput.setAttribute('inputmode', 'numeric');
     // 这里不用 withSave：它成功后会把整个账号区重渲染，正在填写的表单会被替换掉。
     const confirmBtn = el('button', {
-      class: 'btn btn--primary btn--sm',
+      // 0.3.10（M13 §3.4）：② 页（其他账号的两步验证）不设主按钮。
+      class: 'btn btn--sm',
       type: 'button',
       text: t('security.action.confirm'),
       on: {
@@ -810,6 +1005,14 @@ export function openSecuritySettingsDialog({ user } = {}) {
   }
 
   async function refresh() {
+    // 0.3.8（M12 §3.2-6）：加载期显示静态骨架，body 标 aria-busy；数据到了再换分区。
+    state.loading = true;
+    bodyEl.setAttribute('aria-busy', 'true');
+    loadingHost.hidden = false;
+    sectionsHost.hidden = true;
+    // 只清「加载失败」类的错误：表单校验错误（如 PEM 未填）发生在 withSave 内，
+    // 紧接着的 refresh 不能把它抹掉（0.2.14 的既有行为）。
+    if (state.error) setError('');
     try {
       const payload = await getSecuritySettings();
       state.settings = payload.settings || null;
@@ -818,9 +1021,13 @@ export function openSecuritySettingsDialog({ user } = {}) {
       state.error = '';
     } catch (err) {
       state.error = errorText(err, t('security.error.load'));
-      setError(state.error);
+      // 首屏失败给「重试」；不自动重试，断网时不反复打后端。
+      setError(state.error, { retry: true });
     } finally {
       state.loading = false;
+      bodyEl.removeAttribute('aria-busy');
+      loadingHost.hidden = true;
+      sectionsHost.hidden = Boolean(state.error);
       renderStatus();
       renderActivity();
       renderHttps();
@@ -834,18 +1041,60 @@ export function openSecuritySettingsDialog({ user } = {}) {
 
   // `refreshAfter: false` 用于「必须先展示一次性结果（二维码/恢复码/专用密码）」的动作：
   // 立刻 refresh 会把刚渲染出来的那一段替换掉，用户根本来不及看到。
-  async function withSave(work, { refreshAfter = true } = {}) {
+  // 0.3.8（M12 §3.2-1）：不再有全局保存按钮，busy 态挂到触发本次操作的分区按钮
+  // （调用方传 `button: ev.currentTarget`）；不传就不禁用任何按钮。
+  async function withSave(work, { refreshAfter = true, button = null } = {}) {
     setError('');
-    saveBtn.disabled = true;
+    if (button) {
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+    }
     try {
       await work();
       if (refreshAfter) await refresh();
     } catch (err) {
       setError(errorText(err, t('security.error.save')));
     } finally {
-      saveBtn.disabled = false;
+      if (button) {
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+      }
     }
   }
+
+  // 0.3.10（M13 §2.1）：4 个面板预渲染，分组 = 「我会不会改、多久改一次」。
+  // ① 自己的安全（与「我的安全」同一套 section）；② 谁能进、怎么进；
+  // ③ 传输加密；④ 只读审计。statusBox 是跨页摘要，放页签上方全局可见（M13 §3.1）。
+  panelHosts.self.append(
+    selfBlock.statusHost,
+    selfBlock.guideHost,
+    selfBlock.totpSection,
+    selfBlock.davSection,
+  );
+  panelHosts.login.append(
+    section(t('security.section.activity'), [activityBody]),
+    section(t('security.section.policy'), [policyBody]),
+    section(t('security.section.proxy'), [proxyBody]),
+    section(t('security.section.otherTotp'), [accountsBody, oneTimeHost]),
+  );
+  panelHosts.cert.append(
+    section(t('security.section.https'), [httpsBody]),
+    section(t('security.section.cert'), [certBody]),
+  );
+  panelHosts.audit.append(
+    section(t('security.section.audit'), [auditBody]),
+  );
+
+  sectionsHost.append(
+    statusBox,
+    tabList,
+    panelHosts.self,
+    panelHosts.login,
+    panelHosts.cert,
+    panelHosts.audit,
+  );
+  selectTab('self');
+  bodyEl.append(loadingHost, errorHost, sectionsHost);
 
   const dialog = el('div', {
     class: 'modal security-modal',
@@ -863,47 +1112,50 @@ export function openSecuritySettingsDialog({ user } = {}) {
         on: { click: () => closeDialog() },
       }),
     ]),
-    el('div', { class: 'modal__body security-body' }, [
-      statusBox,
-      errorEl,
-      section(t('security.section.activity'), [activityBody]),
-      section(t('security.section.https'), [httpsBody]),
-      section(t('security.section.proxy'), [proxyBody]),
-      section(t('security.section.cert'), [certBody]),
-      section(t('security.section.policy'), [policyBody]),
-      section(t('security.section.totp'), [accountsBody, oneTimeHost]),
-      section(t('security.section.audit'), [auditBody]),
-    ]),
+    bodyEl,
     el('div', { class: 'modal__foot' }, [
-      saveBtn,
       el('div', { class: 'spacer' }),
       el('button', { class: 'btn', type: 'button', text: t('security.action.close'), on: { click: () => closeDialog() } }),
     ]),
   ]);
 
   closeDialog = mountDialog(dialog);
+  // M13 §6：打开时焦点落在当前选中页签（① 我的安全）。
+  requestAnimationFrame(() => {
+    if (dialog.isConnected && tabButtons[0]) tabButtons[0].focus();
+  });
   void refresh();
+  // ① 页与「我的安全」同源：首屏也拉一次自己的专用密码列表，否则 ① 页是空的。
+  selfBlock.refresh();
   return { dialog, close: closeDialog };
 }
 
 /* ------------------------------------------------------------------ */
-/* 自助：任何用户管理自己的 2FA 与专用密码                             */
+/* 共用：自己的两步验证 + CalDAV 专用密码（0.3.10 M13 §2.1）              */
 /* ------------------------------------------------------------------ */
 
-export function openMySecurityDialog({ user } = {}) {
-  let closeDialog = () => {};
+/**
+ * 管理员「安全设置」① 页与普通用户「我的安全」内容相同：自己的 TOTP 与
+ * CalDAV 专用密码。这里抽成一份构建代码，两个对话框只负责外壳（宽度、
+ * 标题、页签），避免两处实现漂移（M13 §2.1）。
+ * 返回 { statusHost, guideHost, totpSection, davSection, refresh }。
+ */
+function buildSelfSecurity({ user, setError, onChange = () => {} }) {
   const statusHost = el('div', { class: 'security-self-status' });
   const guideHost = el('div', { class: 'security-self-guide' });
   const setupHost = el('div', { class: 'security-totp-host' });
   const appHost = el('div', { class: 'security-app-passwords' });
-  const errorEl = el('p', { class: 'security-error', role: 'alert', hidden: true });
   let selfAppPasswordCount = 0;
   let selfPasswordsLoaded = false;
   let selfTotpEnabled = Boolean(user && user.totpEnabled);
+  let setupOpen = false;
+  let createFormOpen = false;
 
-  function setError(message) {
-    errorEl.textContent = message || '';
-    errorEl.hidden = !message;
+  // 0.3.10（M13 §3.4）：① 页可见 primary 恒为 1 个——未开 2FA 给「开启两步验证」，
+  // 已开给「新建专用密码」；正在填二维码确认或名称表单时让位给表单里的确认键。
+  function applyPrimary() {
+    enableBtn.classList.toggle('btn--primary', !selfTotpEnabled && !setupOpen);
+    createBtn.classList.toggle('btn--primary', selfTotpEnabled && !createFormOpen);
   }
 
   function renderStatus(totpEnabled, appPasswordCount = selfAppPasswordCount) {
@@ -917,23 +1169,40 @@ export function openMySecurityDialog({ user } = {}) {
     // 不要等用户拿主密码往 CalDAV 撞一遍 401 才知道。
     guideHost.replaceChildren(...compact([
       totpEnabled && selfPasswordsLoaded && selfAppPasswordCount === 0
-        ? appPasswordGuideBox(() => { void createOwnAppPasswordFlow(); })
+        ? appPasswordGuideBox(openCreateForm)
         : null,
     ]));
+    applyPrimary();
   }
 
-  async function createOwnAppPasswordFlow() {
-    const name = window.prompt(t('security.dav.namePrompt'), t('security.dav.defaultName'));
-    if (name == null) return;
-    try {
-      const result = await createOwnAppPassword(String(name).trim() || t('security.dav.defaultName'));
-      if (result.password) {
-        setupHost.append(secretBox({ title: t('security.dav.createdTitle'), items: result.password, hint: t('security.dav.createdHint') }));
-      }
-      loadAppPasswords();
-    } catch (err) {
-      setError(errorText(err, t('security.error.save')));
-    }
+  // 0.3.8（M12 §3.2-2）：名称改用行内输入框（原 `window.prompt`）。
+  const selfCreateHost = el('div', { class: 'security-app-password-create-host' });
+
+  function openCreateForm() {
+    createFormOpen = true;
+    applyPrimary();
+    const { form, input } = appPasswordCreateForm({
+      onConfirm: async (name) => {
+        try {
+          const result = await createOwnAppPassword(name);
+          if (result.password) {
+            setupHost.append(secretBox({ title: t('security.dav.createdTitle'), items: result.password, hint: t('security.dav.createdHint') }));
+          }
+          createFormOpen = false;
+          selfCreateHost.replaceChildren();
+          loadAppPasswords();
+        } catch (err) {
+          setError(errorText(err, t('security.error.save')));
+        }
+      },
+      onCancel: () => {
+        createFormOpen = false;
+        selfCreateHost.replaceChildren();
+        applyPrimary();
+      },
+    });
+    selfCreateHost.replaceChildren(form);
+    input.focus();
   }
 
   function loadAppPasswords() {
@@ -946,7 +1215,7 @@ export function openMySecurityDialog({ user } = {}) {
           el('span', { class: 'security-app-password__name', text: item.name || '-' }),
           el('span', { class: 'security-app-password__meta', text: item.lastUsedAt ? t('security.dav.lastUsed', { time: formatDate(item.lastUsedAt) }) : t('security.dav.neverUsed') }),
           el('button', {
-            class: 'btn btn--sm btn--danger',
+            class: 'btn btn--sm btn--danger-outline',
             type: 'button',
             text: t('security.dav.revoke'),
             on: { click: async () => {
@@ -977,7 +1246,7 @@ export function openMySecurityDialog({ user } = {}) {
   }
 
   const enableBtn = el('button', {
-    class: 'btn btn--primary btn--sm',
+    class: 'btn btn--sm',
     type: 'button',
     text: t('security.totp.enable'),
     on: { click: async () => {
@@ -986,6 +1255,7 @@ export function openMySecurityDialog({ user } = {}) {
         const setup = await beginOwnTotp();
         const codeInput = textInput('', { placeholder: '123456', width: '8em' });
         codeInput.maxLength = 6;
+        setupOpen = true;
         setupHost.replaceChildren(
           totpSetupBox(setup),
           el('div', { class: 'security-inline' }, [
@@ -1004,9 +1274,11 @@ export function openMySecurityDialog({ user } = {}) {
                   }
                   toast(t('security.toast.totpEnabled'), { variant: 'success' });
                   if (user) user.totpEnabled = true;
+                  setupOpen = false;
                   renderStatus(true);
                   // 0.2.14（P1-1）：开启成功后立刻核对专用密码数量，没建就地给引导按钮。
                   loadAppPasswords();
+                  onChange();
                 } catch (err) {
                   setError(errorText(err, t('security.error.save')));
                 }
@@ -1014,6 +1286,7 @@ export function openMySecurityDialog({ user } = {}) {
             }),
           ]),
         );
+        applyPrimary();
       } catch (err) {
         setError(errorText(err, t('security.error.save')));
       }
@@ -1021,7 +1294,7 @@ export function openMySecurityDialog({ user } = {}) {
   });
 
   const disableBtn = el('button', {
-    class: 'btn btn--danger btn--sm',
+    class: 'btn btn--danger-outline btn--sm',
     type: 'button',
     text: t('security.totp.disable'),
     on: { click: () => confirmDialogThen(t('security.totp.disableOwnConfirm'), async () => {
@@ -1029,7 +1302,9 @@ export function openMySecurityDialog({ user } = {}) {
         await disableOwnTotp();
         toast(t('security.toast.totpDisabled'), { variant: 'success' });
         if (user) user.totpEnabled = false;
+        setupOpen = false;
         renderStatus(false);
+        onChange();
       } catch (err) {
         setError(errorText(err, t('security.error.save')));
       }
@@ -1040,7 +1315,7 @@ export function openMySecurityDialog({ user } = {}) {
     class: 'btn btn--sm',
     type: 'button',
     text: t('security.dav.createAction'),
-    on: { click: () => { void createOwnAppPasswordFlow(); } },
+    on: { click: () => openCreateForm() },
   });
 
   const regenBtn = el('button', {
@@ -1059,8 +1334,44 @@ export function openMySecurityDialog({ user } = {}) {
     }) },
   });
 
+  const totpSection = section(t('security.section.totp'), [
+    el('div', { class: 'security-actions' }, [enableBtn, disableBtn, regenBtn]),
+    setupHost,
+  ]);
+  const davSection = section(t('security.section.dav'), [
+    el('p', { class: 'security-hint', text: t('security.dav.selfHint') }),
+    el('div', { class: 'security-actions' }, [createBtn]),
+    selfCreateHost,
+    appHost,
+  ]);
+
+  function refresh() {
+    renderStatus(Boolean(user && user.totpEnabled));
+    loadAppPasswords();
+    void refreshSelf();
+  }
+
+  return { statusHost, guideHost, totpSection, davSection, refresh };
+}
+
+/* ------------------------------------------------------------------ */
+/* 自助：任何用户管理自己的 2FA 与专用密码                             */
+/* ------------------------------------------------------------------ */
+
+export function openMySecurityDialog({ user } = {}) {
+  let closeDialog = () => {};
+  const errorEl = el('p', { class: 'security-error', role: 'alert', hidden: true });
+
+  function setError(message) {
+    errorEl.textContent = message || '';
+    errorEl.hidden = !message;
+  }
+
+  const block = buildSelfSecurity({ user, setError });
+
   const dialog = el('div', {
-    class: 'modal security-modal',
+    // 0.3.8（M12 §3.2）：自助页内容少，宽度收到 480px；管理员页仍是 760px。
+    class: 'modal security-modal security-modal--self',
     role: 'dialog',
     'aria-modal': 'true',
     'aria-labelledby': 'security-self-title',
@@ -1070,18 +1381,11 @@ export function openMySecurityDialog({ user } = {}) {
       el('button', { class: 'icon-btn', type: 'button', 'aria-label': t('common.close'), html: icon('close'), on: { click: () => closeDialog() } }),
     ]),
     el('div', { class: 'modal__body security-body' }, [
-      statusHost,
-      guideHost,
+      block.statusHost,
+      block.guideHost,
       errorEl,
-      section(t('security.section.totp'), [
-        el('div', { class: 'security-actions' }, [enableBtn, disableBtn, regenBtn]),
-        setupHost,
-      ]),
-      section(t('security.section.dav'), [
-        el('p', { class: 'security-hint', text: t('security.dav.selfHint') }),
-        el('div', { class: 'security-actions' }, [createBtn]),
-        appHost,
-      ]),
+      block.totpSection,
+      block.davSection,
     ]),
     el('div', { class: 'modal__foot' }, [
       el('div', { class: 'spacer' }),
@@ -1090,9 +1394,7 @@ export function openMySecurityDialog({ user } = {}) {
   ]);
 
   closeDialog = mountDialog(dialog);
-  renderStatus(Boolean(user && user.totpEnabled));
-  loadAppPasswords();
-  void refreshSelf();
+  block.refresh();
   return { dialog, close: closeDialog };
 }
 
@@ -1100,12 +1402,14 @@ export function openMySecurityDialog({ user } = {}) {
 /* 通用：确认弹窗 / 普通提示弹窗                                        */
 /* ------------------------------------------------------------------ */
 
-export function confirmDialogThen(message, action, { title = t('security.confirm.title'), confirmLabel = t('security.confirm.ok') } = {}) {
+export function confirmDialogThen(message, action, { title = t('security.confirm.title'), confirmLabel = t('security.confirm.ok'), onCancel = null } = {}) {
   let dismiss = () => {};
   const finish = async (ok) => {
     dismiss();
     if (ok) await action();
+    else if (typeof onCancel === 'function') onCancel();
   };
+  const cancelBtn = el('button', { class: 'btn', type: 'button', text: t('common.cancel'), on: { click: () => { void finish(false); } } });
   const dialog = el('div', {
     class: 'modal security-confirm-modal',
     role: 'alertdialog',
@@ -1115,11 +1419,20 @@ export function confirmDialogThen(message, action, { title = t('security.confirm
     el('div', { class: 'modal__body' }, [el('p', { class: 'security-hint', text: message })]),
     el('div', { class: 'modal__foot' }, [
       el('div', { class: 'spacer' }),
-      el('button', { class: 'btn', type: 'button', text: t('common.cancel'), on: { click: () => { void finish(false); } } }),
+      cancelBtn,
       el('button', { class: 'btn btn--danger', type: 'button', text: confirmLabel, on: { click: () => { void finish(true); } } }),
     ]),
   ]);
   dismiss = mountDialog(dialog);
+  // 0.3.8（M12 §3.2-7）：危险确认弹窗的初始焦点落在「取消」——回车不会误确认。
+  // rAF 后再聚焦：mountDialog 打开时自己会先聚焦首个可聚焦元素。
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => {
+      if (dialog.isConnected) cancelBtn.focus();
+    });
+  } else {
+    cancelBtn.focus();
+  }
   return { close: dismiss };
 }
 

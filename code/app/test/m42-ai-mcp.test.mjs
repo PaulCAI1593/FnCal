@@ -378,6 +378,119 @@ try {
   const nobodyWrite = await callTool(nobody.token, 'create_event', { calendarId: 'default', title: 'x' });
   eq('无写权限凭据调未注册工具 → 协议错误 -32602', -32602, nobodyWrite.body && nobodyWrite.body.error && nobodyWrite.body.error.code);
 
+  /* ------------------------------------------------------------ ⑪ 0.3.6 写拒绝文案 */
+
+  const READ_ONLY_TEXT = '该日历只有「只读」权限：请在 FnCal 的 AI 凭据里把这个日历改成「读写」后再试。';
+  const OUT_OF_WINDOW_TEXT = '这个时间在你的凭据时间窗外：请在 FnCal 里放宽这个凭据的时间窗，或换一个窗口内的时间。';
+  const NO_CALENDAR_TEXT = '未找到该日历：它可能不存在，或对你的凭据不可见。';
+  const BAD_RANGE_TEXT = '结束时间必须晚于开始时间。';
+
+  // 混合档位：default 可写、hiddenId 只读。只读日历对凭据是「可见」的，
+  // 写它不能再混成「不存在」（0.3.6 缺陷 1）。
+  const mixed = await mintCredential(admin, {
+    label: 'MCP 混合档位',
+    grants: { default: 'write', [hiddenId]: 'read' },
+    timeWindow: { pastDays: 7, futureDays: 90 },
+  });
+  const tokenMixed = mixed.token;
+  const mixedStart = NOW + 2 * DAY;
+
+  const readOnlyWrite = await callTool(tokenMixed, 'create_event', {
+    calendarId: hiddenId,
+    title: '写只读日历',
+    start: new Date(mixedStart).toISOString(),
+    end: new Date(mixedStart + HOUR).toISOString(),
+  });
+  eq('只读档位写入 → isError', true, readOnlyWrite.result.isError);
+  same('只读档位文案逐字（不再混成「不存在」）', READ_ONLY_TEXT, readOnlyWrite.toolText);
+
+  writeObject(userId, hiddenId, 'mcp-ro-del', icsEvent({
+    uid: 'mcp-ro-del', summary: '只读日历里的会', start: NOW + DAY, end: NOW + DAY + HOUR,
+  }));
+  const readOnlyDelete = await callTool(tokenMixed, 'delete_event', { uid: 'mcp-ro-del' });
+  eq('只读档位删除 → isError', true, readOnlyDelete.result.isError);
+  same('只读档位删除文案逐字', READ_ONLY_TEXT, readOnlyDelete.toolText);
+
+  const farStart = NOW + 200 * DAY;
+  const outOfWindowCreate = await callTool(tokenMixed, 'create_event', {
+    calendarId: 'default',
+    title: '两百天后',
+    start: new Date(farStart).toISOString(),
+    end: new Date(farStart + HOUR).toISOString(),
+  });
+  eq('窗外 create → isError', true, outOfWindowCreate.result.isError);
+  same('窗外 create 文案逐字', OUT_OF_WINDOW_TEXT, outOfWindowCreate.toolText);
+
+  writeObject(userId, 'default', 'mcp-uw', icsEvent({
+    uid: 'mcp-uw', summary: '窗内待改', start: NOW + 5 * DAY, end: NOW + 5 * DAY + HOUR,
+  }));
+  const farUpdate = NOW + 300 * DAY;
+  const outOfWindowUpdate = await callTool(tokenMixed, 'update_event', {
+    uid: 'mcp-uw',
+    start: new Date(farUpdate).toISOString(),
+    end: new Date(farUpdate + HOUR).toISOString(),
+  });
+  eq('窗外 update → isError', true, outOfWindowUpdate.result.isError);
+  same('窗外 update 文案逐字（与 create 同一句）', OUT_OF_WINDOW_TEXT, outOfWindowUpdate.toolText);
+
+  const badRange = await callTool(tokenMixed, 'create_event', {
+    calendarId: 'default',
+    title: '时间颠倒',
+    start: new Date(NOW + 6 * DAY).toISOString(),
+    end: new Date(NOW + 5 * DAY).toISOString(),
+  });
+  eq('end < start → isError', true, badRange.result.isError);
+  same('end < start 文案逐字', BAD_RANGE_TEXT, badRange.toolText);
+
+  const invisibleWrite = await callTool(tokenWrite, 'create_event', {
+    calendarId: hiddenId, title: 'x', start: new Date(mixedStart).toISOString(), end: new Date(mixedStart + HOUR).toISOString(),
+  });
+  const missingCalendarWrite = await callTool(tokenWrite, 'create_event', {
+    calendarId: 'no-such-calendar-xyz', title: 'x', start: new Date(mixedStart).toISOString(), end: new Date(mixedStart + HOUR).toISOString(),
+  });
+  same('不可见日历写入文案 === 不存在日历写入文案（不泄露存在性）', invisibleWrite.toolText, missingCalendarWrite.toolText);
+  same('不可见/不存在写入文案逐字', NO_CALENDAR_TEXT, invisibleWrite.toolText);
+
+  // 明确不改的三处：事件类 not-found 文案保持 0.3.5 原样。
+  const missingEventDelete = await callTool(tokenWrite, 'delete_event', { uid: 'no-such-uid' });
+  eq('delete_event 不存在事件 → isError', true, missingEventDelete.result.isError);
+  same(
+    'get_event/list_events/delete_event 的 not-found 文案未被改动',
+    '未找到该事件：它可能不存在、不在你的时间窗口内，或对你的凭据不可见。',
+    missingEventDelete.toolText,
+  );
+
+  /* ------------------------------------------------------------ ⑫ 0.3.6 提案标题 */
+
+  const titleStart = NOW + 7 * DAY;
+  const titleCreate = await callTool(tokenProposer, 'create_event', {
+    calendarId: 'default',
+    title: '提案标题新建',
+    start: new Date(titleStart).toISOString(),
+    end: new Date(titleStart + HOUR).toISOString(),
+  });
+  const titleCreatePayload = JSON.parse(titleCreate.toolText);
+  writeObject(userId, 'default', 'mcp-title-upd', icsEvent({
+    uid: 'mcp-title-upd', summary: '原标题', start: NOW + 8 * DAY, end: NOW + 8 * DAY + HOUR,
+  }));
+  const titleUpdate = await callTool(tokenProposer, 'update_event', { uid: 'mcp-title-upd', title: '新标题' });
+  eq('提案模式 update 成功', false, JSON.parse(titleUpdate.toolText).applied);
+  const titleDelete = await callTool(tokenProposer, 'delete_event', { uid: 'mcp-title-upd' });
+  eq('提案模式 delete 成功', 'delete', JSON.parse(titleDelete.toolText).proposal.action);
+
+  const titledRows = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  const rowOf = (uid, action) => titledRows.find((item) => item.uid === uid && item.action === action) || { before: null, after: null };
+  eq('新建提案 after.title = 事件标题', '提案标题新建', rowOf(titleCreatePayload.proposal.uid, 'create').after.title);
+  eq('修改提案 before.title = 原标题', '原标题', rowOf('mcp-title-upd', 'update').before.title);
+  eq('修改提案 after.title = 新标题', '新标题', rowOf('mcp-title-upd', 'update').after.title);
+  eq('删除提案 before.title = 被删事件标题', '原标题', rowOf('mcp-title-upd', 'delete').before.title);
+  eq('删除提案 after 仍为 null', null, rowOf('mcp-title-upd', 'delete').after);
+  ok('提案行标题不再为空（前端 proposalDiff 有值可取）', [
+    rowOf(titleCreatePayload.proposal.uid, 'create').after.title,
+    rowOf('mcp-title-upd', 'update').after.title,
+    rowOf('mcp-title-upd', 'delete').before.title,
+  ].every((value) => typeof value === 'string' && value.trim() !== ''));
+
   /* ------------------------------------------------------------ ⑦ 限流共用桶 */
 
   const limited = await mintCredential(admin, {

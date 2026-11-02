@@ -128,9 +128,24 @@ export function createSecurityApi({ accounts, auth, security, audit = null, logg
         }
         if (req.method === 'PATCH') {
           const body = await readJsonBody(req);
+          const patch = body.patch || body;
+          // v1.1.0（P1）：behindProxy 关→开是唯一会把浏览器锁在门外的安全开关。
+          // 开启后 HTTP 请求一律 301 到 https://主机（反代模式不带端口，即 443），
+          // 反代没配好就打不开。所以只允许「当前这次请求本来就是外部 HTTPS」时开启；
+          // 关闭、维持原值、或本次 patch 不碰 behindProxy 时都不拦。
+          const wantsBehindProxy = Boolean(patch && patch.https && patch.https.behindProxy === true);
+          const current = security.publicSettings();
+          const alreadyBehindProxy = Boolean(current && current.https && current.https.behindProxy === true);
+          if (wantsBehindProxy && !alreadyBehindProxy) {
+            const source = proxy && typeof proxy.resolve === 'function' ? proxy.resolve(req) : null;
+            if (!source || source.proto !== 'https') {
+              return failure(res, 400, 'behind_proxy_unverified',
+                '开启前请先通过反向代理以 HTTPS 打开本页：当前请求不是 HTTPS，开启后可能把自己锁在门外。'), true;
+            }
+          }
           let result;
           try {
-            result = await security.updateSettings(body.patch || body, { actor, remoteAddress });
+            result = await security.updateSettings(patch, { actor, remoteAddress });
           } catch (err) {
             if (err && err.code === 'invalid_settings') {
               return json(res, 400, {

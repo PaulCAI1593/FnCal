@@ -255,16 +255,25 @@ describe('0.2.14 P1-1：2FA 后引导专用密码', () => {
         appPasswords: [],
       })],
     });
-    openHandle = openSecuritySettingsDialog({ user: { id: 'acc-1', role: 'admin' } });
+    // 0.3.10（M13 §2.1）：② 页排除当前管理员，登录者用「me」，acc-1 是「其他账号」。
+    openHandle = openSecuritySettingsDialog({ user: { id: 'me', role: 'admin', username: 'me' } });
     await flushTwice();
     const guide = document.querySelector('.security-account__warn');
     expect(guide.textContent).toContain(t('security.totp.needAppPassword'));
     const button = buttonByText(guide, t('security.totp.goCreateAppPassword'));
     expect(button).toBeTruthy();
-    const promptSpy = vi.fn(() => '手机');
+    // 0.3.8（M12 §3.2-2）：引导按钮打开行内输入框，不再走 window.prompt。
+    const promptSpy = vi.fn(() => '不该被调用');
     vi.stubGlobal('prompt', promptSpy);
     button.click();
+    const form = document.querySelector('.security-app-password-create');
+    expect(form).not.toBeNull();
+    const nameInput = form.querySelector('input');
+    expect(nameInput.value).toBe(t('security.dav.defaultName'));
+    nameInput.value = '手机';
+    buttonByText(form, t('security.action.confirm')).click();
     await flushTwice();
+    expect(promptSpy).not.toHaveBeenCalled();
     expect(mocks.createAppPasswordFor).toHaveBeenCalledWith('acc-1', '手机');
     expect(document.body.textContent).toContain('ONCE-ONLY-PW');
   });
@@ -279,7 +288,7 @@ describe('0.2.14 P1-1：2FA 后引导专用密码', () => {
         appPasswords: [{ id: 'pw-1', name: '手机' }],
       })],
     });
-    openHandle = openSecuritySettingsDialog({ user: { id: 'acc-1', role: 'admin' } });
+    openHandle = openSecuritySettingsDialog({ user: { id: 'me', role: 'admin', username: 'me' } });
     await flushTwice();
     expect(document.querySelector('.security-account__warn').textContent).toBe('');
   });
@@ -289,10 +298,16 @@ describe('0.2.14 P1-1：2FA 后引导专用密码', () => {
     await flushTwice();
     const guide = document.querySelector('.security-self-guide');
     expect(guide.textContent).toContain(t('security.totp.needAppPassword'));
-    const promptSpy = vi.fn(() => '手机');
+    // 0.3.8（M12 §3.2-2）：行内输入框替代 window.prompt。
+    const promptSpy = vi.fn(() => '不该被调用');
     vi.stubGlobal('prompt', promptSpy);
     buttonByText(guide, t('security.totp.goCreateAppPassword')).click();
+    const form = document.querySelector('.security-app-password-create');
+    expect(form).not.toBeNull();
+    form.querySelector('input').value = '手机';
+    buttonByText(form, t('security.action.confirm')).click();
     await flushTwice();
+    expect(promptSpy).not.toHaveBeenCalled();
     expect(mocks.createOwnAppPassword).toHaveBeenCalledWith('手机');
     expect(document.body.textContent).toContain('OWN-ONCE-PW');
   });

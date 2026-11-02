@@ -401,6 +401,63 @@ try {
   ok('提案存 before/after 快照（etag+ics）',
     fileProposals.filter((item) => item.action === 'update').every((item) => item.before && 'etag' in item.before && typeof item.before.ics === 'string'));
 
+  /* ------------------------------------------------------------ ⑫ 0.3.6 写拒绝语义（REST） */
+  // 只读档位（日历可见）→ 403 forbidden/read_only；不再与「不存在」共用 404。
+  const readOnlyPost = await ai('/api/ai/v1/events', {
+    method: 'POST', token: tokenA,
+    body: { calendarId: 'default', title: '写只读日历', start: new Date(NOW + 3 * DAY).toISOString(), end: new Date(NOW + 3 * DAY + HOUR).toISOString() },
+  });
+  eq('REST 只读档位写入 → 403', 403, readOnlyPost.status);
+  eq('REST 只读档位 code/reason', 'forbidden|read_only', `${readOnlyPost.body.code}|${readOnlyPost.body.reason}`);
+
+  // 提案快照带标题（0.3.6）：新建取新标题、修改两端都有、删除取「前」。
+  const titledList = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  const titleOf = (uid, action) => (titledList.find((item) => item.uid === uid && item.action === action) || { before: null, after: null });
+  eq('新建提案 after.title = 事件标题', '提案新建', titleOf('ai-prop', 'create').after.title);
+  eq('修改提案 before.title = 原标题', '待改', titleOf('ai-prop-2', 'update').before.title);
+  eq('修改提案 after.title = 新标题', '提案改名', titleOf('ai-prop-2', 'update').after.title);
+  eq('删除提案 before.title = 被删事件标题', '待改', titleOf('ai-prop-2', 'delete').before.title);
+  eq('删除提案 after 仍为 null', null, titleOf('ai-prop-2', 'delete').after);
+
+  // 旧提案（0.3.6 之前写入，快照只有 etag+ics）：接口要从 ICS 兜底出标题。
+  const legacyIcs = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//FnCal Test//EN', 'BEGIN:VEVENT', 'UID:legacy-create',
+    'SUMMARY:折行的会议标题\\, 前段',
+    ' 后段\\n第二行',
+    `DTSTART:${icsStamp(NOW + DAY)}`, `DTEND:${icsStamp(NOW + DAY + HOUR)}`,
+    'END:VEVENT', 'END:VCALENDAR', '',
+  ].join('\r\n');
+  const legacyFile = readProposalsFile(userId);
+  const legacyBase = {
+    ownerId: userId,
+    calendarId: 'default',
+    credentialId: writer.credential.id,
+    status: 'pending',
+    createdAt: new Date(NOW).toISOString(),
+    expiresAt: new Date(NOW + 24 * HOUR).toISOString(),
+    note: '',
+  };
+  legacyFile.proposals.push(
+    { ...legacyBase, id: 'legacy-create', action: 'create', uid: 'legacy-create', before: null, after: { etag: null, ics: legacyIcs } },
+    {
+      ...legacyBase,
+      id: 'legacy-delete',
+      action: 'delete',
+      uid: 'legacy-delete-uid',
+      before: { etag: 'sha256:legacy', ics: icsEvent({ uid: 'legacy-delete-uid', summary: '旧的删除目标', start: NOW + DAY, end: NOW + DAY + HOUR }) },
+      after: null,
+    },
+    { ...legacyBase, id: 'legacy-bad', action: 'update', uid: 'legacy-bad', before: { etag: 'sha256:bad', ics: '这不是 ICS' }, after: { etag: null, ics: '' } },
+  );
+  fs.writeFileSync(path.join(userDir(userId), '.data', 'ai-proposals.json'), JSON.stringify(legacyFile, null, 2));
+  const legacyList = await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie });
+  eq('含旧提案的列表 → 200', 200, legacyList.status);
+  const legacyRows = legacyList.body.proposals || [];
+  const legacyRow = (id) => legacyRows.find((item) => item.id === id) || { before: null, after: null };
+  eq('旧提案 after.title 从 ICS 兜底（解折行 + 反转义）', '折行的会议标题, 前段后段\n第二行', legacyRow('legacy-create').after.title);
+  eq('旧删除提案 before.title 从 ICS 兜底', '旧的删除目标', legacyRow('legacy-delete').before.title);
+  eq('坏 ICS → 标题空串不抛错', '', legacyRow('legacy-bad').before.title);
+
   /* ------------------------------------------------------------ ① 吊销失效 */
   const revoke = await raw(`/api/v1/ai/credentials/${credA.id}/revoke`, {
     method: 'POST', cookie: admin.cookie, csrf: admin.csrf,

@@ -32,6 +32,9 @@ import {
   acceptAiProposal,
   rejectAiProposal,
 } from './api-client.js';
+// 0.3.7（用户 m00779）：受理/驳回后立刻刷新红点，别等 60 秒轮询。
+// 这里只调状态源，不自己数条数（数出来的必然和队列的 effective status 对不上）。
+import { refreshAiBadge } from './ai-badge.js';
 
 /** 三档（与后端 `GRANT_*` 同值；本页只用来渲染，不做比较）。 */
 export const PERM_LEVELS = ['hidden', 'read', 'write'];
@@ -121,17 +124,24 @@ export function proposalHoursLeft(proposal, nowMs = Date.now()) {
 
 /**
  * 提案「变更前后」的展示值。
- * 后端用户侧接口只暴露 `before.etag` 与 `after.{title,summary}`（事件正文不出后端），
- * 所以这里只能给出标题与事件 uid；时间/地点的差分需要接口补字段（已报负责人）。
+ *
+ * 后端用户侧接口暴露 `before.{etag,title}` 与 `after.{title,summary,etag}`（事件正文不出后端）；
+ * 0.3.6 起两个快照都带 `title`：新建显示新标题、修改显示「原标题 → 新标题」、删除显示被删标题。
+ * 旧提案（无 `title`）由后端从 ICS 解析兜底，这里不再回落到 uid——除非连标题都没有。
  */
 export function proposalDiff(proposal) {
   const action = (proposal && proposal.action) || 'create';
   const uid = (proposal && proposal.uid) || '';
+  const beforeTitle = (proposal && proposal.before && proposal.before.title) || '';
   const afterTitle = (proposal && proposal.after && (proposal.after.title || proposal.after.summary)) || '';
+  const before = action === 'create' ? '' : beforeTitle || uid;
   return {
     action,
-    before: action === 'create' ? '' : uid,
+    uid,
+    before,
     after: afterTitle,
+    // 列表行标题：新建/修改看新标题，删除看被删事件标题，两者都缺才退到 uid。
+    title: action === 'delete' ? before : afterTitle || before || uid,
     deleteOnly: action === 'delete',
   };
 }
@@ -1211,6 +1221,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       state.proposals = state.proposals.filter((item) => item.id !== proposal.id);
       state.conflictIds.delete(proposal.id);
       renderProposals();
+      void refreshAiBadge();
     } catch (err) {
       const status = err && (err.status || err.code);
       if (Number(status) === 409 || (err && err.code === 'conflict')) {
@@ -1223,7 +1234,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
   }
 
   function requestReject(proposal) {
-    const title = proposalDiff(proposal).after || proposal.uid || '';
+    const title = proposalDiff(proposal).title || proposal.uid || '';
     confirmAction({
       title: t('settings.ai.proposal.rejectTitle'),
       text: t('settings.ai.proposal.rejectText', { title }),
@@ -1236,6 +1247,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
           state.proposals = state.proposals.filter((item) => item.id !== proposal.id);
           state.conflictIds.delete(proposal.id);
           renderProposals();
+          void refreshAiBadge();
         } catch (err) {
           toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
         }

@@ -252,6 +252,52 @@ export async function summarize(text) {
 
 export { uidOf };
 
+/**
+ * 从 iCalendar 文本里**同步**取首个 VEVENT 的 SUMMARY（0.3.6）。
+ *
+ * 用途：旧提案只存了 `{etag, ics}`，用户侧提案队列要显示标题，缺 `title` 字段时
+ * 用它从 ICS 兜底。刻意不依赖 `parseICS`（那是异步、还要加载 vendor 解析器，
+ * 而这里只需要一行文本）；RFC 5545 的折行（CRLF + 单个空格/Tab 续行）与 TEXT
+ * 转义（`\\n` `\\,` `\\;` `\\\\`）都必须处理。**解析失败返回空串，绝不抛错**——
+ * 列表接口不能因为一条坏提案整页 500。
+ */
+export function summaryOfIcs(text) {
+  if (typeof text !== 'string' || !text) return '';
+  try {
+    // 先解 CRLF 折行，再解 LF 折行（两种都可能有）；行首的续行标记只有空格或 Tab。
+    const unfolded = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').replace(/\r\n?/g, '\n');
+    let inEvent = false;
+    for (const line of unfolded.split('\n')) {
+      const name = line.slice(0, 64).toUpperCase();
+      if (name.startsWith('BEGIN:VEVENT')) {
+        inEvent = true;
+        continue;
+      }
+      if (name.startsWith('END:VEVENT')) {
+        inEvent = false;
+        continue;
+      }
+      if (!inEvent) continue;
+      if (!/^SUMMARY(?:[;:])/i.test(line)) continue;
+      return unescapeIcsText(icsPropertyValue(line));
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+/** 取属性值：第一个不在双引号里的 `:` 之后的部分（参数里的 `:` 不能当分隔符）。 */
+function icsPropertyValue(line) {
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') quoted = !quoted;
+    else if (char === ':' && !quoted) return line.slice(index + 1);
+  }
+  return '';
+}
+
 /* ======================================================================== */
 /* M3.4/M3.5 additions: free-busy, recurrence expand, JSON <-> iCal mapping  */
 /* ======================================================================== */

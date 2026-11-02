@@ -868,6 +868,20 @@ body.is-dragging .tevent--resizing * {
   font-size: 10px;
   flex: none;
 }
+/* 0.3.5（M10 §2）：定时事件块第三行——地点。只加纯文本行，不引新颜色：
+   墨色继承 .tevent 的 --ev-fg，只靠 opacity 退一档，形成标题/时间/地点的三级层次。
+   10px 是高度预算的硬约束：三行内容 = padding 6 + 标题 15.6 + gap 1 + 时间 13
+   + gap 1 + 地点 13 = 49.6px，1 小时块 52px 才装得下；12px 地点会到 52.2px 而溢出。 */
+.tevent__loc {
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  color: inherit;
+  opacity: 0.85;
+}
 /* Past the point where the title would be squeezed to nothing, the time is the
    half to drop: a block with no name says less than one with no time, and the
    editor and tooltip both still carry it. Queried against the block itself
@@ -875,6 +889,14 @@ body.is-dragging .tevent--resizing * {
    packing and all. */
 @container (max-width: 108px) {
   .tevent.is-short .tevent__time {
+    display: none;
+  }
+}
+/* 0.3.5（M10 §3.1，实现期修正）：重叠列把块压窄时地点行没有可读宽度，整行隐藏。
+   规格原写「渲染期判断宽度」，但列宽由 CSS 布局算出、JS 拿不到，测量还会触发重排；
+   改为与上面时间行同源的容器查询，判据一致、零 JS 成本。 */
+@container (max-width: 108px) {
+  .tevent__loc {
     display: none;
   }
 }
