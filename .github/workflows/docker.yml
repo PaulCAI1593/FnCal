@@ -86,9 +86,17 @@ jobs:
           trap cleanup EXIT
 
           # A2：健康检查 30 秒内 healthy（api/version 可访问是前置条件）。
+          # 先等 API 可访问；Docker 的 healthcheck 首次执行在 interval=30s 之后，
+          # 此刻 .State.Health.Status 仍是 "starting"。所以必须再轮询 health 状态
+          # （start_period 20s + interval 30s，最多等 120s），不能立刻断言 healthy。
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:5280/api/version >/dev/null 2>&1; then break; fi
             sleep 1
+          done
+          for i in $(seq 1 60); do
+            STATUS="$(docker inspect -f '{{.State.Health.Status}}' fncal-ci 2>/dev/null || echo unknown)"
+            if [ "$STATUS" = "healthy" ]; then break; fi
+            sleep 2
           done
           docker inspect -f 'health={{.State.Health.Status}}' fncal-ci
           test "$(docker inspect -f '{{.State.Health.Status}}' fncal-ci)" = "healthy"

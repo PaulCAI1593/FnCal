@@ -30,6 +30,10 @@ COPY code/web/package.json code/web/package-lock.json ./web/
 RUN npm --prefix ./web ci --no-audit --no-fund
 
 COPY code/web/ ./web/
+# 必须先构建出 web/dist，stamp-version 才能盖章（它读 dist/sw.js、index.html、
+# site.webmanifest）；少这一步会让镜像构建在 stamp 处失败。
+RUN npm --prefix ./web run build
+
 # 版本戳脚本与 manifest 模板：脚本按 manifest 的 version= 给 dist 盖章。
 COPY code/scripts/stamp-version.mjs ./scripts/stamp-version.mjs
 RUN printf 'version=%s\n' "${VERSION}" > ./fnos-manifest \
