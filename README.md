@@ -171,7 +171,7 @@ docker compose up -d --build      # 然后在 http://<NAS-IP>:5581/ 登录
 
 数据放在 `/data` 卷（`accounts.json`、`secret.key`、`calendars/`、`logs/`）。首启可用 `CALDAV_ADMIN_PASSWORD` 直接设定管理员密码；留空则生成随机密码并写入容器内 `/data/admin-initial-password.txt`（0600，首次登录后请立即修改）。容器以 root 进入，入口脚本按 `PUID`/`PGID` 修正 `/data` 属主后降权运行。HTTPS 端口默认 `5243`。
 
-0.4.1 起 Docker 部署文件随仓库正式发布，并纳入发布前的功能对齐检查（安装运行、日历核心、CalDAV 与 AI、安全与数据四组）。仓库内另有 CI 工作流构建镜像并跑容器冒烟；该工作流**尚未在官方仓库真实运行过**，镜像构建、多架构与容器内 HTTPS 仍属未验证，状态以 `DOCKER.md` 的「验证状态」一节为准。
+0.4.1 起 Docker 部署文件随仓库正式发布，并纳入发布前的功能对齐检查（安装运行、日历核心、CalDAV 与 AI、安全与数据四组）。仓库内的 CI 工作流已于 2026-11-03 在官方仓库跑通（run `41506831612`：amd64 构建、OCI 标签、容器冒烟与多架构构建全绿）；容器内 HTTPS、arm64 实机运行与镜像推送仍未验证，状态以 `DOCKER.md` 的「验证状态」一节为准。
 ---
 
 ## 致谢
