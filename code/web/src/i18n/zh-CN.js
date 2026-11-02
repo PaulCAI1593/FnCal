@@ -144,8 +144,8 @@ export const zhCN = {
   'calendar.tasksNameLocked': '「任务」是系统日历，名称固定不可修改；描述与颜色可以修改。',
   'calendar.onlyThis': '只显示此日历',  'calendar.onlyThisDone': '现在只显示「{name}」',
   'calendar.export': '导出此日历',
-  // 0.2.19（D6）：共享功能不在 0.2.x 做；版本号改标 0.3.0（共享日程），入口仍禁用。
-  'calendar.share': '共享（0.3.0）',
+  // 0.4.4：共享功能后续支持；版本号标签不再出现。
+  'calendar.share': '共享（后续支持）',
   'calendar.delete': '删除日历',
   'calendar.deleteTitle': '删除日历',
   'calendar.deleteConfirm': '删除日历「{name}」？将同时删除其中的 {count} 个事件。',

@@ -171,27 +171,81 @@ stop_pids() {
   return 0
 }
 
-resolve_node() {
-  if [ -n "${CALDAV_NODE_BIN:-}" ] && [ -x "${CALDAV_NODE_BIN}" ]; then
-    printf '%s\n' "${CALDAV_NODE_BIN}"
-    return 0
-  fi
-  if command -v node >/dev/null 2>&1; then
-    command -v node
-    return 0
-  fi
-  # 依赖应用与主应用安装在同一应用根下：由 TRIM_APPDEST 推导，不写死卷路径
-  local apps_root candidate
+# NODE_CANDIDATES_BEGIN — 候选集合与顺序的真源；cmd/main 与 cmd/upgrade_callback 的
+# 同名块必须逐字一致（code/build-tmp/check-node-resolve.mjs 会比对）。顺序即查找顺序：
+# 显式覆盖 → 包内自带 → PATH → 系统路径 → 依赖应用（同卷）。
+node_candidates() {
+  local apps_root=""
   apps_root="$(cd "${TRIM_APPDEST:-}/../.." 2>/dev/null && pwd)"
-  for candidate in \
-    "${apps_root:+${apps_root}/nodejs_v22/target/bin/node}" \
-    "${TRIM_APPDEST_VOL:+${TRIM_APPDEST_VOL}/@appcenter/nodejs_v22/target/bin/node}"; do
-    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+  printf '%s\n' \
+    "${CALDAV_NODE_BIN:-}" \
+    "${TRIM_APPDEST:-}/node/bin/node" \
+    "${TRIM_APPDEST:-}/runtime/bin/node" \
+    "$(command -v node 2>/dev/null || true)" \
+    "/usr/local/bin/node" \
+    "/usr/bin/node" \
+    "/opt/node/bin/node"
+  if [ -n "${apps_root:-}" ]; then
+    printf '%s\n' \
+      "${apps_root}/nodejs_v22/target/bin/node" \
+      "${apps_root}/nodejs_v22/bin/node" \
+      "${apps_root}/nodejs/target/bin/node" \
+      "${apps_root}/nodejs/bin/node"
+  fi
+  printf '%s\n' \
+    "${TRIM_APPDEST_VOL:-}/@appcenter/nodejs_v22/target/bin/node" \
+    "${TRIM_APPDEST_VOL:-}/@appcenter/nodejs_v22/bin/node" \
+    "${TRIM_APPDEST_VOL:-}/@appcenter/nodejs/target/bin/node" \
+    "${TRIM_APPDEST_VOL:-}/@appcenter/nodejs/bin/node"
+}
+# NODE_CANDIDATES_END
+
+resolve_node() {
+  local candidate
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if [ -x "$candidate" ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
-  done
+  done <<EOF
+$(node_candidates)
+EOF
   return 1
+}
+
+# 找不到 node 时调用：逐条列出候选与判定（存在/可执行，不输出任何文件内容），
+# 同时写服务日志与应用日志，末尾给结论与处理建议。
+node_diag_log() {
+  log_err "$1"
+  log_service "$1"
+}
+
+node_diag() {
+  local candidate status total=0
+  mkdir -p "${SERVICE_LOG%/*}" 2>/dev/null || true
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    total=$((total + 1))
+  done <<EOF
+$(node_candidates)
+EOF
+  node_diag_log "Node.js 运行时诊断（main）：候选路径共 ${total} 项，顺序即查找顺序。"
+  node_diag_log "CALDAV_NODE_BIN=${CALDAV_NODE_BIN:-<未设置>} TRIM_APPDEST=${TRIM_APPDEST:-<未设置>} TRIM_APPDEST_VOL=${TRIM_APPDEST_VOL:-<未设置>}"
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    if [ -x "$candidate" ]; then
+      status="存在且可执行"
+    elif [ -e "$candidate" ]; then
+      status="存在但不可执行"
+    else
+      status="不存在"
+    fi
+    node_diag_log "  - ${candidate}：${status}"
+  done <<EOF
+$(node_candidates)
+EOF
+  node_diag_log "结论：未找到可用的 Node.js 运行时。建议：在应用中心安装 Node.js 22 后重试；或设置 CALDAV_NODE_BIN 指向 node 可执行文件。"
 }
 
 # 从 config.json 读字符串字段（config.json 由 install_callback 生成，键名固定）
@@ -262,6 +316,7 @@ start_app() {
 
   local node_bin
   if ! node_bin="$(resolve_node)"; then
+    node_diag
     log_err "未找到 Node.js 运行时（install_dep_apps=nodejs_v22 未安装或不在预期位置）。"
     return 1
   fi

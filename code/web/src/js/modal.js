@@ -2262,10 +2262,9 @@ export function createEventModal({
   // nothing, and its actions individually refuse offline use. A public
   // holiday (item.holiday, see holidays.js) gets a variant with Close alone.
 
-  function colorHex(key) {
-    const c = EVENT_COLORS.find((x) => x.key === key) || EVENT_COLORS.find((x) => x.key === DEFAULT_COLOR);
-    return c ? c.hex : 'transparent';
-  }
+  // 0.4.3：这里曾有局部 colorHex()，遮蔽了 colors.js 的导入版，导致日历/事件的
+  // #RRGGBB 自定义色全被回落成 indigo。统一用导入版（hex 原样透传、key 查表、
+  // 未知值回落 DEFAULT_COLOR），不要再在本作用域声明同名函数。
 
   /** The card's main date/time line for an event, OOO block, or task. */
   function viewWhen(item) {

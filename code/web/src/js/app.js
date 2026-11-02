@@ -289,7 +289,7 @@ export function createApp(root, { store, user }) {
             ...EVENT_COLORS.map((c) => ({
               label: t(`color.${c.key}`),
               colorHex: c.hex,
-              checked: cal.color === c.key,
+              checked: colorHex(cal.color) === c.hex,
               action: () => actions.changeCalendarColorPreset(cal, c.key),
             })),
             '-',

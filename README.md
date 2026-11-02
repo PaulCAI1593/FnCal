@@ -6,7 +6,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 装好之后在浏览器里管理日程；也可以把它当 CalDAV 服务器，让手机、电脑上的日历客户端直接读写同一批日程。
 它还内置 MCP 服务器：Claude、ChatGPT、Cursor 这类 AI 客户端可以接入你的日历，而**能看到哪些日历、能不能写、能读哪段时间，全部由你逐项授权**。
 
-当前版本：**0.4.1**
+当前版本：**0.4.4**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -50,7 +50,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 - **写入默认走提案**：AI 提出新建 / 修改方案，你在设置里点「接受」才真正落库；提案 24 小时有效，接受时做版本冲突检测。**删除永远是提案**，即使该凭据设为「直接写入」
 - 按凭据限流（60 次/分钟），审计只记工具名与时间，不记令牌与事件正文
 - **待审批红点**：设置齿轮与设置里「AI」页签右上角同时亮起，提示有未过期待审批提案；受理或驳回最后一条后同时熄灭
-- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.4.1.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明
+- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.4.4.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明
 - 认证用自定义 Bearer 令牌，不使用 OAuth；客户端需要支持「Streamable HTTP + 自定义 Authorization 头」
 
 **中文与移动端**
@@ -85,7 +85,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 从本仓库 Release 下载 `FnCal-0.4.1.fpk`；
+1. 从本仓库 Release 下载 `FnCal-0.4.4.fpk`；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个 **≥ 1024** 的空闲端口（不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -93,8 +93,8 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.4.1.fpk
-# Windows: Get-FileHash .\FnCal-0.4.1.fpk -Algorithm SHA256
+sha256sum FnCal-0.4.4.fpk
+# Windows: Get-FileHash .\FnCal-0.4.4.fpk -Algorithm SHA256
 ```
 
 期望值见 `SHA256SUMS.txt`（正文内也附了一份）。
@@ -151,7 +151,7 @@ sha256sum FnCal-0.4.1.fpk
 | 协议 | MCP Streamable HTTP，无状态（不建会话） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**） |
 
-细节与排错见技能包 `FnCal-MCP-Skill-0.4.1.zip` 里的 `reference/setup.md`。
+细节与排错见技能包 `FnCal-MCP-Skill-0.4.4.zip` 里的 `reference/setup.md`。
 
 ---
 
