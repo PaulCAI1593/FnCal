@@ -1,35 +1,69 @@
-# FnCal —— 实验性 compose 文件（草稿，未验证），与同目录 Dockerfile 配套。
+# FnCal —— Docker Compose（正式支持；0.4.1 起）
 #
+# 在仓库根目录执行（本文件就在仓库根）：
 #   docker compose up -d --build
 #   docker compose logs -f
+#   docker compose down
 #
-# 数据默认放 named volume（fncal-data）；容器内以 uid 1000（node 用户）运行。
-# 想直接按文件备份，就把 volumes 换成 ./data:/data，并先执行
-#   chown -R 1000:1000 ./data        # Linux / NAS
-#   icacls 略，Windows Docker Desktop 下 bind mount 权限较松，一般可直接写
+# 数据默认放命名卷 fncal-data；想直接按文件备份，把 volumes 换成
+#   - ./fncal-data:/data
+# 并让宿主机目录属主等于 PUID/PGID（例如 chown -R 1000:1000 ./fncal-data）。
+#
+# 首次启动：管理员用户名是 CALDAV_USER（默认 caldav）。
+# CALDAV_ADMIN_PASSWORD 未设置或留空时，服务器生成随机密码写入
+# /data/admin-initial-password.txt（0600，首登须改密），不会使用默认密码。
+# 正式部署请显式设置强密码：
+#   CALDAV_ADMIN_PASSWORD='换成你的强密码' docker compose up -d --build
+
+name: fncal
+
 services:
   fncal:
-    build: .
-    image: fncal:dev
+    build:
+      # 本文件在仓库根，构建上下文就是仓库根（code/ 所在层）。
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: "${FNCAL_VERSION:-0.4.1}"
+        REVISION: "${FNCAL_REVISION:-unknown}"
+    image: "fncal:${FNCAL_VERSION:-0.4.1}"
     container_name: fncal
     restart: unless-stopped
+    # 默认 root 启动：入口脚本先按 PUID/PGID 改 /data 属主，再 su-exec 降权。
+    # 这样命名卷与 bind mount、PUID 不是 1000 都能首启。PUID=0 则直跑 root。
+    # 想绕过入口脚本、直接以 PUID 运行，可改成 user: "${PUID:-1000}:${PGID:-1000}"
+    # （此时 entrypoint 的非 root 分支只检查 /data 可写；命名卷属主需与 PUID 一致）。
+    user: "0:0"
     ports:
-      # 左边是 NAS 上对外的端口，改成你要的（≥ 1024；不要用 5232，那是 Radicale 默认端口）
-      - "5581:5280"
+      # 左边是宿主机端口，按需改；不要用 5232（Radicale 默认端口）。
+      - "${FNCAL_HTTP_PORT:-5581}:5280"
+      # 内置 HTTPS（5243）：只有安全设置里启用 HTTPS 后才监听；不用可删掉这一行。
+      - "${FNCAL_HTTPS_PORT:-5243}:5243"
     environment:
+      TZ: "${TZ:-Asia/Shanghai}"
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
       CALDAV_HOST: "0.0.0.0"
       CALDAV_PORT: "5280"
-      CALDAV_USER: "caldav"
-      # 首次启动用它初始化管理员。装好之后再改这个值不会改已有密码。
-      CALDAV_ADMIN_PASSWORD: "换成你的强密码"
+      CALDAV_HTTPS_PORT: "5243"
+      CALDAV_USER: "${CALDAV_USER:-caldav}"
+      # 留空 = 首次启动生成随机密码并写 /data/admin-initial-password.txt。
+      CALDAV_ADMIN_PASSWORD: "${CALDAV_ADMIN_PASSWORD:-}"
     volumes:
       - fncal-data:/data
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5280/api/version').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "const p=process.env.CALDAV_PORT||5280;require('http').get('http://127.0.0.1:'+p+'/api/version',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       start_period: 20s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   fncal-data:

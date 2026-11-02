@@ -1,10 +1,27 @@
-# 构建上下文里不需要的东西（源码仓库本身也不该有这些）
+# 构建上下文 = 仓库根（本文件就在仓库根，Docker 只读这一份）。
+
 .git
+.github
 .gitignore
 **/node_modules
 **/dist
-code/app/var
-code/app/.var-*
+**/coverage
 **/*.log
 **/*.pid
 **/.DS_Store
+**/.var-*
+code/app/test
+code/app/var
+code/build-tmp
+code/spike
+code/fnos
+code/shared
+code/web/tests
+product
+design
+release
+dist
+docs
+.refs
+*.fpk
+*.zip

@@ -5,22 +5,18 @@
  * 0.2.6：logo 换负责人核过的 **v8 sha 清单**（用户最终确认版；`Cal` 入框、页头加宽、
  * 挂环跨回带上沿）。
  * 0.2.34：logo 升到 **v9 = v8 + 256 大图标轻微锐化**（用户拍板「只做轻微锐化」）：
- * 核对目标改为 `scripts/icon-approved-v9/`（逐字节副本），并新增 4 条**精确前置断言**
- * （见「v9 相对 v8」段）：锐化真的进包 / alpha 逐字节相同 / 差异幅度是锐化级 / 其余文件未动。
- * v8 目录不加入旧图基线——v9 与 v8 是同一套造型，把 v8 当旧图会让故意未改的 64/192/512 误报。
+ * 核对目标改为 `scripts/icon-approved-v9/`（逐字节副本）。
+ * 2026-11-03（用户口径「只留最新的，旧版本不需要对照」）：删除 `icon-approved-v6/`、
+ * `icon-approved-v7/`、`icon-approved-v8/`、`icon-baseline-0.2.3/`，只留 v9；
+ * **旧图反向断言随目录一并移除**——代价是以后误用旧图，本脚本不再拦截，
+ * 要判旧图只能用 git 历史（tag `v0.4.0` 及更早）逐字节比对。
  * 校验：
  *   1. 包根 ICON.PNG=64×64、ICON_256.PNG=256×256；app/ui/images/icon_64|256.png 同尺寸；
  *   2. 与已批准图标集 `scripts/icon-approved-v9/` 对应文件 **sha 完全一致**（构建不做有损压缩）；
- *   3. 与**全部旧图** sha 不同（反向断言，旧图基线 = `scripts/icon-approved-v6/` ∪
- *      `scripts/icon-approved-v7/`，两套共用 22 个 sha）；
- *      **全部尺寸（含 favicon 16/32 与 ico 三层）** 都必须与旧图不同，无例外；
- *      0.2.3 那套 `icon-baseline-0.2.3/` 仅作历史留档；
- *   4. 单文件 ≤1024KB，PNG 色彩类型为 RGB/RGBA（sRGB）；
- *   5. web/public 的 favicon/图标与已批准集一致、不是旧图，favicon.ico 内含 16/32/48 三层；
- *   6. favicon/apple-touch 与 icon-64 同色系（量化色板），favicon.ico 三层与独立
- *      favicon PNG 同源（尺寸 + 色板）；
- *   7. **v9 相对 v8**：256 的 sha 不同且 alpha 逐字节相同、逐像素差异属「锐化级」，
- *      其余 11 个文件与 v8 逐字节相同。
+ *   3. 单文件 ≤1024KB，PNG 色彩类型为 RGB/RGBA（sRGB）；
+ *   4. web/public 的 favicon/图标与已批准集一致，favicon.ico 内含 16/32/48 三层；
+ *   5. favicon/apple-touch 与 icon-64 同色系（量化色板），favicon.ico 三层与独立
+ *      favicon PNG 同源（尺寸 + 色板）。
  *
  * 用法：node scripts/check-icons.mjs
  */
@@ -35,28 +31,9 @@ const codeDir = path.resolve(here, '..');
 const projectRoot = path.resolve(codeDir, '..');
 // 0.2.34：已批准图标集 = v9（v8 造型不变，仅 256 大图标轻微锐化）。
 const DESIGN = path.join(here, 'icon-approved-v9');
-// 锐化前基线：v8（用于下面「v9 相对 v8」的精确断言，不参与旧图反向基线）。
-const V8 = path.join(here, 'icon-approved-v8');
 const FNOS = path.join(codeDir, 'fnos');
 const PUBLIC = path.join(codeDir, 'web', 'public');
 const MAX_BYTES = 1024 * 1024;
-
-// 旧图反向基线 = v6 ∪ v7 两套已批准集的全部图标（0.2.6 规则：v8 必须与两套都不同 sha）。
-// 直接读已冻结目录，避免手抄 sha 出错；目录缺失即报错（不允许静默放宽）。
-const OLD_DIRS = ['icon-approved-v6', 'icon-approved-v7'];
-const OLD_SHA = new Set(
-  OLD_DIRS.flatMap((dir) => {
-    const abs = path.join(here, dir);
-    if (!fs.existsSync(abs)) throw new Error(`旧图基线目录缺失：${abs}`);
-    return fs.readdirSync(abs)
-      .filter((f) => /\.(png|ico)$/i.test(f))
-      .map((f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(abs, f))).digest('hex'));
-  }),
-);
-
-// 用户规则延续：所有尺寸（含 favicon 16/32）统一「Cal」，无单字标简化；
-// 因此没有任何「可与旧图同 sha」的例外——全部图标（含 ico 三层）必须与 v6/v7 都不同。
-const isStaleOld = (hash) => OLD_SHA.has(hash);
 
 let failures = 0;
 const check = (name, ok, detail = '') => {
@@ -160,54 +137,6 @@ function decodePng(buf) {
 }
 const decodePngFile = (file) => decodePng(fs.readFileSync(file));
 
-/* ---- 0.2.34：v9（= v8 + 256 轻微锐化）相对 v8 的精确断言 ----
- * v8 不进旧图基线（同一套造型），改用更严格的四条断言锁住「只做了锐化」：
- *   a) 256 的 sha 必须不同 —— 证明锐化真的进了包（不是忘了换）；
- *   b) alpha 通道逐字节相同 —— 证明剪影/形状零变化；
- *   c) 逐像素最大通道差 ≤90/255、变化像素占比 ≤60% —— 证明是锐化级而非重画；
- *   d) 其余 11 个图标与 v8 逐字节相同 —— 证明只动了 256 这一处。 */
-{
-  const v9File = path.join(DESIGN, 'icon-256.png');
-  const v8File = path.join(V8, 'icon-256.png');
-  const missing = [v9File, v8File].filter((p) => !fs.existsSync(p));
-  if (missing.length) {
-    check('v9/v8 icon-256.png 存在', false, missing.join(', '));
-  } else {
-    check('v9 icon-256.png 与 v8 sha 不同（锐化已进包）', sha(v9File) !== sha(v8File));
-    const a = decodePngFile(v9File);
-    const b = decodePngFile(v8File);
-    if (!a || !b) {
-      check('v9/v8 icon-256.png 可解码（8-bit RGBA）', false);
-    } else {
-      let alphaSame = a.w === b.w && a.h === b.h;
-      let maxDiff = 0;
-      let changed = 0;
-      let opaque = 0;
-      for (let i = 0; i < a.data.length; i += 4) {
-        if (a.data[i + 3] !== b.data[i + 3]) alphaSame = false;
-        if (b.data[i + 3] <= 8) continue; // 只比可见像素
-        opaque += 1;
-        let px = 0;
-        for (let c = 0; c < 3; c++) px = Math.max(px, Math.abs(a.data[i + c] - b.data[i + c]));
-        if (px > 0) changed += 1;
-        if (px > maxDiff) maxDiff = px;
-      }
-      check('v9 icon-256.png alpha 与 v8 逐字节相同（剪影零变化）', alphaSame);
-      check('v9 相对 v8 逐像素最大通道差 ≤90/255（锐化级，不是重画）', maxDiff <= 90, `${maxDiff}/255`);
-      check('v9 相对 v8 变化像素占比 ≤60%（边缘级改动）', opaque > 0 && changed / opaque <= 0.6,
-        `${changed}/${opaque} = ${((changed / Math.max(opaque, 1)) * 100).toFixed(1)}%`);
-    }
-  }
-  const skip = new Set(['icon-256.png', 'README.md', 'sharpen-icon-256.py']);
-  const drifted = fs.readdirSync(V8)
-    .filter((f) => !skip.has(f))
-    .filter((f) => {
-      const p9 = path.join(DESIGN, f);
-      return !fs.existsSync(p9) || sha(p9) !== sha(path.join(V8, f));
-    });
-  check('v9 其余图标与 v8 逐字节相同（只动了 256）', drifted.length === 0, drifted.join(', '));
-}
-
 /** 不透明像素的 top-N 量化色板（RGB 每通道 /24）。 */
 function paletteOf(img, top = 8, q = 24) {
   const counts = new Map();
@@ -298,7 +227,6 @@ for (const [target, source, want] of pairs) {
   }
   const srcSha = sha(s);
   check(`${target} 与设计源 sha 一致`, sha(t) === srcSha);
-  check(`${target} 不是旧图（v6/v7）`, !isStaleOld(sha(t)));
   check(`${target} ≤1024KB`, fs.statSync(t).size <= MAX_BYTES, `${fs.statSync(t).size} B`);
   check(`${target} sRGB（PNG 色彩类型 RGB/RGBA）`, Boolean(meta && (meta.colorType === 2 || meta.colorType === 6)),
     meta ? `colorType=${meta.colorType}` : '');
@@ -321,31 +249,17 @@ for (const [name, want] of pubPairs) {
   check(`public/${name} 尺寸 ${want}×${want}`, Boolean(meta && meta.w === want && meta.h === want),
     meta ? `${meta.w}x${meta.h}` : '缺失/不是 PNG');
   check(`public/${name} 与设计源 sha 一致`, fs.existsSync(path.join(DESIGN, name)) && sha(p) === sha(path.join(DESIGN, name)));
-  check(`public/${name} 不是旧图（v6/v7）`, !isStaleOld(sha(p)));
 }
 const ico = path.join(PUBLIC, 'favicon.ico');
 const layers = icoEntries(ico).map((e) => e.w).sort((a, b) => a - b);
 check('favicon.ico 内含 16/32/48 三层', layers.join(',') === '16,32,48', `layers=${layers.join(',')}`);
 check('favicon.ico 与设计源 sha 一致', sha(ico) === sha(path.join(DESIGN, 'favicon.ico')));
-check('favicon.ico 不是旧图（v6/v7）', !isStaleOld(sha(ico)));
 
 /* ---- 6：site.webmanifest 路径未变 ---- */
 const wm = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'site.webmanifest'), 'utf8'));
 const icons = wm.icons.map((i) => i.src).join(',');
 check('site.webmanifest icons 路径未变',
   icons === '/icon-192.png,/icon-512.png,/icon-192-maskable.png,/icon-512-maskable.png', icons);
-
-/* ---- 7：包内不得残留旧图标（扫 fnos/app/www 全部 png） ---- */
-const oldHit = [];
-(function walk(dir) {
-  if (!fs.existsSync(dir)) return;
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) walk(p);
-    else if (/\.png$/i.test(e.name) && isStaleOld(sha(p))) oldHit.push(p);
-  }
-})(path.join(FNOS, 'app', 'www'));
-check('包内 www 无旧图（v6/v7）残留', oldHit.length === 0, oldHit.join(', '));
 
 console.log(`\nSUMMARY: checks_failed=${failures}`);
 process.exit(failures ? 1 : 0);

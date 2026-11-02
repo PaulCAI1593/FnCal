@@ -1,0 +1,222 @@
+name: docker
+
+# 触发策略（与 product/M15-Docker部署完善-范围与验收.md 的 D5 一致）：
+#   - pull_request：只构建 linux/amd64 并跑容器冒烟（不推镜像）；
+#   - workflow_dispatch：同上 + buildx 构建 linux/amd64,linux/arm64；
+#     输入 push=true 时把镜像推到 GHCR，默认 false；
+#   - push tag v*：buildx 构建 linux/amd64,linux/arm64（默认不推，推送由手动触发控制）。
+on:
+  pull_request:
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'entrypoint.sh'
+      - '.dockerignore'
+      - '.github/workflows/docker.yml'
+      - 'code/**'
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: '构建多架构镜像并推送到 GHCR（需要 packages: write）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  LOCAL_IMAGE: fncal-ci:test
+  CI_PASSWORD: ci-pass-123456
+
+jobs:
+  amd64-build-and-smoke:
+    name: build (amd64) + container smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from manifest
+        id: version
+        run: |
+          VERSION="$(sed -n 's/^version=//p' code/fnos/manifest | head -n 1 | tr -d ' \r')"
+          if [ -z "$VERSION" ]; then echo "manifest 缺少 version="; exit 1; fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "FnCal version: $VERSION"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build linux/amd64
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg VERSION="${{ steps.version.outputs.version }}" \
+            --build-arg REVISION="${GITHUB_SHA}" \
+            --load \
+            -t "$LOCAL_IMAGE" \
+            -f Dockerfile .
+
+      - name: Check OCI labels
+        run: |
+          LABEL_VERSION="$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' "$LOCAL_IMAGE")"
+          LABEL_SOURCE="$(docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$LOCAL_IMAGE")"
+          echo "label version=$LABEL_VERSION source=$LABEL_SOURCE"
+          test "$LABEL_VERSION" = "${{ steps.version.outputs.version }}"
+          test "$LABEL_SOURCE" = "https://github.com/PaulCAI1593/FnCal"
+
+      - name: Run container and smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker volume create fncal-ci-data >/dev/null
+          docker run -d --name fncal-ci \
+            -p 5280:5280 \
+            -e CALDAV_ADMIN_PASSWORD="$CI_PASSWORD" \
+            -v fncal-ci-data:/data \
+            "$LOCAL_IMAGE"
+
+          cleanup() {
+            docker logs fncal-ci || true
+            docker rm -f fncal-ci >/dev/null 2>&1 || true
+            docker volume rm fncal-ci-data >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          # A2：健康检查 30 秒内 healthy（api/version 可访问是前置条件）。
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5280/api/version >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker inspect -f 'health={{.State.Health.Status}}' fncal-ci
+          test "$(docker inspect -f '{{.State.Health.Status}}' fncal-ci)" = "healthy"
+
+          # A4：版本与首页。
+          VERSION_JSON="$(curl -fsS http://127.0.0.1:5280/api/version)"
+          echo "$VERSION_JSON"
+          echo "$VERSION_JSON" | grep -q "\"version\":\"${{ steps.version.outputs.version }}\""
+          curl -fsS http://127.0.0.1:5280/ | grep -qi '<title>'
+          curl -fsS http://127.0.0.1:5280/ | grep -q 'FnCal'
+
+          # A3：首启初始化文件（显式密码时不写 admin-initial-password.txt）。
+          docker exec fncal-ci sh -c 'test -f /data/accounts.json && test -f /data/secret.key'
+          docker exec fncal-ci sh -c 'test ! -f /data/admin-initial-password.txt'
+          docker exec fncal-ci ls -la /data
+
+          # A6：非 root。
+          test "$(docker exec fncal-ci id -u)" = "1000"
+          test "$(docker exec fncal-ci id -g)" = "1000"
+
+          # 登录（REST）。
+          curl -fsS -X POST http://127.0.0.1:5280/api/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "{\"username\":\"caldav\",\"password\":\"$CI_PASSWORD\"}" | grep -q '"ok":true'
+
+          # A7：CalDAV PROPFIND 207 + PUT 201/204。
+          PROPFIND_CODE="$(curl -s -o /dev/null -w '%{http_code}' -u "caldav:$CI_PASSWORD" \
+            -X PROPFIND -H 'Depth: 0' http://127.0.0.1:5280/calendars/caldav/)"
+          echo "PROPFIND=$PROPFIND_CODE"
+          test "$PROPFIND_CODE" = "207"
+
+          printf '%s\r\n' \
+            'BEGIN:VCALENDAR' \
+            'VERSION:2.0' \
+            'PRODID:-//FnCal//docker smoke//EN' \
+            'BEGIN:VEVENT' \
+            'UID:docker-smoke-1@fncal' \
+            'DTSTAMP:20260101T000000Z' \
+            'DTSTART:20260102T090000Z' \
+            'DTEND:20260102T100000Z' \
+            'SUMMARY:Docker smoke event' \
+            'END:VEVENT' \
+            'END:VCALENDAR' > /tmp/sim.ics
+          PUT_CODE="$(curl -s -o /dev/null -w '%{http_code}' -u "caldav:$CI_PASSWORD" \
+            -X PUT -H 'Content-Type: text/calendar; charset=utf-8' \
+            --data-binary @/tmp/sim.ics \
+            http://127.0.0.1:5280/calendars/caldav/default/docker-smoke-1.ics)"
+          echo "PUT=$PUT_CODE"
+          case "$PUT_CODE" in 201|204) ;; *) exit 1 ;; esac
+
+          # A5：restart 后事件仍在。
+          docker restart fncal-ci >/dev/null
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5280/api/version >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS -u "caldav:$CI_PASSWORD" \
+            http://127.0.0.1:5280/calendars/caldav/default/docker-smoke-1.ics | grep -q 'docker-smoke-1@fncal'
+
+      - name: First-boot generated password file (A3)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker volume create fncal-ci-generated >/dev/null
+          docker run -d --name fncal-ci-generated \
+            -p 5281:5280 \
+            -e CALDAV_ADMIN_PASSWORD= \
+            -v fncal-ci-generated:/data \
+            "$LOCAL_IMAGE"
+          cleanup2() {
+            docker logs fncal-ci-generated || true
+            docker rm -f fncal-ci-generated >/dev/null 2>&1 || true
+            docker volume rm fncal-ci-generated >/dev/null 2>&1 || true
+          }
+          trap cleanup2 EXIT
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5281/api/version >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          PERM="$(docker exec fncal-ci-generated stat -c '%a' /data/admin-initial-password.txt)"
+          echo "admin-initial-password.txt mode=$PERM"
+          test "$PERM" = "600"
+          test "$(docker exec fncal-ci-generated sh -c 'wc -l < /data/admin-initial-password.txt' | tr -d ' ')" = "1"
+
+  multiarch-build:
+    name: buildx (amd64 + arm64)
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(sed -n 's/^version=//p' code/fnos/manifest | head -n 1 | tr -d ' \r')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image name
+        id: image
+        run: echo "name=ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build multi-arch (push optional)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=(--platform linux/amd64,linux/arm64
+                --build-arg VERSION="${{ steps.version.outputs.version }}"
+                --build-arg REVISION="${GITHUB_SHA}"
+                -f Dockerfile)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.push }}" = "true" ]; then
+            ARGS+=(--push
+                   -t "${{ steps.image.outputs.name }}:${{ steps.version.outputs.version }}"
+                   -t "${{ steps.image.outputs.name }}:latest")
+          else
+            # 不推送时只验证能构建，不落盘镜像（多架构无法 --load）。
+            ARGS+=(--output type=cacheonly)
+          fi
+          docker buildx build "${ARGS[@]}" .

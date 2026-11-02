@@ -1,5 +1,5 @@
 appname=FnCal
-version=0.4.0
+version=0.4.1
 display_name=FnCal
 desc=FnCal：本地优先的日程管理应用，自带 CalDAV 服务与 AI 助手（MCP）接入。AI 可按日历授权只读或读写，写入默认先提案、你确认后才生效；数据只存放在本机，不访问任何云服务。
 maintainer=PaulCAI1593
