@@ -6,7 +6,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 装好之后在浏览器里管理日程；也可以把它当 CalDAV 服务器，让手机、电脑上的日历客户端直接读写同一批日程。
 它还内置 MCP 服务器：Claude、ChatGPT、Cursor 这类 AI 客户端可以接入你的日历，而**能看到哪些日历、能不能写、能读哪段时间，全部由你逐项授权**。
 
-当前版本：**0.4.4**
+当前版本：**0.4.16**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -36,7 +36,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 **CalDAV 服务**
 
 - 内置 CalDAV 服务器，按 RFC 4791 实现，支持事件（VEVENT）与任务（VTODO）
-- 覆盖客户端需要的创建 / 读取 / 修改 / 删除与增量同步；DAVx5、Thunderbird、eM Client、Windows「邮件和日历」等标准客户端可直接连接
+- 覆盖客户端需要的创建 / 读取 / 修改 / 删除与增量同步；DAVx5、Thunderbird 已真机验证；eM Client、Windows「邮件和日历」等标准客户端按 RFC 4791 理论上兼容，实际以你的客户端实测为准
 - 每个日历在 CalDAV 下是一个独立集合，各自颜色与只读标记会被客户端识别
 
 **AI 助手接入（MCP）**
@@ -47,10 +47,13 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 - **「不可见」等于不存在**：日历列表里没有它，搜索、空闲检测、冲突检测、单条查询与按 id 访问一律按不存在处理（返回 404，不泄露它存在）
 - **可读时间窗**：默认过去 7 天 / 未来 90 天，两侧可单独设「不限制」；窗外的事件同样表现为不存在
 - **字段级开关**：标题与时间必给；地点、描述、参与者可选（默认只给地点）
-- **写入默认走提案**：AI 提出新建 / 修改方案，你在设置里点「接受」才真正落库；提案 24 小时有效，接受时做版本冲突检测。**删除永远是提案**，即使该凭据设为「直接写入」
+- **新建、修改：两档，按凭据选**——「提案」或「直接通过」。默认提案：AI 提出方案，你在提案面板点「接受」才真正落库；提案 24 小时有效，接受时做版本冲突检测
+- **删除：两档，按凭据选**——「提案」或「回收站」。回收站档下 AI 删除立即生效，日程进入回收站，保留期内可在提案面板「最近删除」还原；回收站保留期默认 7 天，可选 3 / 7 / 14 / 30 天。两种档位切换都要二次确认
+- **对话内代办批准**（可选，默认关）：打开后 AI 助手可以在对话里替你执行提案，但必须先列出提案摘要、得到你明确同意，一次只处理一条；不允许自行批准，也不允许批量静默执行
+- **检查更新**：头像菜单「立即同步」下方有「检查更新」；弹窗显示当前版本、更新源（国内加速 / GitHub 直连）与结果，发现新版本可直达下载页
 - 按凭据限流（60 次/分钟），审计只记工具名与时间，不记令牌与事件正文
 - **待审批红点**：设置齿轮与设置里「AI」页签右上角同时亮起，提示有未过期待审批提案；受理或驳回最后一条后同时熄灭
-- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.4.4.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明
+- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.4.16.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明
 - 认证用自定义 Bearer 令牌，不使用 OAuth；客户端需要支持「Streamable HTTP + 自定义 Authorization 头」
 
 **中文与移动端**
@@ -85,7 +88,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 从本仓库 Release 下载 `FnCal-0.4.4.fpk`；
+1. 从本仓库 Release 下载 `FnCal-0.4.16.fpk`；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个 **≥ 1024** 的空闲端口（不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -93,8 +96,8 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.4.4.fpk
-# Windows: Get-FileHash .\FnCal-0.4.4.fpk -Algorithm SHA256
+sha256sum FnCal-0.4.16.fpk
+# Windows: Get-FileHash .\FnCal-0.4.16.fpk -Algorithm SHA256
 ```
 
 期望值见 `SHA256SUMS.txt`（正文内也附了一份）。
@@ -151,7 +154,7 @@ sha256sum FnCal-0.4.4.fpk
 | 协议 | MCP Streamable HTTP，无状态（不建会话） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**） |
 
-细节与排错见技能包 `FnCal-MCP-Skill-0.4.4.zip` 里的 `reference/setup.md`。
+细节与排错见技能包 `FnCal-MCP-Skill-0.4.16.zip` 里的 `reference/setup.md`。
 
 ---
 
@@ -171,7 +174,6 @@ docker compose up -d --build      # 然后在 http://<NAS-IP>:5581/ 登录
 
 数据放在 `/data` 卷（`accounts.json`、`secret.key`、`calendars/`、`logs/`）。首启可用 `CALDAV_ADMIN_PASSWORD` 直接设定管理员密码；留空则生成随机密码并写入容器内 `/data/admin-initial-password.txt`（0600，首次登录后请立即修改）。容器以 root 进入，入口脚本按 `PUID`/`PGID` 修正 `/data` 属主后降权运行。HTTPS 端口默认 `5243`。
 
-0.4.1 起 Docker 部署文件随仓库正式发布，并纳入发布前的功能对齐检查（安装运行、日历核心、CalDAV 与 AI、安全与数据四组）。仓库内的 CI 工作流已于 2026-11-03 在官方仓库跑通（run `41506831612`：amd64 构建、OCI 标签、容器冒烟与多架构构建全绿）；容器内 HTTPS、arm64 实机运行与镜像推送仍未验证，状态以 `DOCKER.md` 的「验证状态」一节为准。
 ---
 
 ## 致谢

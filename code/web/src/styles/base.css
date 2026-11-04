@@ -198,7 +198,7 @@ a {
   justify-content: center;
   width: 36px;
   height: 36px;
-  /* 0.3.7（用户 m00779）：红点的绝对定位锚点（规范 M11 §1）。 */
+  /* 0.4.8（规范 M18 §5）：红点已删；这里仍是 .header__bell::before 命中区扩展的定位锚点。 */
   position: relative;
   border-radius: var(--r-md);
   color: var(--text-2);
@@ -222,28 +222,6 @@ a {
   color: var(--accent);
   background: var(--accent-soft);
 }
-/* 0.3.7（用户 m00779 / 规范 M11 §1–§3）：顶栏齿轮右上角的 AI 待审批红点。只表示
-   「有未过期待审批提案」，不显示数字。三条约束来自规格，改之前先读规范：
-   - 纯装饰：::after 不进无障碍树、绝对定位不参与布局、pointer-events:none 不吃点击；
-   - 12px 外径 = 8px 内径 + 2×2px 描边：本文件顶部的 `*::after` 是 border-box，
-     所以 width/height 必须写 12px 才是「描边含在盒内」；写 8px 内径只剩 4px；
-   - 描边取 var(--surface)，与顶栏同色：只在压住图标灰线的那一侧起隔离作用，
-     深色主题下随底变深，不出亮环；
-   - 不加 transition/animation（规范 §7：瞬时出现，不做脉冲）。 */
-.icon-btn.has-badge::after {
-  content: '';
-  position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--surface);
-  border-radius: 50%;
-  background: var(--danger);
-  z-index: 1;
-  pointer-events: none;
-}
-
 /* Dim helper for secondary words inside a label (e.g. the custom-recurrence
    dialog's "occurrences" suffix). */
 .muted {

@@ -9,8 +9,8 @@
 //   - **不可见的东西必须「不存在」**：任何返回里不出现、单条读 404（不是 403）、
 //     搜索/空闲/聚合/审计一律按不存在处理；窗外同样按不存在。这里给出与
 //     「uid 不存在」**逐字节一致**的 404 响应体（NOT_FOUND_JSON）。
-//   - 删除永远不进 direct 分支：canDelete() 恒 false，删除只能走提案
-//     （allowDelete 在 M8 已取消）。
+//   - 删除双模式按**凭据**（0.4.13 / M4 §2）：canDelete() 只在该凭据
+//     `deleteMode === 'trash'` 且该日历为 write 档时返回 true；默认 proposal 只能出提案。
 //   - 时间窗按「天」为边界，两端都含：现在 - pastDays 天 00:00 起，
 //     现在 + futureDays 天 23:59:59.999 止；某一侧为 null 表示该侧不限制（0.3.3）。
 //     事件与窗口**有交集**即视为窗内（跨窗事件在 P2 由调用方按窗口裁剪出现次数）。
@@ -39,6 +39,11 @@ export const FIELD_MASK_KEYS = Object.freeze(['location', 'description', 'attend
 export const WRITE_MODE_PROPOSAL = 'proposal';
 export const WRITE_MODE_DIRECT = 'direct';
 export const WRITE_MODES = Object.freeze([WRITE_MODE_PROPOSAL, WRITE_MODE_DIRECT]);
+
+/** 删除双模式（M4 §2）：提案模式 = 恒出提案；回收站模式 = 可直删（进回收站）。 */
+export const DELETE_MODE_PROPOSAL = 'proposal';
+export const DELETE_MODE_TRASH = 'trash';
+export const DELETE_MODES = Object.freeze([DELETE_MODE_PROPOSAL, DELETE_MODE_TRASH]);
 
 /** 不可见 = 404；与「uid 不存在」共用这一份字节（M8 §6 A2）。 */
 export const NOT_FOUND_BODY = Object.freeze({ ok: false, code: 'not_found' });
@@ -99,11 +104,14 @@ export function normalizeCredentialLimits(input = {}) {
     fieldMask[key] = maskInput[key] === undefined ? DEFAULT_FIELD_MASK[key] : Boolean(maskInput[key]);
   }
   const writeMode = WRITE_MODES.includes(input.writeMode) ? input.writeMode : WRITE_MODE_PROPOSAL;
+  // 0.4.13 / M4 §2 硬规则①：删除模式按凭据存，默认 proposal；未知值降级为提案。
+  const deleteMode = DELETE_MODES.includes(input.deleteMode) ? input.deleteMode : DELETE_MODE_PROPOSAL;
   return {
     grants,
     timeWindow: { pastDays, futureDays },
     fieldMask,
     writeMode,
+    deleteMode,
   };
 }
 
@@ -129,11 +137,25 @@ export function isWritable(credential, calendarId) {
 }
 
 /**
- * 删除永远只进提案：无论 grants 是 read 还是 write，这里都返回 false。
- * 调用方要「删」就必须走 createProposal({action:'delete'})。
+ * 0.4.13（用户 2026-11-04「权限设置两组对称双模式」+ M4 §2 硬规则②③⑥）：
+ * 删除权限只看**该凭据**的 `deleteMode` 与「这个日历是不是 write 档」，
+ * 与 `writeMode` 无关（`writeMode` 只管建/改）。
+ *
+ *   - `deleteMode === 'proposal'`（默认）：一律 false——删除只能出提案；
+ *   - `deleteMode === 'trash'`：该日历 write 档才 true（只读凭据两模式都删不了）。
+ *
+ * @param {object} credential
+ * @param {string} calendarId
  */
-export function canDelete() {
-  return false;
+export function canDelete(credential, calendarId) {
+  if (deleteModeOf(credential) !== DELETE_MODE_TRASH) return false;
+  if (calendarId === undefined || calendarId === null || calendarId === '') return false;
+  return isWritable(credential, calendarId);
+}
+
+/** 是否允许 AI 助手经 MCP 批准自己的提案（M4 §4）；只认显式 true。 */
+export function canAgentApprove(credential) {
+  return Boolean(credential && credential.agentApproval === true);
 }
 
 /** 凭据声明的写入模式，默认 proposal。 */
@@ -141,6 +163,13 @@ export function writeModeOf(credential) {
   return credential && WRITE_MODES.includes(credential.writeMode)
     ? credential.writeMode
     : WRITE_MODE_PROPOSAL;
+}
+
+/** 凭据声明的删除模式，默认 proposal（旧凭据没有该字段 → 提案，M4 §2 硬规则①）。 */
+export function deleteModeOf(credential) {
+  return credential && DELETE_MODES.includes(credential.deleteMode)
+    ? credential.deleteMode
+    : DELETE_MODE_PROPOSAL;
 }
 
 export function visibleCalendarIds(credential, calendarIds = []) {

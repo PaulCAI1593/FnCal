@@ -131,13 +131,21 @@
       .join('');
   }
 
+  /**
+   * 0.4.7：注入样式必须无条件压过 tokens.css，不能依赖加载顺序。
+   * tokens.css 的 accent 定义是 `:root`（0,1,0）、`:root[data-theme='dark']`
+   * （0,2,0）与深色 media 里的 `:root:not([data-theme='light'])`（0,2,0）。
+   * 本脚本在 dist/index.html 里先于样式表执行，注入的 <style> 排在 <link>
+   * 之前（先出现者在同特异度下失败），所以这里把三个选择器各加一个 `:root`
+   * 抬到 0,2,0 / 0,3,0 / 0,3,0，无论样式表在前还是在后都胜出。
+   */
   function cssFor(hex) {
     var light = palette(hex, 'light');
     var dark = palette(hex, 'dark');
     return (
-      ':root{' + varBlock(light.vars) + '}' +
-      ":root[data-theme='dark']{" + varBlock(dark.vars) + '}' +
-      '@media (prefers-color-scheme: dark){:root:not([data-theme=\'light\']){' + varBlock(dark.vars) + '}}'
+      ':root:root{' + varBlock(light.vars) + '}' +
+      ":root:root[data-theme='dark']{" + varBlock(dark.vars) + '}' +
+      '@media (prefers-color-scheme: dark){:root:root:not([data-theme=\'light\']){' + varBlock(dark.vars) + '}}'
     );
   }
 
@@ -151,6 +159,20 @@
     if (node && node.parentNode) node.parentNode.removeChild(node);
   }
 
+  /**
+   * 0.4.7：把注入样式移到 head 末尾。
+   * 首屏注入时样式表可能还没解析（注入的 <style> 排在 <link> 前），运行时又
+   * 可能因颜色未变走短路分支、完全不碰 DOM —— 位置一旦落后就只有靠抬高
+   * 特异度兜住。两条路都修：特异度见 cssFor()，位置在这里补。
+   * 已经在末尾时不移动，避免每次 render 都触发一次样式重算。
+   */
+  function moveStyleToEnd(style) {
+    if (!style || !style.parentNode || typeof document === 'undefined') return;
+    if (document.head && document.head.lastElementChild !== style) {
+      document.head.appendChild(style);
+    }
+  }
+
   var lastApplied = null;
 
   /** 应用主题色；传默认色或非法值 → 移除注入，回到 tokens.css 默认。 */
@@ -162,7 +184,12 @@
       lastApplied = DEFAULT_ACCENT;
       return { accent: DEFAULT_ACCENT, vars: null };
     }
-    if (raw === lastApplied && styleElement()) return { accent: raw, vars: palette(raw, 'light').vars };
+    if (raw === lastApplied && styleElement()) {
+      // 0.4.7：颜色没变也要把样式挪到 head 末尾；否则首屏注入的位置会一直
+      // 落后于之后解析的样式表，运行时再调 apply 也修不回来。
+      moveStyleToEnd(styleElement());
+      return { accent: raw, vars: palette(raw, 'light').vars };
+    }
     var style = styleElement();
     if (!style) {
       style = document.createElement('style');
@@ -171,6 +198,7 @@
       document.head.appendChild(style);
     }
     style.textContent = cssFor(raw);
+    moveStyleToEnd(style);
     lastApplied = raw;
     return { accent: raw, vars: palette(raw, 'light').vars };
   }

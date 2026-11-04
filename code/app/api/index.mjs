@@ -21,6 +21,7 @@
 
 import { currentContext } from '../lib/request-context.mjs';
 import { NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
+import { checkForUpdate, normalizeUpdateSource } from '../lib/update-check.mjs';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -340,6 +341,45 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
     if (pathname === '/api/v1/ai' || pathname.startsWith('/api/v1/ai/')) {
       if (!ai) return sendJson(res, 501, { ok: false, code: 'ai_unavailable', message: 'AI 功能未启用' });
       return ai.handle(req, res, url);
+    }
+
+    // 0.4.14（用户 2026-11-04 需求）：头像菜单「检查更新」。只读、仅登录会话；
+    // 结果由 lib/update-check.mjs 代请求（前端 CSP connect-src 'self'），
+    // `?source=mirror|github` 选更新源（缺省 mirror，mirror 失败自动回退 github），
+    // 失败也回 200 + ok:false + code，不通传原始响应体。
+    if (pathname === '/api/v1/update/check') {
+      if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      const identity = await auth.authenticate(req);
+      if (!identity.ok || !identity.account) {
+        return sendJson(res, 401, { ok: false, code: 'unauthorized', message: '请先登录' });
+      }
+      const rawSource = url.searchParams.get('source');
+      const source = rawSource === null || rawSource === ''
+        ? 'mirror'
+        : normalizeUpdateSource(rawSource);
+      if (!source) {
+        return sendJson(res, 400, {
+          ok: false,
+          code: 'invalid',
+          field: 'source',
+          message: 'source 只能是 mirror 或 github',
+        });
+      }
+      try {
+        return sendJson(res, 200, await checkForUpdate({ current: version, source }));
+      } catch (err) {
+        return sendJson(res, 200, {
+          ok: false,
+          current: version,
+          latest: null,
+          updateAvailable: false,
+          url: null,
+          publishedAt: null,
+          checkedAt: new Date().toISOString(),
+          via: source,
+          code: 'bad_response',
+        });
+      }
     }
 
     // 0.2.9：设置 → CalDAV 账户页的同步自检状态（最近一次启动自愈结果 + 当前缺失）。

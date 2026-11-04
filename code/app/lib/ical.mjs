@@ -28,6 +28,7 @@ import {
 import {
   dateDigits,
   isIanaTimeZone,
+  offsetMsAt,
   utcDateDigits,
   utcDigits,
   vtimezoneLines,
@@ -298,6 +299,101 @@ function icsPropertyValue(line) {
   return '';
 }
 
+/* ============================ 0.4.10 提案卡片字段 ============================ */
+/* 用户侧提案队列要显示「时间」与「地点」；这两个字段只从**该快照自己的 ICS** 里取， */
+/* 不回整份 ICS。解析失败一律给空值（null / false / ''），绝不让列表接口 500。 */
+
+const PROPOSAL_LOCATION_MAX = 200;
+
+/** DTSTART/DTEND 的原始值 -> epoch ms（TZID 按该时区换算；floating 按 UTC 解释）。 */
+function instantOfDateProp(info) {
+  if (!info || !info.raw) return NaN;
+  if (info.kind === 'DATE') {
+    // 0.4.12：兼容 `20261121` 与 `2026-11-21`（旧包 / 外部导入可能带连字符）。
+    const m = /^(\d{4})-?(\d{2})-?(\d{2})$/.exec(info.raw);
+    return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : NaN;
+  }
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z)?$/i.exec(info.raw);
+  if (!m) return parseIcsDate(info.raw);
+  const wall = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]));
+  if (m[7]) return wall;
+  const zone = info.tzid;
+  if (!zone || !isIanaTimeZone(zone)) return wall; // floating：按 UTC 解释，与服务器 TZ 无关
+  // 墙上时间 -> 瞬时：先按猜测的偏移算一次，再按落点所在偏移校正一次（跨越 DST 边界也对）。
+  let offset = offsetMsAt(wall, zone);
+  let candidate = wall - offset;
+  const corrected = offsetMsAt(candidate, zone);
+  if (corrected !== offset) {
+    offset = corrected;
+    candidate = wall - offset;
+  }
+  return candidate;
+}
+
+/** epoch ms -> ISO 8601（带该时区偏移；无时区/全天用 UTC 的 `Z`）。 */
+function isoOfInstant(ms, zone) {
+  if (!Number.isFinite(ms)) return null;
+  if (!zone || zone === 'UTC' || zone === 'floating' || !isIanaTimeZone(zone)) {
+    return new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  }
+  const offset = offsetMsAt(ms, zone);
+  const wall = new Date(ms + offset);
+  const sign = offset < 0 ? '-' : '+';
+  const abs = Math.abs(offset);
+  const hh = pad2(Math.floor(abs / 3_600_000));
+  const mm = pad2(Math.floor((abs % 3_600_000) / 60_000));
+  return `${wall.getUTCFullYear()}-${pad2(wall.getUTCMonth() + 1)}-${pad2(wall.getUTCDate())}`
+    + `T${pad2(wall.getUTCHours())}:${pad2(wall.getUTCMinutes())}:${pad2(wall.getUTCSeconds())}${sign}${hh}:${mm}`;
+}
+
+const EMPTY_PROPOSAL_FIELDS = Object.freeze({ start: null, end: null, allDay: false, location: '' });
+
+/**
+ * 提案快照的卡片字段（0.4.10）：`{ start, end, allDay, location }`。
+ *
+ * - `start` / `end`：ISO 8601；定时事件用 ICS 的 TZID 换算成带偏移的本地时间，
+ *   无时区（floating）与全天事件用 UTC 的 `Z`。
+ * - `allDay`：DTSTART 是 `VALUE=DATE`（或 8 位日期）时为 true。
+ * - `end`：无 DTEND 时——全天按 RFC 5545 默认 1 天（次日 00:00Z）；定时按同一瞬时。
+ * - `location`：解 ICS 转义（`\\,` `\\n` `\\;` `\\\\`），截断 200 字符；没有则空串。
+ * - 坏 ICS / 没有 VEVENT / DTSTART 解析不出：返回全空值，不抛错。
+ */
+export function proposalFieldsOfIcs(text) {
+  if (typeof text !== 'string' || !text.trim()) return { ...EMPTY_PROPOSAL_FIELDS };
+  try {
+    const block = childComponents(calendarTree(text), 'VEVENT')[0] || null;
+    if (!block) return { ...EMPTY_PROPOSAL_FIELDS };
+    const startProp = propNamed(block, 'DTSTART');
+    if (!startProp) return { ...EMPTY_PROPOSAL_FIELDS };
+    const startInfo = datePropInfo(startProp);
+    const startMs = instantOfDateProp(startInfo);
+    if (!Number.isFinite(startMs)) return { ...EMPTY_PROPOSAL_FIELDS };
+
+    const allDay = Boolean(startInfo && startInfo.kind === 'DATE');
+    const startZone = allDay ? null : zoneOfDateProp(startProp);
+    const endProp = propNamed(block, 'DTEND');
+    const endInfo = datePropInfo(endProp);
+    const endMsRaw = instantOfDateProp(endInfo);
+    // 无 DTEND：全天按 1 天（RFC 5545 §3.8.2.2），定时按 duration 0（同刻）。
+    const endMs = Number.isFinite(endMsRaw) ? endMsRaw : (allDay ? startMs + 86_400_000 : startMs);
+    const endZone = allDay ? null : zoneOfDateProp(endProp) || startZone;
+
+    const locationProp = propNamed(block, 'LOCATION');
+    const location = locationProp
+      ? unescapeIcsText(String(locationProp.value ?? '')).slice(0, PROPOSAL_LOCATION_MAX)
+      : '';
+
+    return {
+      start: isoOfInstant(startMs, startZone),
+      end: isoOfInstant(endMs, endZone),
+      allDay,
+      location,
+    };
+  } catch {
+    return { ...EMPTY_PROPOSAL_FIELDS };
+  }
+}
+
 /* ======================================================================== */
 /* M3.4/M3.5 additions: free-busy, recurrence expand, JSON <-> iCal mapping  */
 /* ======================================================================== */
@@ -437,7 +533,8 @@ function datePropInfo(prop) {
   const raw = String(prop.value || '').trim();
   const tzid = prop.params && prop.params.TZID ? String(prop.params.TZID) : '';
   const valueType = prop.params && prop.params.VALUE ? String(prop.params.VALUE).toUpperCase() : '';
-  const kind = valueType === 'DATE' || /^\d{8}$/.test(raw) ? 'DATE' : 'DATE-TIME';
+  // 0.4.12：`VALUE=DATE` 之外，`20261121` 与历史/外部数据里的 `2026-11-21` 都算全天。
+  const kind = valueType === 'DATE' || /^\d{4}-?\d{2}-?\d{2}$/.test(raw) ? 'DATE' : 'DATE-TIME';
   return { raw, tzid, kind, hasZ: /z$/i.test(raw), allDay: kind === 'DATE' };
 }
 
@@ -485,8 +582,39 @@ const localDateDigits = (ms) => {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
 };
 
+/**
+ * 0.4.12：`YYYYMMDD` / `YYYY-MM-DD` -> RFC 5545 要求的压缩 8 位 `YYYYMMDD`。
+ * 无法识别返回空串（调用方据此回退）。写 ICS 前必须过这一步：`startDate`/`endDate`
+ * 可能来自旧包或外部导入，不能假定已经是 8 位。
+ */
+export function compactDate(value) {
+  const m = /^(\d{4})-?(\d{2})-?(\d{2})$/.exec(String(value === undefined || value === null ? '' : value).trim());
+  return m ? `${m[1]}${m[2]}${m[3]}` : '';
+}
+
+/**
+ * 0.4.12：瞬时 -> 某个时区里的日历日期 `YYYYMMDD`（全天事件不能依赖服务器 TZ）。
+ *
+ * - `zone` 是 IANA 名称（`Asia/Shanghai` / `UTC`）时按其墙上日期取；
+ * - 是固定偏移（`+08:00` / `-05:00`）时按该偏移换算；
+ * - 缺省或无法识别时按 `+08:00`（用户默认时区），绝不回落到 `new Date()` 的本地字段。
+ */
+export function dateDigitsInZone(ms, zone) {
+  if (!Number.isFinite(ms)) return '';
+  const name = String(zone || '').trim();
+  if (name === 'UTC') return utcDateDigits(ms);
+  if (name && isIanaTimeZone(name)) return dateDigits(ms, name);
+  const offset = /^([+-])(\d{2}):?(\d{2})$/.exec(name);
+  const offsetMs = offset
+    ? (offset[1] === '-' ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3])) * 60_000
+    : 8 * 60 * 60_000;
+  const shifted = new Date(ms + offsetMs);
+  return `${shifted.getUTCFullYear()}${pad2(shifted.getUTCMonth() + 1)}${pad2(shifted.getUTCDate())}`;
+}
+
 function addDaysToDateDigits(digits, days) {
-  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(digits || ''));
+  const compact = compactDate(digits);
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(compact);
   if (!m) return '';
   const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + days));
   return `${d.getUTCFullYear()}${pad2(d.getUTCMonth() + 1)}${pad2(d.getUTCDate())}`;
@@ -812,8 +940,10 @@ export function eventToIcs(event = {}, options = {}) {
 
   const body = ['BEGIN:VEVENT', `UID:${uid}`, `DTSTAMP:${utcDigits(Date.now())}`];
   if (allDay) {
-    const startDate = event.startDate || localDateDigits(start);
-    const endDate = event.endDate || addDaysToDateDigits(localDateDigits(end), 1);
+    // 0.4.12：`VALUE=DATE` 必须是 RFC 5545 的 8 位 `YYYYMMDD`；入参可能来自旧包/外部导入，
+    // 可能是 `2026-11-21`，写出前统一规范化（不能只信任 `event.startDate`）。
+    const startDate = compactDate(event.startDate) || localDateDigits(start);
+    const endDate = compactDate(event.endDate) || addDaysToDateDigits(localDateDigits(end), 1);
     body.push(`DTSTART;VALUE=DATE:${startDate}`, `DTEND;VALUE=DATE:${endDate}`);
   } else {
     body.push(...dateTimeLines('DTSTART', start, {
@@ -992,9 +1122,11 @@ export async function eventFromIcs(text) {
     updatedAt: parseIcsDate((propNamed(masterBlock || {}, 'LAST-MODIFIED') || {}).value) || Date.now(),
   };
   if (allDay) {
-    model.startDate = startInfo && startInfo.kind === 'DATE' ? startInfo.raw : localDateDigits(start);
+    // 0.4.12：读入也统一成 8 位，旧数据/外部 ICS 的 `2026-11-21` 不会再流进写出端。
+    model.startDate = (startInfo && startInfo.kind === 'DATE' ? compactDate(startInfo.raw) : '')
+      || localDateDigits(start);
     model.endDate = endInfo && endInfo.kind === 'DATE'
-      ? endInfo.raw
+      ? compactDate(endInfo.raw) || addDaysToDateDigits(localDateDigits(end), 1)
       : addDaysToDateDigits(localDateDigits(end), 1);
   } else {
     model.timezone = zone;

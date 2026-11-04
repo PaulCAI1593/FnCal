@@ -100,21 +100,23 @@ describe('0.3.8 头像菜单：两枚安全入口', () => {
     document.body.replaceChildren();
   });
 
-  it('0.3.10 管理员 4 项：账号管理 / 安全设置 / 立即同步 / 登出（无独立「我的安全」）', () => {
+  it('0.4.14 管理员 5 项：账号管理 / 安全设置 / 立即同步 / 检查更新 / 登出（无独立「我的安全」）', () => {
     const root = document.createElement('div');
     document.body.append(root);
     app = createApp(root, { store: makeStore(), user: { username: 'x', role: 'admin' } });
     const labels = openMenu().map((node) => node.textContent);
-    expect(labels).toEqual(['账号管理', '安全设置', '立即同步', '登出']);
+    // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
+    expect(labels).toEqual(['账号管理', '安全设置', '立即同步', '检查更新', '登出']);
     expect(labels.some((label) => label.includes('我的安全'))).toBe(false);
   });
 
-  it('普通用户 4 项：没有「安全设置」，也没有留空位', () => {
+  it('0.4.14 普通用户 5 项：没有「安全设置」，也没有留空位', () => {
     const root = document.createElement('div');
     document.body.append(root);
     app = createApp(root, { store: makeStore(), user: { username: 'dave', role: 'user' } });
     const labels = openMenu().map((node) => node.textContent);
-    expect(labels).toEqual(['我的账号', '我的安全', '立即同步', '登出']);
+    // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
+    expect(labels).toEqual(['我的账号', '我的安全', '立即同步', '检查更新', '登出']);
     expect(labels.some((label) => label.includes('安全设置'))).toBe(false);
     // 「不留空位」：每一项都有文字（没有只占位的空菜单项）。
     expect(menuItems().every((node) => node.textContent.trim().length > 0)).toBe(true);

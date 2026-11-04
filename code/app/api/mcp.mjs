@@ -11,7 +11,7 @@
 //     工具内部失败用结果里的 `isError:true`（不是 JSON-RPC error）。
 //   - Streamable HTTP 允许客户端 `Accept: text/event-stream`，服务端回普通 JSON 即可。
 
-import { NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
+import { canAgentApprove, NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
 import { createAiRateLimiter } from '../lib/ai-rate-limit.mjs';
 import { createAiService, parseBearer } from '../lib/ai-service.mjs';
 
@@ -33,6 +33,8 @@ const MISSING_EVENT_TEXT = '未找到该事件：它可能不存在、不在你�
  * 时间窗与只读档位各有自己的文案（见 `WRITE_REJECT_TEXT`），不再混进「不存在」。
  */
 const MISSING_CALENDAR_TEXT = '未找到该日历：它可能不存在，或对你的凭据不可见。';
+/** 提案不存在 / 不是本凭据产生的 / 所属日历已不可见 —— 统一一句，不证明存在性。 */
+const PROPOSAL_MISSING_TEXT = '未找到该提案：它可能不存在、已被处理，或不属于你的凭据。';
 
 /* ------------------------------------------------------------------ 工具定义 */
 
@@ -127,7 +129,8 @@ const WRITE_TOOLS = Object.freeze([
   ),
   tool(
     'delete_event',
-    '请求删除事件。**只会生成待确认提案，不会直接删除**（删除不可逆，任何凭据都一样）。',
+    '请求删除事件。该凭据的「删除」设为提案模式（默认）时只生成待确认提案；'
+      + '设为回收站模式时立即删除并进入回收站，保留期内可在日历界面恢复。',
     {
       uid: { type: 'string', description: '要删除的事件 UID（必填）' },
       calendarId: { type: 'string', description: '指定日历 id，可省略' },
@@ -137,6 +140,39 @@ const WRITE_TOOLS = Object.freeze([
   ),
 ]);
 
+/**
+ * 0.4.13 / M4 §4：AI 端批准工具。
+ * 只有凭据显式打开 gentApproval 才注册；关闭时调用也回「未开启」而不是「未知工具」，
+ * 让助手能照着文案提示用户去设置里打开（见 gent_approval_disabled）。
+ */
+const AGENT_TOOLS = Object.freeze([
+  tool(
+    'list_proposals',
+    '列出你的凭据自己产生的、仍在等待确认的提案（含新建/修改/删除）。只含你的凭据可见的日历；'
+      + '不返回 iCalendar 原文。需要该凭据在 FnCal 里打开「允许代办批准」。',
+    {},
+    [],
+  ),
+  tool(
+    'approve_proposal',
+    '批准一条提案并立即应用到日历（包含删除类提案）。调用前必须先在对话里向用户展示该提案的摘要（标题、时间、动作、影响），'
+      + '并得到用户明确同意；未经同意不得调用，一次只处理一条。需要该凭据打开「允许代办批准」；'
+      + '只会处理本凭据产生的、仍在等待确认的提案。',
+    { id: { type: 'string', description: '提案 id（必填，取自 list_proposals）' } },
+    ['id'],
+  ),
+  tool(
+    'reject_proposal',
+    '拒绝一条提案（不应用到日历）。调用前必须先在对话里向用户展示该提案的摘要，并得到用户明确同意；未经同意不得调用，一次只处理一条。需要该凭据打开「允许代办批准」。',
+    {
+      id: { type: 'string', description: '提案 id（必填，取自 list_proposals）' },
+      reason: { type: 'string', description: '拒绝原因，可省略（最多 200 字）' },
+    },
+    ['id'],
+  ),
+]);
+
+const AGENT_TOOL_NAMES = Object.freeze(AGENT_TOOLS.map((entry) => entry.name));
 /* ------------------------------------------------------------------ JSON-RPC */
 
 function rpcError(code, message, data) {
@@ -270,12 +306,26 @@ export function createMcp({
     }
   }
 
+  /**
+   * AI 端决策审计（M4 §5、0.4.14 M4 §2）：与用户批准同属 proposal-decision，
+   * 用 decidedBy:'agent' 区分来源，并带 credentialId 便于追溯是哪把钥匙批的。
+   */
+  function writeAgentDecision(record) {
+    if (!audit || typeof audit.write !== 'function') return;
+    try {
+      audit.write({ type: 'ai', event: 'proposal-decision', decidedBy: 'agent', ...record });
+    } catch {
+      /* 审计失败不能影响响应 */
+    }
+  }
   /* ---------------------------------------------------------------- 工具集 */
 
   /** 按凭据实时算工具集：写工具**只在**至少有一个可写日历时注册（不是调用了才报错）。 */
   async function toolsFor(ctx) {
     const tools = [...READ_TOOLS];
     if (await service.hasWritableCalendar(ctx)) tools.push(...WRITE_TOOLS);
+    // AI 端代办批准是**凭据级开关**：没打开就不注册，避免助手误以为可用。
+    if (canAgentApprove(ctx.credential)) tools.push(...AGENT_TOOLS);
     return tools;
   }
 
@@ -312,7 +362,7 @@ export function createMcp({
   async function callTool(ctx, name, rawArgs) {
     const args = rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs) ? rawArgs : {};
     const tools = await toolsFor(ctx);
-    const known = tools.some((entry) => entry.name === name);
+    const known = tools.some((entry) => entry.name === name) || AGENT_TOOL_NAMES.includes(name);
     // 未注册的工具（含「凭据没有写权限」）一律按参数错误处理，不泄露它是「被裁剪掉的」。
     if (!known) throw rpcError(-32602, `未知工具：${name}`);
 
@@ -407,6 +457,36 @@ export function createMcp({
         if (!result) return toolFailure(MISSING_EVENT_TEXT);
         return toolResult(writePayload(result));
       }
+      /* -------- 0.4.13：AI 端批准（凭据开关是唯一闸门，关闭时任何路径都拒绝） -------- */
+      case 'list_proposals': {
+        return toolResult({ proposals: await service.listAgentProposals(ctx) });
+      }
+      case 'approve_proposal':
+      case 'reject_proposal': {
+        const id = requireString(args, 'id', { max: 255 });
+        const accepting = name === 'approve_proposal';
+        const reason = accepting ? '' : (optionalString(args, 'reason', { max: 200 }) || '');
+        const outcome = await service.agentDecide(ctx, id, accepting ? 'accept' : 'reject', { reason });
+        if (!outcome || outcome.missing) return toolFailure(PROPOSAL_MISSING_TEXT);
+        const proposal = outcome.proposal || {};
+        logEvent(accepting ? 'proposal-agent-approve' : 'proposal-agent-reject', {
+          proposalId: id,
+          credentialId: ctx.credential.id,
+          action: proposal.action || (accepting ? 'accept' : 'reject'),
+          calendarId: proposal.calendarId || null,
+        });
+        writeAgentDecision({
+          proposalId: id,
+          action: accepting ? 'accept' : 'reject',
+          ok: true,
+          userId: ctx.userId,
+          credentialId: ctx.credential.id,
+          remoteAddress: ctx.remoteAddress || null,
+        });
+        return toolResult(accepting
+          ? { approved: true, proposal }
+          : { rejected: true, proposal });
+      }
       default:
         throw rpcError(-32602, `未知工具：${name}`);
     }
@@ -425,7 +505,11 @@ export function createMcp({
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: SERVER_NAME, version: serverVersion },
           instructions: 'FnCal 本地日历（零云）。时间窗口之外、或未授权给你的日历与事件，表现为不存在。'
-            + '删除只会生成待确认提案。',
+            + '删除按该凭据的「删除」设置处理：提案模式只生成待确认提案；回收站模式立即删除并可在保留期内恢复。'
+            + '凭据打开「AI 端代办批准」后，可用 list_proposals / approve_proposal / reject_proposal 处理自己的提案。'
+            + '调用 approve_proposal 或 reject_proposal 前，必须先在对话里向用户展示提案摘要（标题、时间、动作、影响），'
+            + '并明确询问用户批准还是拒绝；只有用户明确同意后才能调用，不得自行批准。'
+            + '一次只处理一条：每条都要单独征得同意，禁止批量静默执行。',
         };
       }
       case 'ping':
@@ -556,6 +640,7 @@ export function createMcp({
       action: null,
       nowMs: now(),
       source: 'ai-mcp',
+      remoteAddress,
     };
 
     try {
@@ -569,6 +654,9 @@ export function createMcp({
       }
       // 写请求被拒（只读档位 / 时间窗外 / 日历不存在 / 时间区间颠倒）：文案逐字透传，
       // 不用「操作失败：」前缀——这是给用户看、能照着操作的一句话（0.3.6 缺陷 1）。
+      if (err && (err.code === 'agent_approval_disabled' || err.code === 'trash_write_failed' || err.code === 'trash_unavailable')) {
+        return finish(200, { jsonrpc: '2.0', id, result: toolFailure(String(err.message)) });
+      }
       if (err && err.code === 'write_reject') {
         return finish(200, { jsonrpc: '2.0', id, result: toolFailure(String(err.message)) });
       }

@@ -20,13 +20,9 @@ import { colorHex, customColorSwatch } from './colors.js';
 import { openCalendarSettings } from './calendar-dialog.js';
 // 0.3.0（P4）：设置 → 「AI」页签（设计侧真源 design/M8-AI接入设置页-规范.md）。
 import { createAiSettingsPage } from './ai-settings.js';
-// 0.3.7（用户 m00779）：「AI」页签右上角的红点与顶栏齿轮同源（ai-badge.js 是唯一状态源）。
-import {
-  onAiBadgeChange,
-  getAiBadgeState,
-  paintAiBadge,
-  refreshAiBadge,
-} from './ai-badge.js';
+// 0.4.8（规范 M18 §5）：AI 页签的红点已删，入口收成顶栏铃铛。这里只保留计数刷新——
+// 切进 AI 页会重拉服务/凭据，顺手把铃铛状态也刷一次。
+import { refreshAiBadge } from './ai-badge.js';
 import { getAppVersion } from './app-version.js';
 import { getFrontendVersion } from './build-info.js';
 import { ACCENT_PRESETS, normalizeAccent } from './accent-theme.js';
@@ -383,6 +379,13 @@ export function openAccountDialog({
     applyErrorEl.textContent = message || '';
     applyErrorEl.hidden = !message;
   }
+  /** 0.4.6：回读失败/不一致时 store 抛的 code → 可读中文（不再谎报「已应用」）。 */
+  function saveErrorMessage(err) {
+    const code = err && err.code;
+    if (code === 'settings_readback_mismatch') return t('settings.saveVerifyMismatch');
+    if (code === 'settings_readback_failed') return t('settings.saveVerifyUnreadable');
+    return (err && err.message) || t('settings.saveFailed');
+  }
   const applyBtn = el('button', { class: 'btn btn--primary', type: 'button', text: t('settings.action.apply'), disabled: true, on: { click: () => void applyPending() } });
   const cancelBtn = el('button', { class: 'btn', type: 'button', text: t('common.cancel'), on: { click: () => requestClose() } });
   const refreshBtn = el('button', {
@@ -534,7 +537,7 @@ export function openAccountDialog({
       closeDialog();
     } catch (err) {
       // 失败不关闭：保留暂存，弹窗内给中文提示，并允许重试。
-      const message = (err && err.message) || t('settings.saveFailed');
+      const message = saveErrorMessage(err);
       setApplyError(message);
       toast(t('settings.saveFailed'), { variant: 'danger' });
       applyBtn.disabled = false;
@@ -832,17 +835,6 @@ export function openAccountDialog({
     return btn;
   });
 
-  // 0.3.7（用户 m00779）：第 4 枚「AI」页签的红点。与齿轮同一份状态，同一拍亮灭；
-  // 页签文字保持「AI」不动，条数只进 aria-label/title；n=0 时把 aria-label 摘掉，
-  // 让按钮的可访问名回落成文本「AI」（规范 §6）。
-  const aiTabBtn = tabButtons[tabs.findIndex((tabDef) => tabDef.id === 'ai')];
-  function paintAiTabBadge(current = getAiBadgeState()) {
-    // 贴法与齿轮共用 paintAiBadge()；页签不传 idleLabel，于是 n=0 时只摘属性、
-    // 不动文本，可访问名回落成「AI」。
-    paintAiBadge(aiTabBtn, { state: current, labelKey: 'settings.tab.aiWithPending' });
-  }
-  paintAiTabBadge();
-  const unsubscribeAiBadge = onAiBadgeChange((next) => paintAiTabBadge(next));
   function selectTab(id) {
     const index = tabs.findIndex((tabDef) => tabDef.id === id);
     tabs.forEach((tabDef, i) => {
@@ -996,10 +988,9 @@ export function openAccountDialog({
   }
   document.addEventListener('keydown', onEscGuard, true);
   const removeEscGuard = () => document.removeEventListener('keydown', onEscGuard, true);
-  // 0.3.7：关窗时连同红点订阅一起退订（顶栏齿轮那边的订阅仍在，红点不会因此停更）。
+  // 0.4.8（规范 M18 §5）：AI 页签红点的订阅已随红点删除；关窗只撤 Esc 守卫。
   closeDialog = mountDialog(dialog, () => {
     removeEscGuard();
-    unsubscribeAiBadge();
   });
   selectTab(tab);
   void refreshSyncStatus();

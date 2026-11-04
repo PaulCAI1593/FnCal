@@ -100,7 +100,11 @@ function coarseBlocks() {
 
 describe('移动端布局断言', () => {
   it('最小 360px 不出现横向滚动：没有超过 360px 的 min-width', () => {
-    const offenders = [...STYLES.matchAll(/min-width:\s*(\d+)px/g)]
+    // 只查**元素声明**：`@media (min-width: 1024px)` 这类断点阈值不是元素宽度
+    // （0.4.9 起顶栏左区在 1024–1200 恢复对齐，会引入 1024px 的媒体阈值）。
+    // 先把媒体查询前导去掉，保留块内声明，元素级 360px 上限照旧严格检查。
+    const declarations = STYLES.replace(/@media[^{]*\{/g, '{');
+    const offenders = [...declarations.matchAll(/min-width:\s*(\d+)px/g)]
       .map((m) => Number(m[1]))
       .filter((value) => value > 360);
     expect(offenders).toEqual([]);

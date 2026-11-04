@@ -14,8 +14,10 @@
  *     network, so a late failure isn't enough), show one friendly toast, snap
  *     the UI back to its canonical state, and reject with OfflineWriteError;
  *   - saveSettings → always delegate so preference/appearance changes still take
- *     effect locally, but swallow the persist rejection (a non-persisted
- *     preference is harmless and sync-safe; last-write-wins on one key).
+ *     effect locally; while offline the persist rejection stays swallowed (the
+ *     preference is sync-safe, last-write-wins on one key), but once online it
+ *     is rethrown so the settings dialog can keep the change staged and warn
+ *     instead of closing on a write that never reached the server.
  *
  * Connectivity is an explicit `blocked` flag, NOT a live read of
  * navigator.onLine: reconnect only clears it AFTER a real cloud read succeeds,
@@ -188,9 +190,13 @@ export function createOffline({ toast, onReconnectRefresh }) {
           return value.apply(store, args);
         };
       } else if (key === 'saveSettings') {
-        // Apply locally regardless; a failed persist is non-critical and never
-        // surfaces as an error (this is also strictly safer than today online).
-        proxy[key] = (...args) => Promise.resolve(value.apply(store, args)).catch(() => {});
+        // 偏好类修改先本地生效（离线态日历只读，但外观设置不算数据写）。
+        // 0.4.5：在线时持久化失败必须透传给调用方 —— 以前这里把在线失败也吞掉，
+        // 设置对话框据此关窗并提示「已应用」，刷新后却回到默认值（用户反馈）。
+        proxy[key] = (...args) => Promise.resolve(value.apply(store, args)).catch((err) => {
+          if (blocked) return;
+          throw err;
+        });
       } else {
         proxy[key] = (...args) => value.apply(store, args);
       }

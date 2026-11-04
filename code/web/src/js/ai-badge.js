@@ -1,16 +1,17 @@
 /**
- * 0.3.7（用户 m00779 / 规范 `design/M11-设置红点-规范.md`）：AI 待审批提案的「红点」。
+ * 0.3.7（用户 m00779 / 规范 `design/M11-设置红点-规范.md`）：AI 待审批提案的状态源。
  *
- * 两处红点是同一个状态：顶栏设置齿轮右上角、设置弹窗「AI」页签右上角。
- * 所以本模块是**唯一状态源**——任何一处想亮，都必须问 `getAiBadgeState()`，
+ * 0.4.8（用户 2026-11-04 / 规范 `design/M18-提案队列入口-规范.md` §2）：入口收成
+ * 顶栏铃铛一个；本模块仍是**唯一状态源**——铃铛只订阅状态改类名与 aria-label，
  * 不许自己数提案条数（条数来自 `GET /api/v1/ai/proposals/count`，由后端按
  * effective status 过滤过期项；前端再算一遍必然和队列显示对不上）。
+ * 旧的「两处红点 + `paintAiBadge()`」已随 M18 §5 整体删除。
  *
  * 三条口径（规范 §9）：
  *   1. 可见当且仅当 `enabled === true` 且 `pending > 0`；
  *   2. 请求失败、未登录、字段缺失 → 一律当成 `{ pending: 0, enabled: false }`，
- *      fail-closed：宁可不亮，也不给用户一个点不掉的红点；
- *   3. 两处红点同源：同一次状态变化同时通知所有订阅者，禁止一处亮一处灭。
+ *      fail-closed：宁可不亮，也不给用户一个点不掉的入口状态；
+ *   3. 一次状态变化同时通知所有订阅者（0.4.8 起只有铃铛一个订阅者）。
  *
  * 轮询与触发：60 秒一次；页面不可见（`document.hidden`）时跳过请求；
  * 回到前台（`visibilitychange`）或窗口获得焦点（`focus`）各补一次，
@@ -19,7 +20,6 @@
  */
 
 import { getAiProposalCount } from './api-client.js';
-import { t } from '../i18n/index.js';
 
 /** 轮询间隔（规范/派单：60 秒）。 */
 export const POLL_INTERVAL_MS = 60_000;
@@ -79,36 +79,6 @@ function applyState(next, { force = false } = {}) {
 /** 纯函数：可见判据。测试直接拿它验状态机，DOM 侧也用它。 */
 export function isAiBadgeVisible(current = state) {
   return Boolean(current && current.enabled === true && current.pending > 0);
-}
-
-/**
- * 把状态贴到一个按钮上。两处红点（顶栏齿轮、设置「AI」页签）共用这一套贴法，
- * 免得一处改了、另一处忘——「一处亮一处灭」正是本任务要防的缺陷。
- *
- * - 可见：挂 `has-badge`，`aria-label` 与 `title` 都写成 `labelKey` 的插值文案；
- * - 不可见：摘掉 `has-badge`；传了 `idleLabel` 就把两个属性写回该键（齿轮的
- *   「设置」），没传就整对移除（页签回落成文本「AI」，规范 §6）。
- *
- * 只动类名与两个字符串属性，不碰 textContent：红点只是点，页签文字与齿轮图标
- * 由各自的既有渲染负责。
- */
-export function paintAiBadge(button, { state: current = state, labelKey, idleLabel = null } = {}) {
-  if (!button || !labelKey) return false;
-  const visible = isAiBadgeVisible(current);
-  button.classList.toggle('has-badge', visible);
-  if (visible) {
-    const text = t(labelKey, { n: current.pending });
-    button.setAttribute('aria-label', text);
-    button.setAttribute('title', text);
-  } else if (idleLabel) {
-    const text = t(idleLabel);
-    button.setAttribute('aria-label', text);
-    button.setAttribute('title', text);
-  } else {
-    button.removeAttribute('aria-label');
-    button.removeAttribute('title');
-  }
-  return visible;
 }
 
 /** 当前状态快照（只读副本）。 */

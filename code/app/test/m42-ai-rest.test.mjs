@@ -427,6 +427,12 @@ try {
     `DTSTART:${icsStamp(NOW + DAY)}`, `DTEND:${icsStamp(NOW + DAY + HOUR)}`,
     'END:VEVENT', 'END:VCALENDAR', '',
   ].join('\r\n');
+  // 0.4.10：提案卡片的 start / end / allDay / location 六类样例（①定时 ②全天 ③无地点
+  // ④无 DTEND ⑤删除类 after=null ⑥坏 ICS）。
+  const cardIcs = (lines) => [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//FnCal Test//EN',
+    'BEGIN:VEVENT', 'UID:card', ...lines, 'END:VEVENT', 'END:VCALENDAR', '',
+  ].join('\r\n');
   const legacyFile = readProposalsFile(userId);
   const legacyBase = {
     ownerId: userId,
@@ -448,6 +454,54 @@ try {
       after: null,
     },
     { ...legacyBase, id: 'legacy-bad', action: 'update', uid: 'legacy-bad', before: { etag: 'sha256:bad', ics: '这不是 ICS' }, after: { etag: null, ics: '' } },
+    {
+      ...legacyBase,
+      id: 'legacy-timed',
+      action: 'create',
+      uid: 'legacy-timed',
+      before: null,
+      after: {
+        etag: null,
+        ics: cardIcs([
+          'SUMMARY:定时提案',
+          'DTSTART;TZID=Asia/Shanghai:20261109T183000',
+          'DTEND;TZID=Asia/Shanghai:20261109T193000',
+          'LOCATION:3F 会议室\\, A 座\\n请提前到',
+        ]),
+      },
+    },
+    {
+      ...legacyBase,
+      id: 'legacy-allday',
+      action: 'create',
+      uid: 'legacy-allday',
+      before: null,
+      after: { etag: null, ics: cardIcs(['SUMMARY:全天提案', 'DTSTART;VALUE=DATE:20261109', 'DTEND;VALUE=DATE:20261110']) },
+    },
+    {
+      ...legacyBase,
+      id: 'legacy-noloc',
+      action: 'create',
+      uid: 'legacy-noloc',
+      before: null,
+      after: { etag: null, ics: cardIcs(['SUMMARY:没地点', 'DTSTART:20261109T100000Z', 'DTEND:20261109T110000Z']) },
+    },
+    {
+      ...legacyBase,
+      id: 'legacy-noend',
+      action: 'create',
+      uid: 'legacy-noend',
+      before: null,
+      after: { etag: null, ics: cardIcs(['SUMMARY:无结束', 'DTSTART:20261109T100000Z']) },
+    },
+    {
+      ...legacyBase,
+      id: 'legacy-longloc',
+      action: 'create',
+      uid: 'legacy-longloc',
+      before: null,
+      after: { etag: null, ics: cardIcs(['SUMMARY:长地点', 'DTSTART:20261109T100000Z', 'DTEND:20261109T110000Z', `LOCATION:${'x'.repeat(260)}`]) },
+    },
   );
   fs.writeFileSync(path.join(userDir(userId), '.data', 'ai-proposals.json'), JSON.stringify(legacyFile, null, 2));
   const legacyList = await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie });
@@ -457,6 +511,31 @@ try {
   eq('旧提案 after.title 从 ICS 兜底（解折行 + 反转义）', '折行的会议标题, 前段后段\n第二行', legacyRow('legacy-create').after.title);
   eq('旧删除提案 before.title 从 ICS 兜底', '旧的删除目标', legacyRow('legacy-delete').before.title);
   eq('坏 ICS → 标题空串不抛错', '', legacyRow('legacy-bad').before.title);
+
+  /* ------------------------------------ ⑬ 0.4.10 提案卡片的 start/end/allDay/location */
+  const afterOf = (id) => legacyRow(id).after || {};
+  const beforeOf = (id) => legacyRow(id).before || {};
+  eq('0.4.10 定时提案 start（TZID → 带偏移 ISO）', '2026-11-09T18:30:00+08:00', afterOf('legacy-timed').start);
+  eq('0.4.10 定时提案 end', '2026-11-09T19:30:00+08:00', afterOf('legacy-timed').end);
+  eq('0.4.10 定时提案 allDay=false', false, afterOf('legacy-timed').allDay);
+  eq('0.4.10 地点解转义（\\, 与 \\n）', '3F 会议室, A 座\n请提前到', afterOf('legacy-timed').location);
+  eq('0.4.10 全天提案 allDay=true', true, afterOf('legacy-allday').allDay);
+  eq('0.4.10 全天 start 取 DATE 的 00:00Z', '2026-11-09T00:00:00Z', afterOf('legacy-allday').start);
+  eq('0.4.10 全天 end 用排他 DTEND', '2026-11-10T00:00:00Z', afterOf('legacy-allday').end);
+  eq('0.4.10 无地点 → 空串', '', afterOf('legacy-allday').location);
+  eq('0.4.10 无 DTEND（定时）→ start 同刻', '2026-11-09T10:00:00Z', afterOf('legacy-noend').start);
+  eq('0.4.10 无 DTEND（定时）→ end 同刻', '2026-11-09T10:00:00Z', afterOf('legacy-noend').end);
+  eq('0.4.10 地点截断 200 字符', 200, String(afterOf('legacy-longloc').location).length);
+  eq('0.4.10 删除类 after 保持 null', null, legacyRow('legacy-delete').after);
+  eq('0.4.10 删除类 before.start 有值', new Date(NOW + DAY).toISOString().replace(/\.\d{3}Z$/, 'Z'), beforeOf('legacy-delete').start);
+  eq('0.4.10 坏 ICS → start null', null, afterOf('legacy-bad').start);
+  eq('0.4.10 坏 ICS → end null', null, afterOf('legacy-bad').end);
+  eq('0.4.10 坏 ICS → allDay false', false, afterOf('legacy-bad').allDay);
+  eq('0.4.10 坏 ICS → location 空串', '', afterOf('legacy-bad').location);
+  const restCreated = legacyRows.find((item) => item.uid === 'ai-prop') || { after: null };
+  eq('0.4.10 新建提案 after.start = 请求时间', new Date(NOW + 4 * DAY).toISOString().replace(/\.\d{3}Z$/, 'Z'), restCreated.after && restCreated.after.start);
+  eq('0.4.10 新建提案 after.allDay=false', false, restCreated.after && restCreated.after.allDay);
+  eq('0.4.10 列表不回整份 ICS', false, /BEGIN:VCALENDAR/.test(legacyList.text));
 
   /* ------------------------------------------------------------ ① 吊销失效 */
   const revoke = await raw(`/api/v1/ai/credentials/${credA.id}/revoke`, {
@@ -501,6 +580,231 @@ try {
   ok('审计不含事件正文', !auditText.includes('BEGIN:VCALENDAR') && !auditText.includes('机密议程'));
   ok('审计不含 tokenHash', !auditText.includes('tokenHash'));
 
+  /* -------------------------- ⑭ 0.4.12 全天 8 位 / 连字符兼容 / 卡片凭据名 */
+  const { eventToIcs, proposalFieldsOfIcs, dateDigitsInZone } = await import('../lib/ical.mjs');
+  // A：写出端必须写 RFC 5545 的 8 位（入参是连字符，也要规范化）。
+  const allDayText = eventToIcs({
+    id: 'allday-probe', uid: 'allday-probe', title: '全天', start: Date.parse('2026-11-21T00:00:00+08:00'),
+    allDay: true, startDate: '2026-11-21', endDate: '2026-11-22',
+  });
+  const allDayDateLines = allDayText.split('\r\n').filter((line) => line.startsWith('DTSTART') || line.startsWith('DTEND'));
+  eq('0.4.12 全天 DTSTART 写 8 位（入参连字符被规范化）', 'DTSTART;VALUE=DATE:20261121', allDayDateLines[0]);
+  eq('0.4.12 全天 DTEND 写 8 位', 'DTEND;VALUE=DATE:20261122', allDayDateLines[1]);
+  // 读入端同时兼容 8 位与连字符（旧数据 / 外部 ICS）。
+  const fieldsEight = proposalFieldsOfIcs(allDayText);
+  eq('0.4.12 8 位全天解析 allDay', true, fieldsEight.allDay);
+  eq('0.4.12 8 位全天 start', '2026-11-21T00:00:00Z', fieldsEight.start);
+  const hyphenText = allDayText
+    .replace('DTSTART;VALUE=DATE:20261121', 'DTSTART;VALUE=DATE:2026-11-21')
+    .replace('DTEND;VALUE=DATE:20261122', 'DTEND;VALUE=DATE:2026-11-22');
+  const fieldsHyphen = proposalFieldsOfIcs(hyphenText);
+  eq('0.4.12 连字符全天解析 allDay', true, fieldsHyphen.allDay);
+  eq('0.4.12 连字符全天 start', '2026-11-21T00:00:00Z', fieldsHyphen.start);
+  eq('0.4.12 连字符全天 end', '2026-11-22T00:00:00Z', fieldsHyphen.end);
+  // B：全天日期按事件时区（缺省 +08:00）取，与服务器 TZ 无关。
+  eq('0.4.12 全天日期（+08:00 口径）', '20261121', dateDigitsInZone(Date.parse('2026-11-21T00:00:00+08:00'), '+08:00'));
+  eq('0.4.12 全天日期（缺省按 +08:00）', '20261121', dateDigitsInZone(Date.parse('2026-11-21T00:00:00+08:00'), undefined));
+  eq('0.4.12 全天次日（+08:00 口径）', '20261122', dateDigitsInZone(Date.parse('2026-11-21T00:00:00+08:00') + DAY, undefined));
+  // 端到端：走 ai-service 生成 ICS → 用户侧提案列表，全天不再丢时间行。
+  const allDayProp = await ai('/api/ai/v1/events', {
+    method: 'POST', token: tokenC,
+    body: { calendarId: 'default', uid: 'ai-allday', title: '全天提案', start: '2026-11-21T00:00:00+08:00', allDay: true },
+  });
+  eq('0.4.12 全天提案 → 202', 202, allDayProp.status);
+  const afterAllDayList = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  const allDayRow = afterAllDayList.find((row) => row.uid === 'ai-allday') || { after: null };
+  eq('0.4.12 全天提案 allDay=true', true, allDayRow.after && allDayRow.after.allDay);
+  eq('0.4.12 全天提案 start = 书写日期', '2026-11-21T00:00:00Z', allDayRow.after && allDayRow.after.start);
+  eq('0.4.12 全天提案 end = 次日（排他）', '2026-11-22T00:00:00Z', allDayRow.after && allDayRow.after.end);
+  // D：徽标前缀的凭据名（列表页一次批量取名；查不到 → null）。
+  eq('0.4.12 提案带凭据名（REST 提案写）', 'REST 提案写', allDayRow.credentialName);
+  const missingCredFile = readProposalsFile(userId);
+  missingCredFile.proposals.push({
+    ...legacyBase,
+    id: 'legacy-nocred',
+    credentialId: 'god-only-knows',
+    action: 'create',
+    uid: 'legacy-nocred',
+    before: null,
+    after: { etag: null, ics: cardIcs(['SUMMARY:凭据已删', 'DTSTART:20261109T100000Z']) },
+  });
+  fs.writeFileSync(path.join(userDir(userId), '.data', 'ai-proposals.json'), JSON.stringify(missingCredFile, null, 2));
+  const nocredList = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  eq('0.4.12 凭据查不到 → credentialName=null', null, (nocredList.find((row) => row.id === 'legacy-nocred') || {}).credentialName);
+
+  /* ------------------------------------------- ⑮ 0.4.12 批量决策接口 */
+  const batch = (body, options = {}) => raw('/api/v1/ai/proposals/batch', {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body, ...options,
+  });
+  const emptyBatch = await batch({ action: 'accept', ids: [] });
+  eq('0.4.12 批量：空数组 → 400', 400, emptyBatch.status);
+  eq('0.4.12 批量：空数组 code', 'invalid', emptyBatch.body && emptyBatch.body.code);
+  const tooMany = await batch({ action: 'accept', ids: Array.from({ length: 101 }, (_, i) => `id-${i}`) });
+  eq('0.4.12 批量：超 100 条 → 400', 400, tooMany.status);
+  eq('0.4.12 批量：超上限 field=ids', 'ids', tooMany.body && tooMany.body.field);
+  const badAction = await batch({ action: 'approve', ids: ['x'] });
+  eq('0.4.12 批量：action 非法 → 400', 400, badAction.status);
+  eq('0.4.12 批量：action 非法 field=action', 'action', badAction.body && badAction.body.field);
+  const anonBatch = await raw('/api/v1/ai/proposals/batch', { method: 'POST', body: { action: 'accept', ids: ['x'] } });
+  ok('0.4.12 批量：未登录 → 401/403', anonBatch.status === 401 || anonBatch.status === 403, `status=${anonBatch.status}`);
+
+  // 全成功：选两条仍 pending 的 create 提案。
+  const pendingBefore = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  const idsOf = (uids) => uids
+    .map((uid) => (pendingBefore.find((row) => row.uid === uid && row.action === 'create') || {}).id)
+    .filter(Boolean);
+  const okIds = idsOf(['legacy-noloc', 'legacy-noend']);
+  eq('0.4.12 批量：找到 2 条待批提案', 2, okIds.length);
+  const allOk = await batch({ action: 'accept', ids: okIds });
+  eq('0.4.12 批量全成功 → 200', 200, allOk.status);
+  eq('0.4.12 批量全成功 total', 2, allOk.body.total);
+  eq('0.4.12 批量全成功 ok', 2, allOk.body.ok);
+  eq('0.4.12 批量全成功 failed', 0, allOk.body.failed);
+
+  // 部分失败：过期提案 + 不存在的 id 夹在两条可成功提案之间，后续条目必须继续执行。
+  const partFile = readProposalsFile(userId);
+  partFile.proposals.push({
+    ...legacyBase,
+    id: 'legacy-expired',
+    action: 'create',
+    uid: 'legacy-expired',
+    status: 'pending',
+    expiresAt: new Date(NOW - 60_000).toISOString(),
+    before: null,
+    after: { etag: null, ics: cardIcs(['SUMMARY:过期提案', 'DTSTART:20261109T100000Z']) },
+  });
+  fs.writeFileSync(path.join(userDir(userId), '.data', 'ai-proposals.json'), JSON.stringify(partFile, null, 2));
+  const pendingPart = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  const partIds = idsOf(['legacy-timed', 'legacy-longloc']).filter((id) => pendingPart.some((row) => row.id === id));
+  const mixedIds = [partIds[0], 'does-not-exist', 'legacy-expired', partIds[1]];
+  eq('0.4.12 批量：部分失败用例凑齐 4 个 id', 4, mixedIds.filter(Boolean).length);
+  const mixed = await batch({ action: 'accept', ids: mixedIds });
+  eq('0.4.12 部分失败仍 200', 200, mixed.status);
+  eq('0.4.12 部分失败 total=4', 4, mixed.body.total);
+  eq('0.4.12 部分失败 ok=2（不因中间失败中断）', 2, mixed.body.ok);
+  eq('0.4.12 部分失败 failed=2', 2, mixed.body.failed);
+  const mixedBy = (id) => (mixed.body.results || []).find((row) => row.id === id) || {};
+  eq('0.4.12 不存在的 id → not_found', 'not_found', mixedBy('does-not-exist').code);
+  eq('0.4.12 过期提案 → expired', 'expired', mixedBy('legacy-expired').code);
+  ok('0.4.12 失败条目带 message', Boolean(mixedBy('legacy-expired').message));
+  eq('0.4.12 失败后仍执行第 4 条', true, mixedBy(partIds[1]).ok);
+
+  // 部分失败②：过期 + 目标日历已删除（calendar_missing），失败码必须与单条语义一致。
+  const goneFile = readProposalsFile(userId);
+  goneFile.proposals.push(
+    {
+      ...legacyBase,
+      id: 'legacy-gonecal',
+      action: 'create',
+      uid: 'legacy-gonecal',
+      calendarId: 'deleted-cal',
+      status: 'pending',
+      decidedAt: null,
+      before: null,
+      after: { etag: null, ics: cardIcs(['SUMMARY:日历已删', 'DTSTART:20261109T100000Z']) },
+    },
+    {
+      ...legacyBase,
+      id: 'legacy-expired2',
+      action: 'create',
+      uid: 'legacy-expired2',
+      status: 'pending',
+      expiresAt: new Date(NOW - 60_000).toISOString(),
+      before: null,
+      after: { etag: null, ics: cardIcs(['SUMMARY:过期提案二', 'DTSTART:20261109T100000Z']) },
+    },
+  );
+  fs.writeFileSync(path.join(userDir(userId), '.data', 'ai-proposals.json'), JSON.stringify(goneFile, null, 2));
+  const goneList = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  const idOfUid = (uid) => (goneList.find((row) => row.uid === uid) || {}).id;
+  // 过期那条在 status=pending 里查不到（已被收敛成 expired），直接用注入时写死的 id。
+  const mixed2Ids = ['legacy-expired2', 'legacy-gonecal'];
+  ok('0.4.12 批量：过期 + 日历已删两个 id 就绪', mixed2Ids.every(Boolean));
+  const mixed2 = await batch({ action: 'accept', ids: mixed2Ids });
+  eq('0.4.12 过期 + 日历已删仍 200', 200, mixed2.status);
+  eq('0.4.12 过期 + 日历已删 failed=2', 2, mixed2.body.failed);
+  const mixed2By = (id) => (mixed2.body.results || []).find((row) => row.id === id) || {};
+  eq('0.4.12 过期提案（第二例）→ expired', 'expired', mixed2By(mixed2Ids[0]).code);
+  eq('0.4.12 目标日历已删除 → calendar_missing', 'calendar_missing', mixed2By(mixed2Ids[1]).code);
+
+  // 幂等：已接受的提案再接受一次 → ok:false + conflict，不抛 500。
+  const twice = await batch({ action: 'accept', ids: [okIds[0]] });
+  eq('0.4.12 重复接受 → 200（逐条返回）', 200, twice.status);
+  eq('0.4.12 重复接受 ok=0', 0, twice.body.ok);
+  eq('0.4.12 重复接受 code=conflict', 'conflict', (twice.body.results || [])[0].code);
+
+  // 拒绝动作 + 原因；审计：逐条决策条目 + 1 条批量汇总。
+  const rejectId = (pendingPart.find((row) => row.id === 'legacy-nocred') || {}).id;
+  const rejectAll = await batch({ action: 'reject', ids: [rejectId], reason: '批量清理' });
+  eq('0.4.12 批量拒绝 → 200', 200, rejectAll.status);
+  eq('0.4.12 批量拒绝 ok=1', 1, rejectAll.body.ok);
+  // 审计是异步 appendFile（`audit.write` 内部 promise 链），轮询到汇总条目落盘再断言，
+  // 避免「最后一条还没写完就读」造成假红。
+  const auditFile = path.join(TMP, 'logs', 'audit.log');
+  const readAuditLines = () => {
+    try {
+      return fs.readFileSync(auditFile, 'utf8').split('\n').filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+  const auditDeadline = Date.now() + 3000;
+  let bulkLines = [];
+  for (;;) {
+    bulkLines = readAuditLines().filter((line) => line.includes('"event":"proposal-batch-decision"'));
+    const hasReject = bulkLines.some((line) => line.includes('"action":"bulk_reject"'));
+    if ((hasReject && bulkLines.length >= 3) || Date.now() > auditDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const auditLines = readAuditLines();
+  ok('0.4.12 审计有逐条 proposal-decision', auditLines.some((line) => line.includes('"event":"proposal-decision"')));
+  ok('0.4.12 审计有批量汇总条目', bulkLines.length >= 2, `${bulkLines.length} 条`);
+  ok('0.4.12 汇总审计写 bulk_accept', bulkLines.some((line) => line.includes('"action":"bulk_accept"')));
+  ok('0.4.12 汇总审计写 bulk_reject', bulkLines.some((line) => line.includes('"action":"bulk_reject"')));
+  ok('0.4.12 汇总审计带 total/ok/failed',
+    bulkLines.some((line) => line.includes('"total":4') && line.includes('"ok":2') && line.includes('"failed":2')));
+  /* ---------------------------------- ⑯ 0.4.12 过期/已决策提案的保留期修剪 */
+  const { PROPOSAL_RETENTION_MS } = await import('../lib/ai-store.mjs');
+  eq('0.4.12 保留期 = 7 天', 7 * 24 * 3600_000, PROPOSAL_RETENTION_MS);
+  const pruneIso = (ms) => new Date(ms).toISOString();
+  const pruneFile = readProposalsFile(userId);
+  const pruneCards = cardIcs(['SUMMARY:修剪样例', 'DTSTART:20261109T100000Z']);
+  pruneFile.proposals.push(
+    // 过期 8 天 → 删除。
+    { ...legacyBase, id: 'prune-old-expired', action: 'create', uid: 'prune-old-expired', status: 'pending', createdAt: pruneIso(NOW - 9 * DAY), expiresAt: pruneIso(NOW - 8 * DAY), decidedAt: null, before: null, after: { etag: null, ics: pruneCards } },
+    // 过期 3 天 → 保留。
+    { ...legacyBase, id: 'prune-recent-expired', action: 'create', uid: 'prune-recent-expired', status: 'expired', createdAt: pruneIso(NOW - 4 * DAY), expiresAt: pruneIso(NOW - 3 * DAY), decidedAt: null, before: null, after: { etag: null, ics: pruneCards } },
+    // 已接受 8 天（decidedAt 更晚）→ 删除。
+    { ...legacyBase, id: 'prune-old-accepted', action: 'create', uid: 'prune-old-accepted', status: 'accepted', createdAt: pruneIso(NOW - 10 * DAY), expiresAt: pruneIso(NOW - 9 * DAY), decidedAt: pruneIso(NOW - 8 * DAY), before: null, after: { etag: null, ics: pruneCards } },
+    // 刚刚过期 1 小时 → 保留（pending 永远不当场删，先转 expired）。
+    { ...legacyBase, id: 'prune-pending-overdue', action: 'create', uid: 'prune-pending-overdue', status: 'pending', createdAt: pruneIso(NOW - 25 * HOUR), expiresAt: pruneIso(NOW - HOUR), decidedAt: null, before: null, after: { etag: null, ics: pruneCards } },
+    // 正常 pending → 保留。
+    { ...legacyBase, id: 'prune-pending-fresh', action: 'create', uid: 'prune-pending-fresh', status: 'pending', createdAt: pruneIso(NOW - HOUR), expiresAt: pruneIso(NOW + 23 * HOUR), decidedAt: null, before: null, after: { etag: null, ics: pruneCards } },
+  );
+  const pruneFilePath = path.join(userDir(userId), '.data', 'ai-proposals.json');
+  fs.writeFileSync(pruneFilePath, JSON.stringify(pruneFile, null, 2));
+  const sizeBeforePrune = fs.statSync(pruneFilePath).size;
+  const pruneList = (await raw('/api/v1/ai/proposals?status=pending', { cookie: admin.cookie })).body.proposals || [];
+  ok('0.4.12 修剪后列表不返回过期 8 天的条目', !pruneList.some((row) => row.id === 'prune-old-expired'));
+  const afterPruneFile = readProposalsFile(userId);
+  const afterPruneIds = new Set(afterPruneFile.proposals.map((row) => row.id));
+  eq('0.4.12 修剪：过期 8 天被删', false, afterPruneIds.has('prune-old-expired'));
+  eq('0.4.12 修剪：过期 3 天保留', true, afterPruneIds.has('prune-recent-expired'));
+  eq('0.4.12 修剪：accepted 8 天被删', false, afterPruneIds.has('prune-old-accepted'));
+  eq('0.4.12 修剪：刚过期 1 小时保留', true, afterPruneIds.has('prune-pending-overdue'));
+  eq('0.4.12 修剪：新鲜 pending 保留', true, afterPruneIds.has('prune-pending-fresh'));
+  const sizeAfterPrune = fs.statSync(pruneFilePath).size;
+  ok('0.4.12 修剪后文件变小', sizeAfterPrune < sizeBeforePrune, `${sizeBeforePrune} → ${sizeAfterPrune}`);
+  const appLogFile = path.join(TMP, 'logs', 'app.log');
+  const appLogDeadline = Date.now() + 2000;
+  let prunedLogged = false;
+  for (;;) {
+    const appLogText = fs.existsSync(appLogFile) ? fs.readFileSync(appLogFile, 'utf8') : '';
+    prunedLogged = appLogText.includes('"event":"ai-proposals-pruned"') && appLogText.includes('"removed":2');
+    if (prunedLogged || Date.now() > appLogDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  ok('0.4.12 修剪写日志 ai-proposals-pruned removed=2', prunedLogged);
   /* ------------------------------------------------------------ 收尾：关闸 */
   const disable = await raw('/api/v1/ai/settings', {
     method: 'PUT', cookie: admin.cookie, csrf: admin.csrf, body: { enabled: false },

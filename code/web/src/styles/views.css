@@ -1199,10 +1199,13 @@ body.is-dragging .tevent--resizing * {
 }
 
 /* ---- Agenda view ------------------------------------------------------ */
+/* 0.4.11：顶部内边距归零。滚动容器的 padding-top 在 sticky 日期头之外，滚上去的
+   日程会从「容器顶边 → 日期头之间」的 16px 条带里透出来；顶部留白改由吸顶日期头
+   自己的 padding-top 提供，未滚动时视觉不变（16 + 0 = 16）。 */
 .agenda {
   height: 100%;
   overflow-y: auto;
-  padding: var(--sp-4) 0;
+  padding: 0 0 var(--sp-4);
 }
 .agenda__inner {
   /* An explicit width: the auto cross-axis margins opt this flex item out of
@@ -1222,9 +1225,17 @@ body.is-dragging .tevent--resizing * {
   padding: var(--sp-4) 0;
   border-bottom: 1px solid var(--border);
 }
+/* 0.4.11：吸顶日期头。
+   - align-self: start：默认 stretch 会把日期列撑成整行高，sticky 没有可移动余量；
+   - 不透明底色用议程区实际底色 --surface（.view 的 background），吸顶时不与内容叠字；
+   - 背景只覆盖 96px 日期列（本元素的盒子宽度），不横贯整行挡住右侧日程。 */
 .agenda__date {
+  align-self: start;
   position: sticky;
   top: 0;
+  z-index: 2;
+  padding-top: var(--sp-4);
+  background: var(--surface);
 }
 .agenda__date-num {
   font-size: var(--fs-2xl);
@@ -1245,6 +1256,8 @@ body.is-dragging .tevent--resizing * {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
+  /* 0.4.11：接住从 .agenda__day 移走的 16px 顶部留白。 */
+  padding-top: var(--sp-4);
 }
 /* 0.2.9（用户 16）：列表末尾的「加载更多 / 已无更多日程」条——与最后一条
    之间有分隔线；新加载的日程插在它前面，所以按钮不随内容重建。 */
@@ -1801,6 +1814,8 @@ button.year__day {
   .brand-name {
     display: none;
   }
+  /* 0.4.9（用户 2026-11-04）：这一档铃铛仍在顶栏左区（右边缘贴侧栏边界线），
+     不再隐藏 logo；左区宽度对齐见下面的 721–1200 段。 */
   /* Clip, don't paint over: whatever the nav can't fit must never render
      under the search / view-switcher buttons. The 4px padding/negative-margin
      pair moves the clip edge just past the 2px-offset focus outline, so
@@ -1829,6 +1844,23 @@ button.year__day {
   }
 }
 
+/* 0.4.9（用户 2026-11-04 最终规则）：>720 全档，顶栏左区宽度固定 =
+   `--sidebar-w` − 左右 padding − gap（即 `calc(--sidebar-w - sp-4 - sp-3)`）；
+   铃铛绝对定位在左区右端（`right: calc(-1 * var(--sp-3))`），右边缘因此始终
+   落在侧栏边界线 x = `--sidebar-w` 上（差值 0）。
+   左区内左端是 logo + 名称，右端是铃铛；宽度不够时只隐藏名称
+   （`.brand-name`，本档已由上面的 ≤1200 段隐藏），logo 与铃铛都保留。
+   721–1200 与 >1200 走同一条宽度规则（>1200 用 layout.css 的基值，数值相同）；
+   ≤720 铃铛在底部工具栏，不受这条影响。 */
+@media (min-width: 721px) and (max-width: 1200px) {
+  .header__brand {
+    min-width: calc(var(--sidebar-w) - var(--sp-4) - var(--sp-3));
+  }
+}
+
+/* 0.4.9：721–1023 的搜索槽收窄规则放在本文件后部（`.header__search` 基础样式
+   之后），否则会被同特异度、后出现的 `display: flex` 覆盖。 */
+
 @media (max-width: 720px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
@@ -1840,8 +1872,28 @@ button.year__day {
   }
   .tabbar {
     display: grid;
+    /* 0.4.9（用户 2026-11-04）：底部工具栏改成 8 项——铃铛、年/月/周/四日/日/日程、
+       任务。375px 宽度账：(375 − 8 padding − 7×2 gap) / 8 = 44.1px，刚过 44px。
+       更窄的 360/320 屏不让按钮缩到 44 以下：给 44px 下限并允许横向滚动。
+       触屏下 `.tabbar__btn` 的 min-height 48 仍来自 calendar.css 的 coarse 段。 */
+    gap: 2px;
+    padding-left: max(4px, env(safe-area-inset-left, 0px));
+    padding-right: max(4px, env(safe-area-inset-right, 0px));
+    grid-auto-columns: minmax(44px, 1fr);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+  .tabbar__bell.has-proposals {
+    color: var(--accent);
+  }
+  .tabbar__bell.has-proposals svg {
+    fill: currentColor;
   }
   .header__tools .segmented {
+    display: none;
+  }
+  /* 0.4.9：底部工具栏已补「任务」，顶栏那份在这一档隐藏（DOM 保留给桌面）。 */
+  .header__tools .taskbar-toggle {
     display: none;
   }
   .menu-toggle {
@@ -1937,6 +1989,7 @@ button.year__day {
   .nav-arrows {
     order: 0;
   }
+  /* 0.4.9（用户 2026-11-04）：这一档铃铛在底部工具栏，顶栏两份铃铛均已隐藏。 */
   .header__today {
     order: 1;
     min-width: 44px;
@@ -2206,12 +2259,28 @@ button.year__day {
 .search-toggle {
   display: none;
 }
-@media (max-width: 720px) {
+/* 0.4.9：≤1023 收窄搜索槽（≤720 原本就这样做，这里把 721–1023 并进来）。
+   原因：顶栏左区拉回 `--sidebar-w` 后，实测 721 宽「今天」仍被 nav 的 overflow
+   裁掉 27px（工具区固定 384 + 分段控件 216），只隐藏名称不够；按用户规则第 4 步，
+   把搜索槽收成工具区图标，把 96px 槽位让给 nav。768 起「今天」已经完整，并为
+   同一档内不出现两种形态而一并收窄。
+   规则必须排在本文件 `.header__search { display: flex }` 之后才生效
+   （同特异度，后出现者胜）。 */
+@media (max-width: 1023px) {
   .header__search {
     display: none;
   }
   .search-toggle {
     display: inline-flex;
+  }
+  /* 收窄搜索槽后实测 721 仍差 45px：再把工具区压一档——分段控件内边距 8→4、
+     任务按钮只留图标（aria-label 保留，任务视图仍可切换）。721 宽实测余量
+     35px（见 `code/M5-0.4.9-…-记录.md` 的四档几何实测表）。 */
+  .header__tools .segmented button {
+    padding: 0 4px;
+  }
+  .header__tools .taskbar-toggle .icon-btn__label {
+    display: none;
   }
 }
 /* 常驻条的结果面板：定位在**整条搜索条**下方（JS 用搜索条 rect 设 top/left/width），

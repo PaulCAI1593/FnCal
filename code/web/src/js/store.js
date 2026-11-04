@@ -25,6 +25,8 @@ import {
 } from './recurrence.js';
 import { startOfDay, endOfDay, addDays, MS_PER_DAY } from './date-utils.js';
 import { getHolidaysInRange } from './holidays.js';
+// 0.4.6：KV 写链诊断与「保存后回读」留痕（详见 kv-rest.js 顶部注释）。
+import { beginKvWriteTrace, endKvWriteTrace, recordSaveResult } from './kv-rest.js';
 
 
 const EVENT_PREFIX = 'cal:evt:';
@@ -2116,7 +2118,52 @@ export function createStore(backend) {
       } catch {
         /* unreadable cloud copy */
       }
-      await kv.set(SETTINGS_KEY, settings);
+      // 0.4.6：写完必须回读校验。0.4.5 真机仍然「提示已应用、刷新回默认蓝」，
+      // 说明失败不一定出现在方法级错误码上：可能是 403（不在 404/405/501 回退
+      // 范围）、可能是网关把 PUT 改写成 200 的 HTML、也可能写进去了又被覆盖。
+      // 「写入未抛错」不等于「已生效」，只有再读一次、拿回本次期望的主题色，
+      // 才算保存成功；不一致/读失败都抛给调用方，由对话框显示行内错误。
+      const trace = beginKvWriteTrace(SETTINGS_KEY);
+      const expectAccent = settings.accentColor;
+      try {
+        await kv.set(SETTINGS_KEY, settings);
+      } catch (err) {
+        recordSaveResult({
+          key: SETTINGS_KEY,
+          expect: expectAccent,
+          readback: null,
+          ok: false,
+          attempts: endKvWriteTrace(trace),
+        });
+        throw err;
+      }
+      let readback = null;
+      let readError = null;
+      try {
+        const stored = coerceValue(await kv.get(SETTINGS_KEY));
+        readback = stored && typeof stored === 'object' ? (stored.accentColor ?? null) : null;
+      } catch (err) {
+        readError = (err && (err.code || err.status)) || 'read_failed';
+      }
+      const attempts = endKvWriteTrace(trace);
+      const verified = readError == null && readback === expectAccent;
+      recordSaveResult({
+        key: SETTINGS_KEY,
+        expect: expectAccent,
+        readback,
+        ok: verified,
+        attempts,
+        readError,
+      });
+      if (!verified) {
+        const error = new Error(
+          readError ? 'settings readback failed after save' : 'settings readback mismatch after save',
+        );
+        error.code = readError ? 'settings_readback_failed' : 'settings_readback_mismatch';
+        error.expect = expectAccent;
+        error.readback = readback;
+        throw error;
+      }
       // Only now are these patches known to be in the cloud; a rejected write
       // keeps them pending so the next successful save carries them.
       for (const p of included) {

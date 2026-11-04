@@ -32,6 +32,9 @@
   align-items: center;
   gap: var(--sp-3);
   min-width: calc(var(--sidebar-w) - var(--sp-4) - var(--sp-3));
+  /* 0.4.9（用户 2026-11-04）：铃铛的定位锚点。铃铛挂在品牌区做绝对定位，
+     不占 `.header__nav` 的流内位置，「今天」因此回到 0.4.7 的 x。 */
+  position: relative;
 }
 .brand-mark {
   display: inline-flex;
@@ -79,6 +82,46 @@
 .nav-arrows {
   display: inline-flex;
   gap: 2px;
+}
+
+/* 0.4.8（用户 2026-11-04 / 规范 M18 §1–§2）：AI 提案队列入口 = 顶栏铃铛。
+   两态只差颜色：空态 `--text-2`；有提案 `--accent` + 图标实心填充（bells 的
+   描边 icon 在实心态下 `fill: currentColor` 才读得出「亮着」）。不做红点、
+   不做缩放/脉冲；过渡只给 color（规范 §1）。
+   0.4.9（用户 2026-11-04）：按两档摆位——>720 顶栏左区绝对定位，≤720 底部工具栏。
+   顶栏这一档的几何目标：铃铛**右边缘贴左边栏边界线**（同一 x）。品牌区宽度是
+   `var(--sidebar-w) - padding - gap`，右边界再往右 `--sp-3`（12px）就是侧栏边界
+   （`--sidebar-w`）；所以 `right: calc(-1 * var(--sp-3))` 让铃铛右边缘正好落在
+   这条线上（>1200：264-16-12=236 宽 ⇒ 16+236+12=264 = `--sidebar-w`）。
+   `.header__nav` 第一个流内子节点仍是「今天」，位置不变；铃铛不参与流布局。
+   不用 nav 做锚点是因为 ≤1200 的 nav 有 `overflow: hidden`，挂它左外侧会被裁掉。
+   命中区：精细指针用 ::before 扩到 40×40（36 + 2×2）；触屏沿用 .icon-btn 的
+   既有 44×44（calendar.css 的 pointer: coarse 段），这里不重复声明。 */
+.header__bell {
+  position: absolute;
+  top: 50%;
+  right: calc(-1 * var(--sp-3));
+  translate: 0 -50%;
+  color: var(--text-2);
+  transition: color var(--dur-fast);
+}
+.header__bell::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--r-md);
+}
+.header__bell.has-proposals {
+  color: var(--accent);
+}
+.header__bell.has-proposals svg {
+  fill: currentColor;
+}
+@media (max-width: 720px) {
+  /* 底部工具栏铃铛接管（views.css 的 720 段给两态色）。 */
+  .header__bell {
+    display: none;
+  }
 }
 
 .header__spacer {
@@ -600,6 +643,17 @@
   max-height: calc(100vh - var(--header-h) - 16px);
   max-height: calc(100dvh - var(--header-h) - 16px);
   overflow-y: auto;
+}
+/* 0.4.8（规范 M18 §3）：铃铛浮层是**左锚**（top = 铃铛底 + 8，left 由 JS 夹取），
+   所以变换原点改左上；宽度也由 JS 写成 min(400px, 100vw - 32px)。
+   这里只补内边距——面板里的卡片自带边框底色，不需要再套一层。
+   0.4.11：顶部内边距改为 0。滚动容器的 padding-top 在 sticky 头部之外，会让滚上去的
+   卡片从「面板顶边 → 吸顶标题行」的 12px 条带里透出来；顶部留白改由 sticky 头部
+   自己的 padding-top 提供，头部吸顶时正好贴到面板内沿（只余 1px 边框）。 */
+.popover--proposals {
+  transform-origin: top left;
+  padding: var(--sp-3);
+  padding-top: 0;
 }
 .popover__header {
   padding: var(--sp-3);

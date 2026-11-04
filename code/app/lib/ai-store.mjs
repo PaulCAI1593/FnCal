@@ -20,14 +20,17 @@ import { randomUUID } from 'node:crypto';
 
 import { hashSecret, randomToken, verifySecretHash } from '../security/tokens.mjs';
 import { runWithContext } from './request-context.mjs';
+import { normalizeRetentionDays } from './ai-trash.mjs';
 import {
   DEFAULT_FIELD_MASK,
   DEFAULT_FUTURE_DAYS,
   DEFAULT_PAST_DAYS,
+  DELETE_MODES,
   GRANT_HIDDEN,
   NOT_FOUND_BODY,
   WRITE_MODES,
   canAcceptProposal,
+  deleteModeOf,
   grantLevel,
   isVisible,
   normalizeCredentialLimits,
@@ -41,6 +44,10 @@ export const AI_SETTINGS_FILE = 'ai-settings.json';
 export const AI_TOKEN_PREFIX = 'fncal_ai_';
 export const DEFAULT_MCP_PATH = '/mcp';
 export const PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000;
+// 0.4.12：两个时间常量语义不同，别混用——
+//   TTL       = 一条 pending 提案「待确认多久算过期」；
+//   RETENTION = 一条非 pending 提案（过期/已接受/已拒绝/冲突）「再保留多久就删掉」。
+export const PROPOSAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const PROPOSAL_ACTIONS = Object.freeze(['create', 'update', 'delete']);
 export const PROPOSAL_STATUSES = Object.freeze(['pending', 'accepted', 'rejected', 'expired', 'conflict']);
 // P2：AI 侧请求限流（次/60 秒）。默认 60，上限 6000，避免凭据写个天文数字。
@@ -150,6 +157,7 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     timeWindow: credential.timeWindow,
     fieldMask: credential.fieldMask,
     writeMode: credential.writeMode,
+    deleteMode: credential.deleteMode,
     grants: credential.grants,
   });
   return {
@@ -160,6 +168,10 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     timeWindow: window.timeWindow,
     fieldMask: window.fieldMask,
     writeMode: writeModeOf(credential),
+    // 0.4.13（M4 §2 硬规则①）：删除模式按凭据返回；旧凭据补默认 proposal。
+    deleteMode: deleteModeOf(credential),
+    // 0.4.13（M4 §4）：允许 AI 助手经 MCP 批准该凭据自己产生的提案；默认关。
+    agentApproval: credential.agentApproval === true,
     rateLimit: Number.isFinite(Number(credential.rateLimit)) ? Number(credential.rateLimit) : 60,
     createdAt: credential.createdAt || null,
     lastUsedAt: credential.lastUsedAt || null,
@@ -192,6 +204,9 @@ export function createAiStore({
   function normalizeSettings(input = {}) {
     return {
       enabled: Boolean(input && input.enabled),
+      // 0.4.13（M4 §2 硬规则⑩）：回收站保留期是**全局**设置；删除方式已改为凭据字段，
+      // 不再存在这里（旧文件里残留的 deleteMode 读取时丢弃，不会回流到接口）。
+      trashRetentionDays: normalizeRetentionDays(input && input.trashRetentionDays),
       mcpPath: DEFAULT_MCP_PATH,
       updatedAt: typeof (input && input.updatedAt) === 'string' ? input.updatedAt : null,
       updatedBy: typeof (input && input.updatedBy) === 'string' ? input.updatedBy : null,
@@ -212,6 +227,10 @@ export function createAiStore({
     const next = normalizeSettings({
       ...current,
       enabled: patch.enabled === undefined ? current.enabled : Boolean(patch.enabled),
+      // 0.4.13：保留期和其他设置一起原子写；非法值由 normalize 收口。
+      trashRetentionDays: patch.trashRetentionDays === undefined
+        ? current.trashRetentionDays
+        : patch.trashRetentionDays,
       updatedAt: new Date(now()).toISOString(),
       updatedBy: actor,
     });
@@ -219,7 +238,11 @@ export function createAiStore({
     const tmp = `${settingsPath}.${process.pid}.${now()}.tmp`;
     await fs.writeFile(tmp, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 });
     await fs.rename(tmp, settingsPath);
-    logEvent('ai-settings-updated', { enabled: next.enabled, actor });
+    logEvent('ai-settings-updated', {
+      enabled: next.enabled,
+      trashRetentionDays: next.trashRetentionDays,
+      actor,
+    });
     return next;
   }
 
@@ -409,6 +432,9 @@ export function createAiStore({
       timeWindow: limits.timeWindow,
       fieldMask: limits.fieldMask,
       writeMode: limits.writeMode,
+      // 0.4.13（M4 §2 硬规则①）：删除模式跟凭据走，默认 proposal。
+      deleteMode: limits.deleteMode,
+      agentApproval: input.agentApproval === true,
       rateLimit: normalizeRateLimit(input.rateLimit),
       createdAt,
       lastUsedAt: null,
@@ -455,8 +481,17 @@ export function createAiStore({
       if (!WRITE_MODES.includes(patch.writeMode)) throw invalid('writeMode', '写入模式不合法');
       target.writeMode = patch.writeMode;
     }
+    // 0.4.13（M4 §2 硬规则①）：删除双模式按凭据保存；非法值 400，不静默降级。
+    if (patch.deleteMode !== undefined) {
+      if (!DELETE_MODES.includes(patch.deleteMode)) throw invalid('deleteMode', '删除方式不合法');
+      target.deleteMode = patch.deleteMode;
+    }
     if (patch.rateLimit !== undefined) {
       target.rateLimit = normalizeRateLimit(patch.rateLimit);
+    }
+    // 0.4.13（M4 §4）：AI 端批准开关；只认布尔，其它值当 false（不悄悄打开）。
+    if (patch.agentApproval !== undefined) {
+      target.agentApproval = patch.agentApproval === true;
     }
     await saveCredentials(userId, file);
     logEvent('ai-credential-updated', { userId, id });
@@ -556,6 +591,24 @@ export function createAiStore({
     return { version: 1, proposals };
   }
 
+  /**
+   * 0.4.12：非 pending 提案的「可以删掉」时间点。
+   * 计时基准取 decidedAt（已决策）与 expiresAt（已过期）中较新者；两者都没有时
+   * 退回 createdAt + PROPOSAL_TTL_MS（等价于「它刚过期的那一刻」）。
+   */
+  function proposalPruneAtMs(proposal) {
+    const candidates = [];
+    const decided = Date.parse((proposal && proposal.decidedAt) || '');
+    if (Number.isFinite(decided)) candidates.push(decided);
+    const expires = Date.parse((proposal && proposal.expiresAt) || '');
+    if (Number.isFinite(expires)) candidates.push(expires);
+    if (!candidates.length) {
+      const created = Date.parse((proposal && proposal.createdAt) || '');
+      candidates.push((Number.isFinite(created) ? created : 0) + PROPOSAL_TTL_MS);
+    }
+    return Math.max(...candidates);
+  }
+
   async function loadProposals(userId) {
     const raw = await withUser(userId, () => store.readUserData(AI_PROPOSALS_NAME));
     const normalized = normalizeProposalsFile(raw);
@@ -579,6 +632,8 @@ export function createAiStore({
     const file = await loadProposals(userId);
     const at = now();
     let dirty = false;
+    let removed = 0;
+    const kept = [];
     const out = [];
     for (const proposal of file.proposals) {
       const effective = proposalEffectiveStatus(proposal, at);
@@ -586,8 +641,20 @@ export function createAiStore({
         proposal.status = effective;
         dirty = true;
       }
+      // 0.4.12：非 pending 提案超过保留期从数据里删掉，避免 ai-proposals.json 只增不减。
+      // pending 永远保留：超期先转 expired，再等满 RETENTION 才删。
+      if (effective !== 'pending' && at - proposalPruneAtMs(proposal) >= PROPOSAL_RETENTION_MS) {
+        removed += 1;
+        dirty = true;
+        continue;
+      }
+      kept.push(proposal);
       if (status && effective !== status) continue;
       out.push(proposal);
+    }
+    if (removed) {
+      file.proposals = kept;
+      logEvent('ai-proposals-pruned', { userId, removed });
     }
     if (dirty) await saveProposals(userId, file);
     return out;
@@ -644,10 +711,12 @@ export function createAiStore({
     return proposal;
   }
 
-  async function markProposalDecided(userId, proposal, status, { reason = '', result = null } = {}) {
+  async function markProposalDecided(userId, proposal, status, { reason = '', result = null, decidedBy = null } = {}) {
     proposal.status = status;
     proposal.decidedAt = new Date(now()).toISOString();
     proposal.decidedReason = reason;
+    // 0.4.13（M4 §5）：谁批的——'agent'（MCP 工具）或 'user'（日历界面）。只认这两个值。
+    proposal.decidedBy = decidedBy === 'agent' || decidedBy === 'user' ? decidedBy : null;
     proposal.result = result;
     const file = await loadProposals(userId);
     const index = file.proposals.findIndex((item) => item.id === proposal.id);
@@ -661,7 +730,7 @@ export function createAiStore({
    * （冲突 → 409 + 当前 etag 详情），最后才写库。
    * 写入本身走 `applyChange`（与 AI 直写同一份语义，P2 起不再有第二套写规则）。
    */
-  async function acceptProposal(userId, id) {
+  async function acceptProposal(userId, id, { decidedBy = 'user' } = {}) {
     const proposal = await getProposal(userId, id);
     if (!proposal) return { missing: true };
     const allowed = canAcceptProposal(proposal, now());
@@ -678,15 +747,15 @@ export function createAiStore({
       source: 'proposal-accept',
       credentialId: proposal.credentialId || null,
     });
-    return markProposalDecided(userId, proposal, 'accepted', { result });
+    return markProposalDecided(userId, proposal, 'accepted', { result, decidedBy });
   }
 
-  async function rejectProposal(userId, id, { reason = '' } = {}) {
+  async function rejectProposal(userId, id, { reason = '', decidedBy = 'user' } = {}) {
     const proposal = await getProposal(userId, id);
     if (!proposal) return { missing: true };
     const allowed = canAcceptProposal(proposal, now());
     if (!allowed.ok) throw conflict(allowed.reason, { status: proposal.status });
-    return markProposalDecided(userId, proposal, 'rejected', { reason });
+    return markProposalDecided(userId, proposal, 'rejected', { reason, decidedBy });
   }
 
   /* ------------------------------------------------------------------ 迁移 */

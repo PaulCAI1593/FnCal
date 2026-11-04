@@ -93,6 +93,8 @@ export const zhCN = {
   // 0.2.4 ⑮：账号菜单「立即同步」。
   'menu.sync': '立即同步',
   'menu.syncing': '同步中…',
+  // 0.4.14（M22 §1，用户 2026-11-04）：头像菜单「检查更新」，位置在「立即同步」之后。
+  'menu.checkUpdate': '检查更新',
   // 0.3.8（v1.1 安全界面接线，M12 §1.2）：头像菜单的两枚安全入口。
   'menu.mySecurity': '我的安全',
   'menu.securitySettings': '安全设置',
@@ -579,9 +581,11 @@ export const zhCN = {
 
   /* ---- 账号与设置（0.1.2） ---- */
   'toolbar.settings': '设置',
-  // 0.3.7（用户 m00779 / 规范 M11 §6）：有未过期待审批 AI 提案时，齿轮的
-  // aria-label 与 title 换成这句；红点本身只有点、不显示数字。
-  'toolbar.settingsWithPending': '设置（{n} 条 AI 提案待审批）',
+  // 0.4.8（用户 2026-11-04 / 规范 M18 §1、§6）：AI 提案队列入口 = 顶栏铃铛。
+  // 两档 aria-label/title：空态「AI 提案」；有待审批时带条数。红点已删，
+  // 所以不再有 toolbar.settingsWithPending。
+  'toolbar.proposals': 'AI 提案',
+  'toolbar.proposalsWithPending': 'AI 提案（{n} 条待审批）',
   'account.title': '账号与设置',
   'account.section.account': '账号',
   'account.username': '用户名',
@@ -631,7 +635,6 @@ export const zhCN = {
   'settings.tab.ai': 'AI',
   // 0.3.7（用户 m00779 / 规范 M11 §6）：AI 页签红点的可访问名。页签可见文字
   // 恒为「AI」；n=0 时移除 aria-label，回落成文本名。
-  'settings.tab.aiWithPending': 'AI（{n} 条待审批）',
   'settings.tab.shortcuts': '快捷键',
   // ---- 0.3.0（P4）：设置 → 「AI」页签（文案与键名照 design/M8-AI接入设置页-规范.md §7）----
   'settings.ai.title': 'AI 接入',
@@ -689,11 +692,17 @@ export const zhCN = {
   'settings.ai.perm.hidden': '不可见',
   'settings.ai.perm.read': '只读',
   'settings.ai.perm.write': '读写',
-  'settings.ai.editor.writeMode': '写入模式',
+  // 0.4.13（M21 §2 第 2 版）：凭据编辑器「操作方式」两组对称模式——文案用用户原话，
+  // 「新建、修改」对应 writeMode（字段沿用不改名），「删除」对应 deleteMode（按凭据存）。
+  'settings.ai.operation': '操作方式',
+  'settings.ai.writeMode.group': '新建、修改',
   'settings.ai.writeMode.proposal': '提案',
-  'settings.ai.writeMode.direct': '直接写入',
-  'settings.ai.writeMode.hint': '删除操作无论哪档都以提案形式确认',
-  'settings.ai.writeMode.directWarn': '直接写入将立即生效',
+  'settings.ai.writeMode.direct': '直接通过',
+  'settings.ai.writeMode.hintProposal': '提案模式下，AI 的写入先生成提案，批准后才生效。',
+  'settings.ai.writeMode.directWarn': '直接通过会立即写入日历，无需批准。',
+  'settings.ai.writeMode.confirmTitle': '改用直接通过',
+  'settings.ai.writeMode.confirmText': '打开后，使用该凭据的 AI 助手新建或修改日程时将立即写入日历，无需你确认。',
+  'settings.ai.writeMode.confirmLabel': '改用直接通过',
   'settings.ai.editor.timeWindow': '时间窗',
   'settings.ai.editor.pastDays': '过去天数',
   'settings.ai.editor.futureDays': '未来天数',
@@ -721,6 +730,11 @@ export const zhCN = {
   'settings.ai.proposals': '提案队列',
   'settings.ai.proposals.pending': '待确认 {n} 条',
   'settings.ai.proposals.empty': '没有待确认的提案',
+  // 0.4.15（M23 §7.1）：面板滚动区首行的删除方式提示（任一启用凭据为回收站才显示）。
+  'settings.ai.proposals.modeHintTrash': '当前删除方式：回收站。AI 删除直接进入回收站，{n} 天内可恢复。',
+  'settings.ai.proposals.modeHintMixed': '部分凭据的删除方式为回收站：AI 删除直接进入回收站，{n} 天内可恢复。',
+  // 0.4.9（用户 2026-11-04）：设置页的提案队列整块（含指向说明）已删，
+  // `settings.ai.proposals.moved` 键随之下线；入口只有顶栏铃铛。
   'settings.ai.proposal.create': '新建',
   'settings.ai.proposal.update': '修改',
   'settings.ai.proposal.delete': '删除',
@@ -728,7 +742,13 @@ export const zhCN = {
   'settings.ai.proposal.after': '后',
   'settings.ai.proposal.none': '（无）',
   'settings.ai.proposal.from': '来自 {label}',
-  'settings.ai.proposal.deleteWill': '（将删除）',
+  // 0.4.15（M23 §5.2）：删除卡行④固定影响文案；保留期用 {n}，与全局 trashRetentionDays 联动。
+  'settings.ai.proposal.deleteImpact': '将删除这一条日程',
+  'settings.ai.proposal.deleteImpactTrash': '将删除这一条日程，{n} 天内可在最近删除里恢复',
+  'settings.ai.proposal.keep': '保留',
+  'settings.ai.proposal.deleteConfirmTitle': '删除日程',
+  'settings.ai.proposal.deleteConfirmText': '将删除「{title}」，此操作不可撤销。',
+  'settings.ai.proposal.deleteConfirmTextTrash': '将删除「{title}」，删除后进入回收站，{n} 天内可恢复。',
   'settings.ai.proposal.expiresIn': '剩余 {h} 小时',
   'settings.ai.proposal.accept': '接受',
   'settings.ai.proposal.reject': '拒绝',
@@ -737,8 +757,78 @@ export const zhCN = {
   'settings.ai.proposal.conflict': '目标事件已被其他修改覆盖',
   'settings.ai.proposal.refreshRetry': '刷新重试',
   'settings.ai.proposal.expired': '已过期',
+  'settings.ai.proposal.allDay': '全天',
+  // 0.4.12 批量操作（规范 M20 §7/§8）：按钮、确认框、执行中、结果汇总、失败码中文。
+  'settings.ai.proposal.approveAll': '全部批准',
+  'settings.ai.proposal.rejectAll': '全部拒绝',
+  'settings.ai.batch.approveTitle': '全部批准提案',
+  'settings.ai.batch.approveText': '将把 {n} 条提案应用到日历，应用后可再逐条查看结果。',
+  'settings.ai.batch.rejectTitle': '全部拒绝提案',
+  'settings.ai.batch.rejectText': '将拒绝 {n} 条提案，被拒绝的提议不会应用到日历。',
+  'settings.ai.batch.approveDeleteHint': '其中 {d} 条为删除日程，批准后会被永久删除，无法恢复。',
+  'settings.ai.batch.busy': '处理中…',
+  'settings.ai.batch.approved': '已批准 {n} 条',
+  'settings.ai.batch.rejected': '已拒绝 {n} 条',
+  'settings.ai.batch.summary': '{done}，{n} 条失败（{reasons}）',
+  'settings.ai.batch.reasonCount': '{n} 条{reason}',
+  'settings.ai.batch.failed.expired': '已过期',
+  'settings.ai.batch.failed.conflict': '内容已变化，需重新发起',
+  'settings.ai.batch.failed.calendarMissing': '目标日历已删除',
+  'settings.ai.batch.failed.other': '处理失败',
+  // 0.4.14（M4 §2、M21 第 3 版）：删除组按凭据、回收站子块移入编辑器、代办批准文案与最近删除。
+  'settings.ai.deleteMode.group': '删除',
+  'settings.ai.deleteMode.proposal': '提案',
+  'settings.ai.deleteMode.trash': '回收站',
+  'settings.ai.deleteMode.hintProposal': '提案模式下，AI 提删除只生成提案，批准后才会真删除，不进回收站。',
+  'settings.ai.deleteMode.trashWarn': '回收站模式下，AI 提删除立即生效，日程进入回收站，可在保留期内恢复（默认 7 天）。',
+  'settings.ai.deleteMode.proposalHint': '已进入回收站的日程仍可在保留期内恢复。',
+  'settings.ai.deleteMode.disabled': 'AI 接入关闭时此设置不起作用。',
+  'settings.ai.deleteMode.readonly': '该凭据没有写入权限，两组设置都不生效。',
+  'settings.ai.deleteMode.confirmTitle': '改用回收站',
+  'settings.ai.deleteMode.confirmText': '打开后，使用该凭据的 AI 助手可以不经你确认直接删除日程。删除的日程进入回收站，可在保留期内恢复（默认 7 天）。',
+  'settings.ai.deleteMode.confirmLabel': '改用回收站',
+  'settings.ai.trash.globalHint': '回收站设置是全局的，所有凭据共用。',
+  'settings.ai.trash.retention': '自动清理',
+  'settings.ai.trash.retentionOption': '{n} 天',
+  'settings.ai.trash.count': '已存 {n} 条',
+  'settings.ai.trash.empty': '暂无条目',
+  'settings.ai.trash.clear': '清空回收站',
+  'settings.ai.trash.clearTitle': '清空回收站',
+  'settings.ai.trash.clearText': '将永久删除 {n} 条已删日程，无法恢复。',
+  'settings.ai.trash.clearConfirm': '清空',
+  'settings.ai.trash.toastCleared': '回收站已清空',
+  'settings.ai.trash.toastRetention': '保留期已改为 {n} 天',
+  'settings.ai.trash.retentionPruned': '已按新保留期清理过期条目',
+  'settings.ai.trash.loadFailed': '回收站读取失败',
+  'settings.ai.trash.recentTitle': '最近删除',
+  // 0.4.16（M4 §1 S1）：按钮文案按用户口径「恢复」改「还原」，键名不动；同组动作词统一。
+  'settings.ai.trash.restore': '还原',
+  'settings.ai.trash.restoring': '还原中…',
+  'settings.ai.trash.fold': '收起',
+  'settings.ai.trash.unfold': '展开',
+  'settings.ai.trash.remainingDays': '还可恢复 {n} 天',
+  'settings.ai.trash.expiresToday': '今天到期',
+  'settings.ai.trash.restored': '日程已还原到「{calendar}」',
+  'settings.ai.trash.conflict': '同名日程已存在，无法还原',
+  'settings.ai.trash.expired': '该条目已超过保留期',
+  'settings.ai.trash.failed': '处理失败，请稍后重试',
+  'settings.ai.trash.restoreAria': '还原「{title}」',
+  // 0.4.15（M23 §3、§4）：回收站记录卡徽标动作词与「删除于」时间标签。
+  'settings.ai.trash.badgeDone': '已删除',
+  'settings.ai.trash.deletedAt': '删除于 {at}',
+  'settings.ai.agentApproval.label': '允许代办批准',
+  'settings.ai.agentApproval.hint': '打开后，AI 助手会在对话里列出提案内容问你批准还是拒绝；你同意后才执行。',
+  'settings.ai.agentApproval.confirmTitle': '允许 AI 助手代你批准',
+  'settings.ai.agentApproval.confirmText': '打开后，使用该凭据的 AI 助手会先在对话里列出提案摘要并发起确认，只有你明确同意后，它才会批准或拒绝。它不会自行批准，也不会批量静默执行。',
+  'settings.ai.agentApproval.confirmLabel': '允许',
+  'settings.ai.badge.agentApproval': '对话内代办',
+  'settings.ai.badge.agentApprovalTitle': '对话内代办：AI 助手会在对话里问你，你同意后才执行提案',
+  'settings.ai.badge.directDelete': '可直删',
+  'settings.ai.badge.directDeleteTitle': '可直删：AI 提删除会立即生效，可在回收站恢复',
   'settings.ai.toast.accepted': '提案已接受',
   'settings.ai.toast.rejected': '提案已拒绝',
+  // 0.4.15（M23 §6）：「保留」= 直接拒绝，但提示词用用户视角的「已保留」。
+  'settings.ai.toast.kept': '已保留「{title}」',
   'settings.weekStart': '每周开始日',
   'settings.weekStart.sun': '周日',
   'settings.weekStart.mon': '周一',
@@ -790,6 +880,9 @@ export const zhCN = {
   'settings.copyFailed': '复制失败，请手动选择地址复制。',
   'settings.saved': '已保存',
   'settings.saveFailed': '保存失败。请稍后重试。',
+  /* 0.4.6：写完要回读——写入未抛错不等于已生效（真机 0.4.5 仍刷新回默认蓝）。 */
+  'settings.saveVerifyMismatch': '保存后回读到的主题色与本次设置不一致，可能没有真正保存。请重试。',
+  'settings.saveVerifyUnreadable': '保存后无法回读设置，不能确认已生效。请检查网络后重试。',
   'settings.footer.security': '公网访问请配置 HTTPS 反向代理，否则密码与事件为明文。',
   /* 0.2.9（发布阻断）：CalDAV 同步自检状态（设置 → CalDAV 账户页常驻一行）。 */
   'settings.reconcile.checking': 'CalDAV 同步自检：正在检查…',
@@ -1178,6 +1271,26 @@ export const zhCN = {
   'settings.admin.users': '账号管理',
   'settings.admin.security': '安全设置',
   'settings.mySecurity': '我的安全（两步验证 / 专用密码）',
+
+  // 0.4.14（规范 M22 第 2 版 §5，用户 2026-11-04）：检查更新弹窗。
+  // 弹窗内五行的全部文案（标题 / 当前版本 / 状态 / 更新源 / 操作 / 旁注）。
+  'update.title': '更新',
+  'update.current': '当前版本',
+  'update.latest': '最新版本',
+  'update.checking': '检查中…',
+  'update.upToDate': '已是最新版本',
+  'update.available': '发现新版本 {version}',
+  'update.failed': '无法连接到更新服务，请检查网络后重试',
+  'update.rateLimited': '请求过于频繁，请稍后再试',
+  'update.source.label': '更新源',
+  'update.source.mirror': '国内加速（推荐）',
+  'update.source.github': 'GitHub 直连',
+  'update.recheck': '重新检查',
+  'update.open': '打开下载页',
+  'update.via.mirror': '国内加速',
+  'update.via.github': 'GitHub 直连',
+  'update.hint.proxy': '国内加速由第三方代理提供，可能随时失效，失败会自动回退到 GitHub 直连。',
+  'update.hint.sha': '安装前请核对 SHA-256。',
 };
 
 export default zhCN;

@@ -233,11 +233,15 @@ try {
   same('未知 AI 路径 404 同字节', missingCred.text, missingRoute.text);
 
   /* ------------------------------------------------------------ ⑤ 提案 */
+  // 0.4.12：保留期修剪按真实时钟计时，硬编码的 10 月日期会被当成「过期超过 7 天」清掉，
+  // 受理就变成 404 而不是 409。改成相对当前时间，保持「刚过期、仍在保留期内」的语义。
+  const staleExpiresAt = new Date(Date.now() - 60 * 60 * 1000);
+  const staleCreatedAt = new Date(staleExpiresAt.getTime() - 2 * 60 * 60 * 1000);
   writeProposalsFile(admin.body.uid, [
     {
       id: 'p-expired', ownerId: admin.body.uid, credentialId: null, action: 'create', calendarId: 'default',
       uid: 'api-exp', before: null, after: { ics: icsOf('api-exp', '过期') }, note: '',
-      createdAt: '2026-10-01T00:00:00.000Z', expiresAt: '2026-10-02T00:00:00.000Z', status: 'pending',
+      createdAt: staleCreatedAt.toISOString(), expiresAt: staleExpiresAt.toISOString(), status: 'pending',
     },
     {
       id: 'p-create', ownerId: admin.body.uid, credentialId: null, action: 'create', calendarId: 'default',

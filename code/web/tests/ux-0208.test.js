@@ -523,7 +523,7 @@ describe('0.2.8 ②⑦⑧ app 级行为', () => {
     // 0.2.9（用户 8）：日历表格里的原生复选框在 .settings-modal 作用域内（accent-color 规则覆盖）。
     expect(document.querySelectorAll(".settings-modal input[type='checkbox']").length).toBeGreaterThan(0);
   });
-it('0.3.10 管理员菜单：账号管理 / 安全设置 / 立即同步 / 登出（无独立「我的安全」）', () => {
+it('0.4.14 管理员菜单：账号管理 / 安全设置 / 立即同步 / 检查更新 / 登出（无独立「我的安全」）', () => {
     openApp();
     document.querySelector('.avatar').click();
     const labels = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
@@ -532,18 +532,20 @@ it('0.3.10 管理员菜单：账号管理 / 安全设置 / 立即同步 / 登出
     expect(labels.some((l) => l.includes('我的账号'))).toBe(false);
     expect(labels.some((l) => l.includes('立即同步'))).toBe(true);
     expect(labels.some((l) => l.includes('账号安全'))).toBe(false);
-    // 0.3.10（M13 §1.1，取代 M12 §1.1）：管理员 4 项，自己的安全并入「安全设置」① 页。
-    expect(labels).toEqual(['账号管理', '安全设置', '立即同步', '登出']);
+    // 0.4.14（M22 §1）：管理员 5 项（新增「检查更新」），自己的安全并入「安全设置」① 页。
+    // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
+    expect(labels).toEqual(['账号管理', '安全设置', '立即同步', '检查更新', '登出']);
     expect(labels.some((l) => l.includes('我的安全'))).toBe(false);
   });
 
-  it('0.3.8 普通用户菜单：我的账号 / 我的安全 / 立即同步 / 登出（无「安全设置」、不留空位）', () => {
+  it('0.4.14 普通用户菜单：我的账号 / 我的安全 / 立即同步 / 检查更新 / 登出（无「安全设置」、不留空位）', () => {
     openApp({ username: 'dave', role: 'user', displayName: 'Dave' });
     document.querySelector('.avatar').click();
     const labels = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
     expect(labels.some((l) => l.includes('账号管理'))).toBe(false);
     expect(labels.some((l) => l.includes('安全设置'))).toBe(false);
-    expect(labels).toEqual(['我的账号', '我的安全', '立即同步', '登出']);
+    // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
+    expect(labels).toEqual(['我的账号', '我的安全', '立即同步', '检查更新', '登出']);
     const mine = [...document.querySelectorAll('.popover .menu-item')].find((b) => b.textContent.includes('我的账号'));
     mine.click();
     // 复用「账号安全」对话框：标题 + 改显示名 + 改密码区

@@ -5,7 +5,7 @@
  * 背景：用户开启「通过反向代理提供 HTTPS」但 NAS 没配好反代，全部浏览器请求被
  * 301 到 https://主机（无端口，即 443），只能 SSH 改 security.json 才能恢复。
  *
- * 规则（v1.1.0 发布范围）：
+ * 规则（0.4.0 派单）：
  *   - 仅在本次 PATCH 把 https.behindProxy 由「当前为假」改成 true 时校验；
  *   - 要求当前请求 proxy.resolve(req).proto === 'https'，否则 400
  *     code=behind_proxy_unverified，且设置不得生效；

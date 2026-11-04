@@ -553,13 +553,22 @@ describe('0.2.20 E8：日期弹层单例与 toggle', () => {
   it('openDatePopover 有单例守卫，连续两次同锚点不会留下两个节点', () => {
     const anchor = document.createElement('button');
     document.body.append(anchor);
-    const first = openDatePopover({ anchor, value: '2026-08-19', weekStartsOn: 1 });
-    expect(document.querySelectorAll('.date-pop')).toHaveLength(1);
-    // 80ms 内的同一锚点重复打开被去重（防双触发）
-    const second = openDatePopover({ anchor, value: '2026-08-19', weekStartsOn: 1 });
-    expect(second).toBe(first);
-    expect(document.querySelectorAll('.date-pop')).toHaveLength(1);
-    closeDatePopover();
+    // 2026-11-03：去重窗口按 Date.now() 计算，并发构建负载下两次调用可能跨过 80ms
+    // 而落到「同锚点 toggle」分支返回 null（本用例曾因此偶发变红，见 ui-0220 的 P3-4）。
+    // 这里固定时钟，测的是「同一时刻的双触发被吃掉」，不测调度快慢。
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      const first = openDatePopover({ anchor, value: '2026-08-19', weekStartsOn: 1 });
+      expect(document.querySelectorAll('.date-pop')).toHaveLength(1);
+      // 同一毫秒内的同一锚点重复打开被去重（防 pointerdown + click 双触发）
+      const second = openDatePopover({ anchor, value: '2026-08-19', weekStartsOn: 1 });
+      expect(second).toBe(first);
+      expect(document.querySelectorAll('.date-pop')).toHaveLength(1);
+    } finally {
+      closeDatePopover();
+      nowSpy.mockRestore();
+      anchor.remove();
+    }
   });
 });
 

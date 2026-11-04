@@ -207,13 +207,20 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     expect(dialog.querySelector('.ai-page__title').textContent.trim()).toBe('AI 接入');
   });
 
-  it('AI 页三块齐全：服务 / 凭据 / 提案队列', async () => {
+  it('AI 页只有两块：服务 / 凭据（提案队列与回收站小节都不在页里）', async () => {
     const dialog = open();
     await openAiTab(dialog);
     const page = dialog.querySelector('#settings-page-ai');
     expect(page.querySelector('.ai-section--service')).not.toBe(null);
     expect(page.querySelector('.ai-section--creds')).not.toBe(null);
-    expect(page.querySelector('.ai-section--proposals')).not.toBe(null);
+    // 0.4.9（用户）：「设置里这行字不要」——第三块整块删除，不留空壳。
+    expect(page.querySelector('.ai-section--proposals')).toBe(null);
+    expect(page.textContent).not.toContain('提案队列');
+    // 0.4.14（M4 §2 硬规则 4、M21 第 3 版 §2.4）：回收站移入凭据编辑器，AI 页底部不再有独立小节、
+    // 也不留空容器，故结构固定为 2 块。
+    expect(page.querySelectorAll('.ai-section')).toHaveLength(2);
+    expect(page.querySelector('.ai-section--trash')).toBe(null);
+    expect(page.querySelector('.ai-block--trash')).toBe(null);
     // 服务块：开关 + 只读 MCP 地址 + 复制
     const address = page.querySelector('input.ai-mcp-address');
     expect(address.readOnly).toBe(true);
@@ -272,10 +279,15 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
       expect(row.querySelector('.segmented button[data-value="read"]').getAttribute('aria-checked')).toBe('false');
       expect(row.querySelector('.segmented button[data-value="write"]').getAttribute('aria-checked')).toBe('false');
     }
-    // 写入模式默认 proposal（direct 不能是默认值）
-    const modeGroup = [...editor.querySelectorAll('.segmented.ai-seg')].pop();
+    // 写入模式默认 proposal（direct 不能是默认值）；0.4.13 第 2 版起「操作方式」是两组，
+    // 不能再用 `.pop()` 取最后一段——按 data-mode 精确定位到「新建、修改」组。
+    const modeGroup = editor.querySelector('.ai-mode-row[data-mode="writeMode"] .segmented.ai-seg');
     expect(modeGroup.querySelector('button[data-value="proposal"]').getAttribute('aria-checked')).toBe('true');
     expect(modeGroup.querySelector('button[data-value="direct"]').getAttribute('aria-checked')).toBe('false');
+    // 删除组默认同样是「提案」（回收站不能是默认值）。
+    const deleteGroup = editor.querySelector('.ai-mode-row[data-mode="deleteMode"] .segmented.ai-seg');
+    expect(deleteGroup.querySelector('button[data-value="proposal"]').getAttribute('aria-checked')).toBe('true');
+    expect(deleteGroup.querySelector('button[data-value="trash"]').getAttribute('aria-checked')).toBe('false');
     // 时间窗默认值 = 7 / 90
     const [past, future] = editor.querySelectorAll('.ai-window__input');
     expect(past.value).toBe('7');
@@ -290,7 +302,12 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     await openAiTab(dialog);
     dialog.querySelector('#settings-page-ai .ai-new-cred').click();
     await tick();
-    const modeGroup = () => [...dialog.querySelectorAll('.ai-editor .segmented.ai-seg')].pop();
+    // 0.4.13 第 2 版：编辑器有「新建、修改」与「删除」两组，按 data-mode 定位；
+    // 确认按钮文案也改成 M21 §2.2 的「改用直接通过」。
+    // 0.4.13 第 2 版：没有任何 write 档时两组会被禁用（M21 §2.4），先给第一个日历开写档。
+    dialog.querySelector('.ai-editor .ai-matrix__row .segmented button[data-value="write"]').click();
+    await tick();
+    const modeGroup = () => dialog.querySelector('.ai-editor .ai-mode-row[data-mode="writeMode"] .segmented.ai-seg');
     modeGroup().querySelector('button[data-value="direct"]').click();
     await tick();
     const confirm = document.querySelector('.settings-confirm');
@@ -306,11 +323,11 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     // 再来一次并确认 → direct 生效，并出现「立即生效」警示
     modeGroup().querySelector('button[data-value="direct"]').click();
     await tick();
-    const ok = [...document.querySelectorAll('.settings-confirm .btn')].find((b) => b.textContent.trim() === '直接写入');
+    const ok = [...document.querySelectorAll('.settings-confirm .btn')].find((b) => b.textContent.trim() === '改用直接通过');
     ok.click();
     await tick();
     expect(modeGroup().querySelector('button[data-value="direct"]').getAttribute('aria-checked')).toBe('true');
-    expect(dialog.querySelector('.ai-editor .ai-danger-hint')).not.toBe(null);
+    expect(dialog.querySelector('.ai-editor .ai-mode-row[data-mode="writeMode"] .ai-danger-hint')).not.toBe(null);
   });
 
   it('新建成功后明文令牌只出现在一次性面板里，关闭后列表与编辑器都不回显', async () => {
@@ -372,8 +389,11 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     expect(row.querySelector('.ai-cred-delete')).not.toBe(null);
   });
 
-  it('提案队列：过期的不给接受按钮；冲突态给「刷新重试」', async () => {
-    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+  it('提案队列（0.4.8 起共享面板）：过期提案不再渲染；冲突态给「刷新重试」', async () => {
+    // 0.4.8（规范 M18 §3）：渲染从设置页抽到 proposals-panel.js，设置页第三块只剩
+    // 一句指向说明。这里直接构造共享面板验渲染语义，铃铛侧另见 ui-048。
+    // 0.4.12：过期提案在渲染前就被过滤（另有 ui-051 专项），所以这里只剩未过期那张。
+    const { createProposalsPanel } = await import('../src/js/proposals-panel.js');
     const expired = {
       id: 'p-old',
       credentialId: 'cred-1',
@@ -390,24 +410,25 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
       ok: true,
       proposals: [expired, { ...expired, id: 'p-new', uid: 'e-new', expiresAt: new Date(Date.now() + 3600e3).toISOString() }],
     });
-    const dialog = open();
-    await openAiTab(dialog);
-    const cards = [...dialog.querySelectorAll('.ai-proposal')];
-    expect(cards).toHaveLength(2);
-    const oldCard = cards.find((c) => c.textContent.includes('已过期'));
-    expect(oldCard).not.toBe(null);
-    expect(oldCard.querySelector('.ai-proposal__accept')).toBe(null);
+    const panel = createProposalsPanel({ store: makeStore() });
+    document.body.append(panel.node);
+    await panel.load();
+    const cards = [...panel.node.querySelectorAll('.ai-proposal')];
+    expect(cards).toHaveLength(1);
+    expect(cards[0].getAttribute('data-proposal-id')).toBe('p-new');
+    expect(panel.node.textContent.includes('已过期')).toBe(false);
     // 冲突态由 409 触发：接受后标冲突并提供刷新重试
     mocks.acceptAiProposal.mockRejectedValueOnce(Object.assign(new Error('conflict'), { status: 409, code: 'conflict' }));
-    cards.find((c) => c !== oldCard).querySelector('.ai-proposal__accept').click();
+    cards[0].querySelector('.ai-proposal__accept').click();
     await tick();
     // 409 后整列会重绘，重新按 data-proposal-id 取卡片（旧引用已脱离文档）
-    const conflictCard = dialog.querySelector('.ai-proposal[data-proposal-id="p-new"]');
+    const conflictCard = panel.node.querySelector('.ai-proposal[data-proposal-id="p-new"]');
     expect(conflictCard).not.toBe(null);
     expect(conflictCard.querySelector('.ai-proposal__state--conflict').textContent).toContain('已被其他修改覆盖');
     expect(conflictCard.querySelector('.ai-proposal__refresh')).not.toBe(null);
     // 冲突卡不允许再点接受（要点「刷新重试」重新取数据）
     expect(conflictCard.querySelector('.ai-proposal__accept')).toBe(null);
+    panel.destroy();
   });
 
   it('i18n：中文文案与键名照规范 §7，新增键一个不缺', () => {
@@ -416,7 +437,12 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     expect(DEFAULT_LOCALE_TEXT('settings.tab.account')).toBe('CalDAV');
     expect(DEFAULT_LOCALE_TEXT('settings.ai.title')).toBe('AI 接入');
     expect(DEFAULT_LOCALE_TEXT('settings.ai.token.title')).toBe('令牌只显示这一次');
-    expect(DEFAULT_LOCALE_TEXT('settings.ai.writeMode.hint')).toBe('删除操作无论哪档都以提案形式确认');
+    // 0.4.13 第 2 版：旧键 `settings.ai.writeMode.hint`（「删除操作无论哪档都以提案形式确认」）
+    // 已不成立，按 M21 §8 删掉；改成两组各自的中文说明与组名。
+    expect(hasKey('settings.ai.writeMode.hint')).toBe(false);
+    expect(DEFAULT_LOCALE_TEXT('settings.ai.operation')).toBe('操作方式');
+    expect(DEFAULT_LOCALE_TEXT('settings.ai.writeMode.group')).toBe('新建、修改');
+    expect(DEFAULT_LOCALE_TEXT('settings.ai.deleteMode.group')).toBe('删除');
     const keys = readSrc('../src/js/ai-settings.js').match(/t\('(settings\.ai\.[^']+)'/g) || [];
     const used = [...new Set(keys.map((m) => m.slice(3, -1)))];
     expect(used.length).toBeGreaterThan(50);
@@ -575,15 +601,21 @@ describe('0.3.0 P4 · AI 页纯函数口径', () => {
     expect(DEFAULT_FIELD_MASK).toEqual({ location: true, description: false, attendees: false });
   });
 
-  it('页面工厂可直接构造：三块与标题都在，refresh() 会重新拉接口', async () => {
+  it('页面工厂可直接构造：两块与标题都在，refresh() 只重拉服务与凭据', async () => {
     mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
     const built = createAiSettingsPage({ user: { role: 'admin' }, store: makeStore() });
     expect(built.page.querySelector('.ai-page__title').textContent.trim()).toBe('AI 接入');
-    expect(built.page.querySelectorAll('.ai-section')).toHaveLength(3);
+    expect(built.page.querySelectorAll('.ai-section')).toHaveLength(2);
+    expect(built.page.querySelector('.ai-section--trash')).toBe(null);
     await built.refresh();
     expect(mocks.getAiSettings).toHaveBeenCalled();
     expect(mocks.listAiCredentials).toHaveBeenCalled();
-    expect(mocks.listAiProposals).toHaveBeenCalled();
+    // 0.4.9（用户）：设置页不再有任何提案队列痕迹（0.4.8 的「指向说明」也已删）。
+    // 列表只由铃铛浮层按 pending 打开时拉取。
+    expect(mocks.listAiProposals).not.toHaveBeenCalled();
+    expect(built.page.querySelector('.ai-section--proposals')).toBe(null);
+    expect(built.page.textContent).not.toContain('提案队列');
+    expect(built.page.textContent).not.toContain('顶栏铃铛');
     document.body.replaceChildren();
   });
 });

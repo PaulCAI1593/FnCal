@@ -677,8 +677,13 @@ export function getAiSettings() {
   return apiRequest(`${AI_BASE}/settings`);
 }
 
-export function updateAiSettings(enabled) {
-  return apiRequest(`${AI_BASE}/settings`, { method: 'PUT', body: { enabled } });
+/**
+ * 0.4.13：设置改成**部分更新**——传对象就照对象里的字段改（`enabled` / `deleteMode` /
+ * `trashRetentionDays`），传布尔是旧调用方式（等价 `{ enabled }`），别在别处再拼请求体。
+ */
+export function updateAiSettings(patch) {
+  const body = typeof patch === 'boolean' ? { enabled: patch } : patch || {};
+  return apiRequest(`${AI_BASE}/settings`, { method: 'PUT', body });
 }
 
 export function listAiCredentials() {
@@ -722,4 +727,41 @@ export function acceptAiProposal(id) {
 
 export function rejectAiProposal(id, reason = '') {
   return apiRequest(`${AI_BASE}/proposals/${encodeURIComponent(id)}/reject`, { method: 'POST', body: { reason } });
+}
+
+/**
+ * 0.4.12（规范 M20 §7）：一次批量批准/拒绝，成功后返回
+ * `{ action, total, ok, failed, results: [{ id, ok, code?, message? }] }`。
+ * 失败码由调用方（提案面板）翻成中文，别在别处再映射一遍。
+ */
+export function batchAiProposals(action, ids, reason = '') {
+  return apiRequest(`${AI_BASE}/proposals/batch`, { method: 'POST', body: { action, ids, reason } });
+}
+/* ---- 0.4.13 回收站（M4 §3 / M21 §3、§5）：只在日历界面用，MCP 不暴露 ---- */
+
+/** 回收站列表：{ ok, items: [...], count, retentionDays }；条目不含 ics。 */
+export function listAiTrash() {
+  return apiRequest(`${AI_BASE}/trash`);
+}
+
+/** 恢复一条；409 同名日程已存在、410 已过保留期、404 不存在。 */
+export function restoreAiTrash(id) {
+  return apiRequest(`${AI_BASE}/trash/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+}
+
+/** 清空回收站（不可恢复）；返回被清掉的条数。 */
+export function clearAiTrash() {
+  return apiRequest(`${AI_BASE}/trash`, { method: 'DELETE' });
+}
+
+/* ---- 0.4.14（M22 §4）：检查更新。走服务端，前端 CSP 只允许同源 ---- */
+
+/**
+ * 检查更新：`source` = `mirror` | `github`（缺省 mirror）。
+ * 回 `{ ok, current, latest, updateAvailable, url, publishedAt, checkedAt, via }`；
+ * 失败也是 200 + `ok:false` + `code`（network / timeout / rate_limited / bad_response），
+ * 原始响应体不透传；失败码由弹窗翻成中文，别在别处再映射一遍。
+ */
+export function checkForUpdate(source = 'mirror') {
+  return apiRequest(`${BASE}/update/check?source=` + encodeURIComponent(source));
 }

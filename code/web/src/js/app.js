@@ -23,11 +23,18 @@ import { openAdminUsersDialog } from './admin-users.js';
 import { openAccountDialog, openAccountSecurityDialog } from './account-dialog.js';
 import { bindCalendarFileDrop } from './file-drop.js';
 // 0.3.7（用户 m00779）：AI 待审批提案红点——顶栏齿轮与设置「AI」页签同源。
-import { startAiBadge, stopAiBadge, onAiBadgeChange, getAiBadgeState, paintAiBadge } from './ai-badge.js';
+// 0.4.8（用户 2026-11-04 / 规范 M18 §1–§3）：唯一入口改为顶栏铃铛；红点与
+// `paintAiBadge()` 已删，铃铛只订阅状态源改类名与 aria-label。
+import { startAiBadge, stopAiBadge, onAiBadgeChange, getAiBadgeState } from './ai-badge.js';
+// 0.4.8（规范 M18 §3）：提案浮层与设置页共用同一份渲染（proposals-panel.js），
+// 免得两处各写一遍再漂移。
+import { createProposalsPanel } from './proposals-panel.js';
 import { openScopeDialog } from './recurrence-dialog.js';
 // 0.3.8（v1.1 安全界面接线，M12 §5）：安全模块的懒加载壳（骨架 + 失败重试）。
 import { openSecurityDialogWithLoader } from './security-lazy.js';
 import { openCategoryRename } from './category-dialog.js';
+// 0.4.14（规范 M22 第 2 版）：头像菜单「检查更新」打开的弹窗。
+import { openUpdateDialog } from './update-dialog.js';
 import {
   openCalendarName,
   openCalendarSettings,
@@ -763,18 +770,62 @@ export function createApp(root, { store, user }) {
     },
   });
 
-  // 0.3.7（用户 m00779 / 规范 design/M11-设置红点-规范.md §6）：齿轮是纯图标按钮，
-  // 红点用 `has-badge` 类 + `::after` 伪元素画（不进无障碍树、不占布局、不吃点击）。
-  // 条数只体现在 aria-label 与 title 里：视觉上只有点，读屏能听到「几条」。
-  // 贴法本身在 ai-badge.js 的 paintAiBadge() 里，与设置「AI」页签共用同一份，免得
-  // 一处改了另一处忘；这里只决定「用哪两个文案键」。
-  function paintSettingsBadge(current = getAiBadgeState()) {
-    paintAiBadge(settingsBtn, {
-      state: current,
-      labelKey: 'toolbar.settingsWithPending',
-      idleLabel: 'toolbar.settings',
+  // 0.3.7（用户 m00779 / 规范 design/M11-设置红点-规范.md §6）：齿轮红点已于 0.4.8
+  // 整体删除（规范 M18 §5）——齿轮回到纯图标按钮，不再有红点类名/伪元素。
+
+  // 0.4.9（用户 2026-11-04）：铃铛按两档摆放，共用同一状态与同一浮层——
+  // >720 顶栏品牌区绝对定位（右边缘贴左边栏边界线，见 `styles/layout.css`）；
+  // ≤720 底部工具栏首位。两处按钮共用 paintBell() 的类名/文案，订阅同一条
+  // onAiBadgeChange；只有一档可见（规则在 `styles/layout.css` / `views.css`）。
+  const bells = [];
+  const makeBell = (className) => {
+    const btn = el('button', {
+      class: `icon-btn header__bell${className ? ` ${className}` : ''}`,
+      type: 'button',
+      'aria-label': t('toolbar.proposals'),
+      title: t('toolbar.proposals'),
+      'aria-haspopup': 'dialog',
+      'aria-expanded': 'false',
+      html: icon('bell'),
+      on: { click: (e) => toggleProposalsPanel(e) },
     });
-  }
+    bells.push(btn);
+    return btn;
+  };
+  const bellBtn = makeBell(''); // 顶栏（>720）
+
+  // ≤720：底部工具栏首位。样式走 `.tabbar__btn`，两态色在 `views.css` 的 720 段。
+  const tabBellBtn = el('button', {
+    class: 'tabbar__btn tabbar__bell',
+    type: 'button',
+    'aria-label': t('toolbar.proposals'),
+    title: t('toolbar.proposals'),
+    'aria-haspopup': 'dialog',
+    'aria-expanded': 'false',
+    html: icon('bell', { size: 'sm' }),
+    on: { click: (e) => toggleProposalsPanel(e) },
+  });
+  bells.push(tabBellBtn);
+  tabbar.prepend(tabBellBtn);
+
+  // 0.4.10（用户）：AI 关闭时两个铃铛都不显示。浮层状态必须在这里先声明：
+  // 挂载时的首次 onAiBadgeChange 回调可能立刻执行「关闭 → 收起浮层」，
+  // 若声明留在函数后半段，回调会撞上 let 的 TDZ。
+  let proposalsPopover = null;
+  let proposalsAnchor = bellBtn;
+
+  // ≤720 用户口径：底部工具栏末位补「任务」（顶栏那份在这一档 CSS 隐藏，
+  // 不删 DOM——桌面仍用顶栏按钮）。
+  const tabTaskBtn = el('button', {
+    class: 'tabbar__btn tabbar__task',
+    type: 'button',
+    'aria-label': t('taskbar.title'),
+    'aria-pressed': 'false',
+    'aria-controls': 'taskbar',
+    html: icon('check', { size: 'sm' }) + `<span class="tabbar__label">${t('taskbar.title')}</span>`,
+    on: { click: () => toggleTaskbar() },
+  });
+  tabbar.append(tabTaskBtn);
 
   const avatarBtn = el('button', {
     class: 'avatar',
@@ -959,6 +1010,10 @@ export function createApp(root, { store, user }) {
   const header = el('header', { class: 'header' }, [
     menuBtn,
     el('div', { class: 'header__brand' }, [
+      // 0.4.9（用户 2026-11-04）：铃铛挂在品牌区里做绝对定位——这样它不占
+      // `.header__nav` 的流内位置，「今天」回到 0.4.7 的 x；≤1200 的 nav 有
+      // `overflow: hidden`，挂 nav 上会被裁掉（详见 `styles/layout.css`）。
+      bellBtn,
       el('span', { class: 'brand-mark' }, [
         el('img', { src: './icon-192.png', alt: '', width: '30', height: '30' }),
       ]),
@@ -1014,11 +1069,16 @@ export function createApp(root, { store, user }) {
   root.removeAttribute('aria-busy');
   root.append(shell);
 
-  // 0.3.7（用户 m00779）：header 拼好之后再启动红点轮询（首次立刻拉一次，不等 60 秒）。
-  // 齿轮节点只在挂载时建一次——分钟 tick 的 render() 换的是侧栏与视图，不重建 header，
-  // 所以这里不需要每次 render 重贴；订阅仍然要留，状态一变就得同步类名与 aria-label。
-  paintSettingsBadge();
-  const unsubscribeAiBadge = onAiBadgeChange((next) => paintSettingsBadge(next));
+  // 0.4.8（用户 2026-11-04 / 规范 M18 §2）：header 拼好之后再启动状态轮询（首次立刻
+  // 拉一次，不等 60 秒）。铃铛节点只在挂载时建一次——分钟 tick 的 render() 换的是
+  // 侧栏与视图，不重建 header，所以这里不需要每次 render 重贴；订阅要留，状态一变
+  // 就得同步类名、aria-label 与 title。
+  paintBell();
+  const unsubscribeAiBadge = onAiBadgeChange((next) => {
+    paintBell(next);
+    // 0.4.10（用户）：AI 被关闭时不能留一个空面板在屏幕上——连焦点一起收回。
+    if (!next || next.enabled !== true) closeProposalsPanel();
+  });
   startAiBadge();
 
   // 0.2.1（#15）/ 0.2.2（⑧）：侧栏滚动条隐藏 + 底部渐变遮罩（仅还有内容可滚时显示）。
@@ -1138,6 +1198,8 @@ export function createApp(root, { store, user }) {
     taskbarScrim.hidden = !open;
     taskBtn.classList.toggle('is-active', open);
     taskBtn.setAttribute('aria-pressed', String(open));
+    // 0.4.9：底部工具栏的「任务」是同一个动作的第二个入口，按下态同步。
+    tabTaskBtn.setAttribute('aria-pressed', String(open));
     taskbarEl.setAttribute('aria-expanded', String(open));
     if (!open) {
       clear(taskbarEl);
@@ -1485,6 +1547,19 @@ export function createApp(root, { store, user }) {
           },
         },
       }),
+      // 0.4.14（M22 §1，用户 2026-11-04）：「立即同步」之后、「登出」之前。
+      // 点开只打开弹窗（弹窗内自己检查），这里不改菜单其他项。
+      el('button', {
+        class: 'menu-item popover__update',
+        type: 'button',
+        html: icon('download', { size: 'sm' }) + `<span>${t('menu.checkUpdate')}</span>`,
+        on: {
+          click: () => {
+            closeUserMenu();
+            openUpdateDialog();
+          },
+        },
+      }),
       el('button', {
         class: 'menu-item',
         type: 'button',
@@ -1516,6 +1591,110 @@ export function createApp(root, { store, user }) {
         box.remove();
       },
     };
+  }
+
+  // ---- Proposals bell（0.4.8 / 规范 M18 §1–§3；0.4.9 三档位置） ----
+  /**
+   * 铃铛三态（0.4.10 用户口径）：
+   *   - AI 关闭（`enabled !== true`）→ 整个按钮不显示（`hidden`，不是变灰）；
+   *   - AI 开启且无待确认 → 可见、描边（`--text-2`）；
+   *   - AI 开启且有 pending → 可见、填色（`--accent`）＋带条数文案。
+   * 总开关来自 `GET /api/v1/ai/proposals/count` 的 `enabled`，fail-closed：
+   * 请求失败按关闭处理（`ai-badge.js` 的 EMPTY_STATE），铃铛因此隐藏。
+   */
+  function paintBell(current = getAiBadgeState()) {
+    const enabled = Boolean(current && current.enabled === true);
+    const filled = enabled && current.pending > 0;
+    const label = filled
+      ? t('toolbar.proposalsWithPending', { n: current.pending })
+      : t('toolbar.proposals');
+    bells.forEach((btn) => {
+      // `hidden` 由 `base.css` 的 `[hidden]{display:none !important}` 兜底；顶栏那只
+      // 是绝对定位、底栏那只是 grid 子项，隐藏后都不占位。
+      btn.hidden = !enabled;
+      btn.classList.toggle('has-proposals', filled);
+      btn.setAttribute('aria-label', label);
+      btn.title = label;
+    });
+  }
+  function closeProposalsPanel({ restoreFocus = true } = {}) {
+    if (!proposalsPopover) return;
+    const { box, cleanup } = proposalsPopover;
+    const focusInside = Boolean(box && box.contains(document.activeElement));
+    cleanup();
+    proposalsPopover = null;
+    proposalsAnchor.setAttribute('aria-expanded', 'false');
+    // 只有焦点还在浮层里（Esc / 键盘关闭）才回铃铛；点外面不把焦点拽回来。
+    // 0.4.10：AI 关闭时铃铛已隐藏，焦点不能落进 `display:none` 的节点——退回设置按钮。
+    if (restoreFocus && focusInside) {
+      const anchorUsable = proposalsAnchor && !proposalsAnchor.hidden;
+      if (anchorUsable && proposalsAnchor.focus) proposalsAnchor.focus();
+      else if (settingsBtn && settingsBtn.focus) settingsBtn.focus();
+    }
+  }
+  function toggleProposalsPanel(e) {
+    if (e) e.stopPropagation();
+    const anchor = (e && e.currentTarget) || bellBtn;
+    if (proposalsPopover) {
+      // 再点同一个铃铛 = 关闭；点另一档的铃铛 = 换锚点重开（三档不会同时可见）。
+      if (proposalsAnchor === anchor) return closeProposalsPanel();
+      closeProposalsPanel({ restoreFocus: false });
+    }
+    openProposalsPanel(anchor);
+  }
+  /**
+   * 提案浮层（规范 M18 §3）：复用账号菜单的 `.popover` 机制（fixed、body 挂载、
+   * 外点/Esc 关闭）。顶栏铃铛向下弹（top = 铃铛底 + 8）；底部工具栏铃铛向上弹
+   * （top = 铃铛顶 - 浮层高 - 8）。left 夹在 16 与 `innerWidth - width - 16` 之间；
+   * 宽度 `min(400px, 100vw - 32px)`。
+   */
+  function openProposalsPanel(anchor = bellBtn) {
+    if (proposalsPopover) closeProposalsPanel({ restoreFocus: false });
+    proposalsAnchor = anchor;
+    const panel = createProposalsPanel({ store });
+    const box = el('div', {
+      class: 'popover popover--proposals',
+      role: 'dialog',
+      'aria-label': t('toolbar.proposals'),
+      tabindex: '-1',
+    }, [panel.node]);
+    document.body.append(box);
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.max(0, Math.min(400, window.innerWidth - 32));
+    const maxLeft = Math.max(16, window.innerWidth - width - 16);
+    const left = Math.min(Math.max(rect.left, 16), maxLeft);
+    box.style.width = `${width}px`;
+    box.style.left = `${left}px`;
+    const bottomMode = anchor.classList.contains('tabbar__bell');
+    const top = bottomMode
+      ? Math.max(8, rect.top - box.offsetHeight - 8)
+      : Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - box.offsetHeight - 8));
+    box.style.top = `${top}px`;
+    box.focus();
+
+    const onDocDown = (ev) => {
+      // contains()，不是 ===：铃铛/卡片里都可能有点到子节点的路径。
+      if (!box.contains(ev.target) && !anchor.contains(ev.target)) closeProposalsPanel();
+    };
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') closeProposalsPanel();
+    };
+    setTimeout(() => {
+      document.addEventListener('pointerdown', onDocDown, true);
+      document.addEventListener('keydown', onKey, true);
+    }, 0);
+    anchor.setAttribute('aria-expanded', 'true');
+    proposalsPopover = {
+      box,
+      cleanup() {
+        document.removeEventListener('pointerdown', onDocDown, true);
+        document.removeEventListener('keydown', onKey, true);
+        panel.destroy();
+        box.remove();
+      },
+    };
+    // 打开即拉一次 pending 列表（规范 §3：不要用 count 接口渲染正文）。
+    void panel.load();
   }
 
   // 0.2.12（C11-1）：「第二时区」设置项、下拉与相关逻辑已全部删除。
@@ -1755,6 +1934,8 @@ export function createApp(root, { store, user }) {
         /* 没有打开窗口时忽略 */
       }
       unbindFileDrop();
+      // 0.4.8：浮层挂在 body 下，不走 header 的子树回收——拆壳时必须显式关掉。
+      closeProposalsPanel({ restoreFocus: false });
       unsubscribeAiBadge();
       stopAiBadge();
       unsub();

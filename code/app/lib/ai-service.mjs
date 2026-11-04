@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 import {
   NOT_FOUND_BODY,
   WRITE_MODE_DIRECT,
+  canAgentApprove,
   canDelete,
   grantLevel,
   isReadable,
@@ -28,7 +29,7 @@ import {
   windowBounds,
   writeModeOf,
 } from './ai-grants.mjs';
-import { busyIntervals, eventFromIcs, eventToIcs, eventsOf, matchesTimeRange, uidOf } from './ical.mjs';
+import { busyIntervals, dateDigitsInZone, eventFromIcs, eventToIcs, eventsOf, matchesTimeRange, proposalFieldsOfIcs, uidOf } from './ical.mjs';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 /** 事件 UID：字母数字开头，允许 `._-@`，总长 ≤255（与 store 的文件名约束一致）。 */
@@ -122,6 +123,7 @@ function icsForUid(draft, uid) {
 
 export function createAiService({
   aiStore = null,
+  trash = null,
   health = null,
   now = () => Date.now(),
 } = {}) {
@@ -245,10 +247,12 @@ export function createAiService({
       timezone: typeof body.timezone === 'string' ? body.timezone : undefined,
     };
     if (allDay) {
-      const startDate = new Date(start);
-      draft.startDate = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
-      const endDate = new Date(Number.isFinite(end) && end > start ? end : start + DAY_MS);
-      draft.endDate = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      // 0.4.12：全天日期按事件自身时区取日历日，不能读服务器本地字段
+      // （`TZ=UTC` 时同一输入会写成前一天）。缺省时区按 `+08:00`。
+      const zone = typeof draft.timezone === 'string' && draft.timezone.trim() ? draft.timezone.trim() : '+08:00';
+      draft.startDate = dateDigitsInZone(start, zone);
+      const endMs = Number.isFinite(end) && end > start ? end : start + DAY_MS;
+      draft.endDate = dateDigitsInZone(endMs, zone);
     }
     return icsForUid(draft, wantedUid || draft.uid);
   }
@@ -264,6 +268,7 @@ export function createAiService({
       createdAt: proposal.createdAt || null,
       expiresAt: proposal.expiresAt || null,
       decidedAt: proposal.decidedAt || null,
+      decidedBy: proposal.decidedBy === 'agent' ? 'agent' : (proposal.decidedBy === 'user' ? 'user' : null),
     };
   }
 
@@ -284,6 +289,11 @@ export function createAiService({
     return calendars;
   }
 
+  /** 日历元信息（回收站条目要存日历名）；查不到返回 null。 */
+  async function calendarMetaOf(userId, calendarId) {
+    const metas = await aiStore.listCalendarMetasFor(userId);
+    return (Array.isArray(metas) ? metas : []).find((meta) => meta && meta.id === calendarId) || null;
+  }
   /** 凭据是否至少有一个**实际存在**的可写日历（决定 MCP 是否注册写工具）。 */
   async function hasWritableCalendar(ctx) {
     const metas = await aiStore.listCalendarMetasFor(ctx.userId);
@@ -563,17 +573,49 @@ export function createAiService({
     if (!isWithinWindow(ctx.credential, current.start, currentEnd, ctx.nowMs)) throw writeReject('out-of-window');
     ctx.action = 'delete';
 
-    // 删除不可逆：即使 writeMode === 'direct' 也只出提案（canDelete() 恒 false）。
-    const direct = writeModeOf(ctx.credential) === WRITE_MODE_DIRECT && canDelete(ctx.credential);
+    // 0.4.13（用户 2026-11-04 追加口径 + M4 §2）：删除双模式**按凭据**存，
+    // 只看该凭据的 deleteMode，与 writeMode、与全局设置无关。
+    //   提案模式（默认）→ 恒出提案（下面这支）；回收站模式 → 先写回收站、再删对象、立即生效。
+    const settings = await aiStore.readSettings().catch(() => null);
+    const retentionDays = settings ? settings.trashRetentionDays : undefined;
+    const direct = canDelete(ctx.credential, located.calendarId);
     if (direct) {
-      await aiStore.applyChange(ctx.userId, {
-        action: 'delete',
-        calendarId: located.calendarId,
-        uid,
-        source: ctx.source || 'ai',
-        credentialId: ctx.credential.id,
-      });
-      return { applied: true, deleted: true, calendarId: located.calendarId };
+      // 写不进来就不删（M4 §2 硬规则⑤：宁可不删，不丢数据）。
+      if (!trash) {
+        throw Object.assign(new Error('删除失败：回收站不可用，日程未删除'), { code: 'trash_unavailable', status: 500 });
+      }
+      const meta = await calendarMetaOf(ctx.userId, located.calendarId);
+      let item = null;
+      try {
+        item = await trash.add(ctx.userId, {
+          credentialId: ctx.credential.id,
+          credentialLabel: ctx.credential.label || '',
+          calendarId: located.calendarId,
+          calendarName: meta ? (meta.displayName || meta.name || meta.id) : located.calendarId,
+          uid,
+          etag: located.object.etag || null,
+          ics: located.object.content,
+          title: current.title || '',
+          retentionDays,
+        });
+      } catch {
+        throw Object.assign(new Error('删除失败：回收站写入失败，日程未删除'), { code: 'trash_write_failed', status: 500 });
+      }
+      try {
+        await aiStore.applyChange(ctx.userId, {
+          action: 'delete',
+          calendarId: located.calendarId,
+          uid,
+          expectEtag: located.object.etag || null,
+          source: ctx.source || 'ai',
+          credentialId: ctx.credential.id,
+        });
+      } catch (err) {
+        // 对象没删成就回滚回收站条目，避免「能恢复一条其实还在的日程」。
+        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+        throw err;
+      }
+      return { applied: true, deleted: true, calendarId: located.calendarId, trashId: item.id, via: 'delete-mode-trash' };
     }
     const proposal = await aiStore.createProposal(ctx.userId, {
       action: 'delete',
@@ -600,6 +642,77 @@ export function createAiService({
     return mine;
   }
 
+  /* ---------------------------------------------- MCP：AI 端代办批准（0.4.13 / M4 §4） */
+
+  function agentApprovalDisabled() {
+    return Object.assign(new Error('凭据未开启 AI 端代办批准，请到 FnCal 设置里打开，或在日历界面批准'), {
+      code: 'agent_approval_disabled',
+      status: 403,
+    });
+  }
+
+  /**
+   * MCP list_proposals：只列**本凭据自己产生的**、pending、且所属日历仍可读的提案。
+   * 不返回 ICS、不返回别家凭据的提案；卡片用的时间/地点沿用 0.4.10 的
+   * proposalFieldsOfIcs（只在服务端解析，前端拿不到整份 ICS）。
+   */
+  async function listAgentProposals(ctx) {
+    if (!canAgentApprove(ctx.credential)) throw agentApprovalDisabled();
+    const mine = await listProposals(ctx, 'pending');
+    const metas = await aiStore.listCalendarMetasFor(ctx.userId);
+    const names = new Map((Array.isArray(metas) ? metas : []).map((meta) => [meta.id, meta.displayName || meta.name || meta.id]));
+    const rows = [];
+    for (const proposal of mine) {
+      if (!isReadable(ctx.credential, proposal.calendarId)) continue;
+      const stored = (await aiStore.getProposal(ctx.userId, proposal.id)) || {};
+      const before = stored.before && typeof stored.before === 'object' ? stored.before : {};
+      const after = stored.after && typeof stored.after === 'object' ? stored.after : {};
+      const ics = after.ics || before.ics || '';
+      const fields = ics ? proposalFieldsOfIcs(ics) : { start: null, end: null, allDay: false, location: '' };
+      rows.push({
+        id: proposal.id,
+        action: proposal.action,
+        calendarId: proposal.calendarId,
+        calendarName: names.get(proposal.calendarId) || proposal.calendarId,
+        uid: proposal.uid,
+        title: String(after.title || before.title || '').slice(0, 500),
+        summary: typeof after.summary === 'string' ? after.summary : '',
+        start: fields.start,
+        end: fields.end,
+        allDay: fields.allDay === true,
+        location: fields.location,
+        expiresAt: proposal.expiresAt || null,
+        createdAt: proposal.createdAt || null,
+        writable: isWritable(ctx.credential, proposal.calendarId),
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * MCP pprove_proposal / eject_proposal：
+   *   ① 凭据必须显式打开 gentApproval（关闭时任何路径都拒绝）；
+   *   ② 只处理本凭据自己的 pending 提案，别家凭据 / 不存在一律 missing（不证明存在性）；
+   *   ③ 批准前**再校验**提案所属日历仍可见且是写档（防改权限后越权）。
+   */
+  async function agentDecide(ctx, id, action, { reason = '' } = {}) {
+    if (!canAgentApprove(ctx.credential)) throw agentApprovalDisabled();
+    const proposal = await aiStore.getProposal(ctx.userId, id);
+    if (!proposal || proposal.credentialId !== ctx.credential.id) return { missing: true };
+    if (!isReadable(ctx.credential, proposal.calendarId)) return { missing: true };
+    if (action === 'accept') {
+      if (!isWritable(ctx.credential, proposal.calendarId)) return { missing: true };
+      if (!(await aiStore.calendarExistsFor(ctx.userId, proposal.calendarId))) return { missing: true };
+      ctx.action = 'proposal-accept';
+      const saved = await aiStore.acceptProposal(ctx.userId, id, { decidedBy: 'agent' });
+      if (saved && saved.missing) return { missing: true };
+      return { proposal: proposalView(saved, ctx.nowMs) };
+    }
+    ctx.action = 'proposal-reject';
+    const saved = await aiStore.rejectProposal(ctx.userId, id, { reason, decidedBy: 'agent' });
+    if (saved && saved.missing) return { missing: true };
+    return { proposal: proposalView(saved, ctx.nowMs) };
+  }
   return {
     availability,
     listCalendars,
@@ -614,6 +727,8 @@ export function createAiService({
     updateEvent,
     deleteEvent,
     listProposals,
+    listAgentProposals,
+    agentDecide,
     objectInWindow,
     writeWithinWindow,
     buildIcs,

@@ -36,6 +36,7 @@ import { createAiApi } from './api/ai.mjs';
 import { createAiRest } from './api/ai-rest.mjs';
 import { createMcp } from './api/mcp.mjs';
 import { createAiService } from './lib/ai-service.mjs';
+import { createAiTrash } from './lib/ai-trash.mjs';
 import { createAiRateLimiter } from './lib/ai-rate-limit.mjs';
 import { NOT_FOUND_JSON } from './lib/ai-grants.mjs';
 import { createLogger } from './lib/log.mjs';
@@ -71,7 +72,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 开关对比度、迷你月历点线、年视图换行断开、「四日」）——同样是纯前端。
 // 0.2.18：C 批七条（年视图圆几何、迷你点线一整条、四视图拼接条与箭头方向、
 // 搜索面板加宽、编辑弹窗农历日期选择、搜索胶囊圆头等高）——同样是纯前端。
-export const VERSION = '0.4.4';
+export const VERSION = '0.4.16';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -426,7 +427,8 @@ export async function createApp(
   // 0.3.0 P1：AI 数据层 + 用户侧 REST。凭据单独一张表（ai-credentials），
   // 与 CalDAV 专用密码表完全分离；令牌只在创建时返回明文。
   const aiStore = createAiStore({ store, accounts, varDir: config.varDir, logger });
-  const aiApi = createAiApi({ aiStore, auth, logger });
+  const aiTrash = createAiTrash({ store, logger });
+const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   // 0.3.0 P2：AI 侧 Bearer REST（/api/ai/v1/*）。`health()` 同步返回迁移状态，
   // 供它判断「AI 集合 failed → 整个前缀 404」。
   const healthState = () => {
@@ -454,7 +456,7 @@ export async function createApp(
   };
   // 0.3.0 P3：AI 服务层与限流桶由 REST 与 MCP **共用**——「同一凭据的 REST + MCP
   // 合起来算 60/60s」，且授权/掩码/窗界只有 `lib/ai-service.mjs` 一处实现。
-  const aiService = createAiService({ aiStore, health: healthState });
+  const aiService = createAiService({ aiStore, health: healthState, trash: aiTrash });
   const aiRateLimiter = createAiRateLimiter();
   const aiRest = createAiRest({ aiStore, aiService, audit, logger, health: healthState, limiter: aiRateLimiter });
   const mcpApi = createMcp({

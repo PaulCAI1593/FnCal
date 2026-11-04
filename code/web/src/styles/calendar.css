@@ -559,25 +559,6 @@ body.is-reordering {
     min-height: 44px;
   }
 }
-/* 0.3.7（用户 m00779 / 规范 M11 §1–§3）：「AI」页签右上角的待审批红点。
-   页签按钮本身已有 position: relative。外径就是 8px、不加描边：点只落在页签纯色
-   底上（不压图标、不跨接缝），红/中性底对比已足；加 var(--surface) 描边会在未选中
-   底（--surface-2）上显出浅色光环、在选中底上又完全隐身，两种态不一致。
-   选中页签 z-index:1 自成层叠上下文，点在其内部设 z-index:1 必高于选中底色。
-   点为绝对定位 + pointer-events:none：不改 44px 命中区、不破 375px 五等分。
-   不加 transition/animation（规范 §7：瞬时、不脉冲）。 */
-.settings__tabs button.has-badge::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  z-index: 1;
-  pointer-events: none;
-}
 /* 0.2.9（用户 9）：设置弹窗底部常驻提示条——在滚动容器 .modal__body 之外、
    按钮区之上；说明文字常显，「有 N 项未应用」仅在 N>0 显示。预留最小高度避免
    表格滚动区高度随提示出现/消失而跳动。 */
@@ -2728,7 +2709,7 @@ label,
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
 }
 .ai-proposal__calendar {
@@ -2741,7 +2722,9 @@ label,
   font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ai-proposal__expires {
   font-size: var(--fs-sm);
@@ -2749,36 +2732,47 @@ label,
   white-space: nowrap;
 }
 .ai-proposal__diff {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 2px 8px;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-1);
+  min-width: 0;
   font-size: var(--fs-sm);
   color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
 }
 .ai-proposal__diff-label {
+  flex: 0 0 auto;
   color: var(--text-3);
 }
 .ai-proposal__diff-arrow {
+  flex: 0 0 auto;
   color: var(--text-3);
 }
 .ai-proposal__diff-value {
+  flex: 0 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ai-proposal__diff-value--next {
   color: var(--text);
 }
 .ai-proposal__note {
   margin: 0;
+  min-width: 0;
   font-size: var(--fs-sm);
   color: var(--text-2);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ai-proposal__actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 .ai-proposal__state {
   font-size: var(--fs-sm);
@@ -2816,5 +2810,425 @@ label,
     grid-row: auto;
     grid-column: 1;
     justify-content: flex-start;
+  }
+}
+/* 0.4.10（M19 §2）：提案面板头部 sticky。滚动容器仍是 .popover（layout.css 的 overflow-y:auto），
+   头部吸顶、刷新按钮右贴，卡片列表在其下滚动；不改滚动容器、不用负 margin、不改圆角。
+   0.4.11：滚动容器 padding-top 已归零（layout.css 的 .popover--proposals），顶部留白改由
+   本头部的 padding-top 提供——否则吸顶头部与面板顶边之间会留出 12px 条带，滚上去的卡片透出来。 */
+.proposals-panel .ai-section__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.proposals-panel .ai-proposals-refresh {
+  margin-left: auto;
+}
+/* 0.4.10（M19 §3）：卡片固定行序（名称 / 日历 / 时间地点 / 备注 / diff / 操作区），
+   每行单行省略，卡片高度不随内容长短变化。 */
+.ai-proposal__meta,
+.ai-proposal__when {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ai-proposal__dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+}
+.ai-proposal .ai-badge {
+  flex: 0 0 auto;
+  /* 0.4.12：徽标前带凭据名（用户可写到 64 字符），长名截断、不撑破名称行。 */
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 0.4.15（M23 §4、§5.1、§7.1）：
+   ① 两段式徽标——凭据名可收缩省略、动作词 flex:0 0 auto 永不截断，中间 1px 竖线；
+   ② 删除卡行④固定影响文案（复用 .ai-proposal__note，不新增字号色值）；
+   ③ 模式提示行只在回收站模式出现，复用 .ai-hint，只补下边距。 */
+.ai-proposal .ai-badge,
+.ai-trash__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ai-badge__cred {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-badge__sep {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 0.9em;
+  background: currentColor;
+  opacity: 0.35;
+}
+.ai-badge__action {
+  flex: 0 0 auto;
+}
+.ai-badge--delete .ai-badge__action {
+  color: var(--danger-ink);
+}
+.ai-badge--deleted,
+.ai-badge--deleted .ai-badge__cred,
+.ai-badge--deleted .ai-badge__action {
+  color: var(--text-3);
+}
+.ai-trash__badge {
+  flex: 0 0 auto;
+  max-width: 45%;
+  min-width: 0;
+  overflow: hidden;
+}
+.ai-proposals__mode {
+  margin: 0 0 var(--sp-2);
+}
+/* 删除卡操作区：≥341 文字按钮（图标只留给 ≤340 图标档，M23 §8）。 */
+.ai-proposal__buttons .btn__icon {
+  display: none;
+}
+.ai-proposal__buttons .btn__label {
+  display: inline;
+}
+.ai-proposal__calendar {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-proposal__time {
+  flex: 0 0 auto;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  white-space: nowrap;
+}
+.ai-proposal__location {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 0.4.10（M19 §5）：操作区左右分布，状态/剩余时间在左，按钮组靠右；≥320px 不换行。
+   剩余时间给 0 1 auto：320px 下「剩余 24 小时」这类长文案可以省略号收缩，不把按钮组挤出卡片。 */
+.ai-proposal__state {
+  flex: 0 0 auto;
+}
+.ai-proposal__expires {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-proposal__buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+@media (pointer: coarse) {
+  .ai-proposal .btn,
+  .proposals-panel .ai-proposals-refresh {
+    min-height: 44px;
+  }
+}
+/* 0.4.12（规范 M20 §3/§4/§6）：提案面板头部的批量操作。右侧按钮组整体右对齐，
+   DOM 顺序 = 视觉顺序 = Tab 顺序：刷新 → 全部批准 → 全部拒绝。 */
+.ai-section__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+/* 标题可收缩（窄屏保底 80px 见 §6），计数不收缩。 */
+.proposals-panel .ai-section__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proposals-panel .ai-count {
+  flex: 0 0 auto;
+}
+/* 桌面（> 420px）文字按钮：图标不出现，避免三个按钮在 400px 面板里挤爆。 */
+.ai-section__actions .btn__icon {
+  display: none;
+}
+.ai-section__actions .btn__label {
+  display: inline;
+}
+/* 按钮左右内边距收到 8px（不是新尺寸档，高度仍沿用 .btn）：桌面 400px 面板里三个文字按钮 + 计数
+   会把标题挤到 80px 以下（12px 内边距实测 70.95px，仍不足），收到 8px 后标题 95px，满足 M20 §3 的 80px 下限。 */
+.ai-section__actions .btn {
+  padding: 0 var(--sp-2);
+}
+/* 全部拒绝默认描边式（§4）：危险色文字 + 常规边框，hover 才加底色，不压过主按钮。 */
+.ai-section__actions .ai-proposals-reject {
+  border-color: var(--border-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+.ai-section__actions .ai-proposals-reject:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger-ink);
+}
+}
+/* ≤ 420（§6）：三个按钮纯图标 32×32，文字进 aria-label。 */
+@media (max-width: 420px) {
+  .ai-section__actions {
+    gap: var(--sp-1);
+  }
+  .ai-section__actions .btn {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+  }
+  .ai-section__actions .btn__icon {
+    display: inline-flex;
+  }
+  .ai-section__actions .btn__label {
+    display: none;
+  }
+}
+/* ≤ 340（§6）：图标间距 4px，标题保底 80px，不换行、不横向滚动。 */
+@media (max-width: 340px) {
+  .ai-section__actions {
+    gap: 4px;
+  }
+  .proposals-panel .ai-section__title {
+    min-width: 80px;
+  }
+}
+
+/* ---- 0.4.14（M4 §2、M21 第 3 版 §2–§6）：删除双模式、回收站子块、代办标记、最近删除 ---- */
+
+/* 凭据行标记（M21 §4）：「对话内代办」在前、「可直删」在后，一行不换行。 */
+.ai-cred-row__badges {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-wrap: nowrap;
+}
+.ai-cred-row__badge {
+  height: 18px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  white-space: nowrap;
+}
+.ai-badge--agent {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.ai-badge--direct-delete {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* 回收站子块（M21 第 3 版 §2.4）：AI 页无独立小节，块只在「删除」为回收站的凭据编辑器里出现。 */
+.ai-trash__retention {
+  width: auto;
+  min-width: 96px;
+}
+.ai-block--trash {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+/* 最近删除（M21 §5）：与提案清单 1px 分隔；行两行式，不复用卡片类。 */
+.ai-trash {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--border);
+}
+.ai-trash__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+}
+.ai-trash__title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.ai-trash__count {
+  flex: 0 0 auto;
+}
+.ai-trash__fold {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+.ai-trash__list {
+  display: flex;
+  flex-direction: column;
+}
+.ai-trash__row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.ai-trash__row:last-child {
+  border-bottom: 0;
+}
+.ai-trash__row-main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.ai-trash__row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.ai-trash__restore {
+  flex: 0 0 auto;
+}
+.ai-trash__row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.ai-trash__row-calendar {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-trash__row-deleted,
+.ai-trash__row-remain {
+  flex: 0 0 auto;
+}
+/* 0.4.15（M23 §3）：恢复按钮移到元信息行右端。 */
+.ai-trash__row-meta .ai-trash__restore {
+  margin-left: auto;
+}
+.ai-trash__error {
+  margin: 0;
+}
+
+/* 0.4.15（M23 §8，覆盖 M21 §6 的旧档）：≥341 一律文字按钮；≤340 删除卡与恢复都是 32×32 图标，
+   aria-label 提供完整动作名（图标钮没有可见文字）。≤340 同时隐去「删除于」，给标题与剩余时间让位。 */
+@media (max-width: 340px) {
+  .ai-proposal--delete .ai-proposal__buttons .btn {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+  }
+  .ai-proposal--delete .ai-proposal__buttons .btn__icon {
+    display: inline-flex;
+  }
+  .ai-proposal--delete .ai-proposal__buttons .btn__label {
+    display: none;
+  }
+  .ai-trash__restore {
+    width: 32px;
+    height: 32px;
+    min-height: 32px;
+    padding: 0;
+  }
+  .ai-trash__restore .btn__icon {
+    display: inline-flex;
+  }
+  .ai-trash__restore .btn__label {
+    display: none;
+  }
+  .ai-trash__row-deleted {
+    display: none;
+  }
+  .ai-trash__head {
+    min-width: 0;
+  }
+  .ai-trash__title {
+    min-width: 80px;
+  }
+}
+@media (pointer: coarse) {
+  .ai-trash__restore {
+    min-height: 44px;
+  }
+}
+
+/* ---- 0.4.14（规范 M22 第 2 版）：检查更新弹窗 ----------------------------
+   只补布局：状态行（左文案 + 右侧「本次实际用的源」）、更新源分段控件、两句旁注。
+   尺寸沿用 .modal / .settings__row / .segmented / .btn 的既有 token，不新增档位；
+   ≤520 时 .settings__row 已是单列，源的两项拿到整行宽，320 下也不会溢出。 */
+.modal--update .update__status {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.modal--update .update__status-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.modal--update .update__via {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.modal--update .update__via[hidden] {
+  display: none;
+}
+.modal--update .update__source {
+  display: flex;
+  max-width: 100%;
+}
+.modal--update .update__source button {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.modal--update .update__hints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 320 档：分段控件仍要完整显示两项 —— 只收内边距与字号，不改高度档位。 */
+@media (max-width: 360px) {
+  .modal--update .update__source button {
+    padding: 0 6px;
+    font-size: var(--fs-sm);
   }
 }

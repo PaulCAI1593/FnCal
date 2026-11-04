@@ -28,13 +28,23 @@ import {
   createAiCredential,
   updateAiCredential,
   deleteAiCredential,
-  listAiProposals,
-  acceptAiProposal,
-  rejectAiProposal,
+  // 0.4.13（M4 §3、M21 §3）：回收站小节只在设置页读列表/清空；恢复在提案面板。
+  listAiTrash,
+  clearAiTrash,
 } from './api-client.js';
-// 0.3.7（用户 m00779）：受理/驳回后立刻刷新红点，别等 60 秒轮询。
-// 这里只调状态源，不自己数条数（数出来的必然和队列的 effective status 对不上）。
-import { refreshAiBadge } from './ai-badge.js';
+// 0.4.8（用户 2026-11-04 / 规范 M18 §4–§5）：提案队列的渲染、接受/驳回全部迁到
+// `proposals-panel.js`（顶栏铃铛浮层是唯一入口）。这里只保留本页仍要用的三件：
+// ① `confirmAction`（吊销凭据等危险动作二次确认）；② 纯函数 re-export（旧测试与旧
+// import 路径不变）；③ 第三块的指向说明。
+import { confirmAction } from './proposals-panel.js';
+
+export {
+  proposalIsExpired,
+  proposalHoursLeft,
+  proposalDiff,
+  sortProposals,
+  confirmAction,
+} from './proposals-panel.js';
 
 /** 三档（与后端 `GRANT_*` 同值；本页只用来渲染，不做比较）。 */
 export const PERM_LEVELS = ['hidden', 'read', 'write'];
@@ -108,54 +118,6 @@ export function relativeUsedAt(iso, nowMs = Date.now()) {
   return t('settings.ai.usedDays', { n: Math.floor(hours / 24) });
 }
 
-/** 提案是否已过期（后端在读取时判定，这里只按同一个 24h 口径显示）。 */
-export function proposalIsExpired(proposal, nowMs = Date.now()) {
-  const expires = Date.parse((proposal && proposal.expiresAt) || '');
-  if (!Number.isFinite(expires)) return true;
-  return expires <= nowMs;
-}
-
-/** 剩余小时（向上取整，最少 1；规范 §2.4「剩余 {h} 小时」）。 */
-export function proposalHoursLeft(proposal, nowMs = Date.now()) {
-  const expires = Date.parse((proposal && proposal.expiresAt) || '');
-  if (!Number.isFinite(expires)) return 0;
-  return Math.max(0, Math.ceil((expires - nowMs) / 3600000));
-}
-
-/**
- * 提案「变更前后」的展示值。
- *
- * 后端用户侧接口暴露 `before.{etag,title}` 与 `after.{title,summary,etag}`（事件正文不出后端）；
- * 0.3.6 起两个快照都带 `title`：新建显示新标题、修改显示「原标题 → 新标题」、删除显示被删标题。
- * 旧提案（无 `title`）由后端从 ICS 解析兜底，这里不再回落到 uid——除非连标题都没有。
- */
-export function proposalDiff(proposal) {
-  const action = (proposal && proposal.action) || 'create';
-  const uid = (proposal && proposal.uid) || '';
-  const beforeTitle = (proposal && proposal.before && proposal.before.title) || '';
-  const afterTitle = (proposal && proposal.after && (proposal.after.title || proposal.after.summary)) || '';
-  const before = action === 'create' ? '' : beforeTitle || uid;
-  return {
-    action,
-    uid,
-    before,
-    after: afterTitle,
-    // 列表行标题：新建/修改看新标题，删除看被删事件标题，两者都缺才退到 uid。
-    title: action === 'delete' ? before : afterTitle || before || uid,
-    deleteOnly: action === 'delete',
-  };
-}
-
-/** 排序：pending 正常 → 冲突 → 过期（规范 §5：过期沉底）。 */
-export function sortProposals(list, conflictIds = new Set(), nowMs = Date.now()) {
-  const rank = (proposal) => {
-    if (proposalIsExpired(proposal, nowMs)) return 2;
-    if (conflictIds.has(proposal.id)) return 1;
-    return 0;
-  };
-  return list.slice().sort((a, b) => rank(a) - rank(b));
-}
-
 /** 时间窗数值钳回（规范 §2.3：越界值失焦时钳回；0.3.3 起没有上限）。 */
 export function clampDays(value, limits, fallback) {
   const number = Number.parseInt(String(value == null ? '' : value), 10);
@@ -193,8 +155,11 @@ function switchControl({ checked, disabled, ariaLabel, onChange }) {
 /**
  * 分段单选（`role=radiogroup` + `role=radio`）：矩阵行、批量条、写入模式共用。
  * 方向键在组内循环（规范 §6 要求键盘可达；roving tabindex 保证整组只占一个 Tab 位）。
+ * 0.4.13：支持 setDisabled——凭据编辑器「操作方式」两行要随日历权限（有没有 write 档）
+ * 与 AI 接入总开关即时切换禁用态，不能等重渲染。
  */
 function segmentedRadioGroup({ label, options, value, disabled = false, onChange }) {
+  let isDisabled = Boolean(disabled);
   const group = el('div', {
     class: 'segmented ai-seg',
     role: 'radiogroup',
@@ -207,12 +172,12 @@ function segmentedRadioGroup({ label, options, value, disabled = false, onChange
       role: 'radio',
       'aria-checked': String(checked),
       tabindex: checked ? '0' : '-1',
-      disabled: Boolean(disabled),
+      disabled: isDisabled,
       text: option.label,
       'data-value': option.value,
       on: {
         click: () => {
-          if (disabled) return;
+          if (isDisabled) return;
           select(option.value, button);
         },
       },
@@ -234,7 +199,7 @@ function segmentedRadioGroup({ label, options, value, disabled = false, onChange
   }
 
   group.addEventListener('keydown', (event) => {
-    if (disabled) return;
+    if (isDisabled) return;
     const index = buttons.indexOf(document.activeElement);
     if (index < 0) return;
     let next = index;
@@ -255,64 +220,12 @@ function segmentedRadioGroup({ label, options, value, disabled = false, onChange
       button.setAttribute('aria-checked', String(checked));
       button.tabIndex = checked ? '0' : '-1';
     }),
+    /** 0.4.13：禁用态即时切换（只读凭据 / AI 接入关闭）。 */
+    setDisabled: (next) => {
+      isDisabled = Boolean(next);
+      for (const button of buttons) button.disabled = isDisabled;
+    },
   };
-}
-
-/**
- * 危险动作二次确认（规范 §7）：`role=alertdialog`，取消在左，确认按钮实心危险色，
- * 打开时焦点落在「取消」（危险动作默认安全侧），Esc = 取消。
- * 提醒类确认（新建时零可见日历）用 `danger: false`，按钮不着红。
- */
-export function confirmAction({ title, text, confirmLabel, cancelLabel, danger = false, onConfirm, onCancel }) {
-  let dismiss = null;
-  let decided = false;
-  const finish = (run) => {
-    const close = dismiss;
-    dismiss = null;
-    decided = true;
-    if (close) close();
-    if (run) onConfirm();
-    else if (onCancel) onCancel();
-  };
-  const cancelBtn = el('button', {
-    class: 'btn',
-    type: 'button',
-    text: cancelLabel || t('settings.ai.cancel'),
-    on: { click: () => finish(false) },
-  });
-  const okBtn = el('button', {
-    class: danger ? 'btn btn--danger' : 'btn btn--primary',
-    type: 'button',
-    text: confirmLabel || t('settings.ai.confirm'),
-    on: { click: () => finish(true) },
-  });
-  const dialog = el('div', {
-    class: 'modal settings-confirm',
-    role: 'alertdialog',
-    'aria-modal': 'true',
-    'aria-labelledby': 'ai-confirm-title',
-    'aria-describedby': 'ai-confirm-text',
-  }, [
-    el('div', { class: 'modal__head' }, [
-      el('h2', { class: 'modal__title', id: 'ai-confirm-title', text: title }),
-    ]),
-    el('div', { class: 'modal__body' }, [
-      el('p', { class: 'settings__hint', id: 'ai-confirm-text', text }),
-    ]),
-    el('div', { class: 'modal__foot' }, [
-      el('div', { class: 'spacer' }),
-      cancelBtn,
-      okBtn,
-    ]),
-  ]);
-  dismiss = mountDialog(dialog, () => {
-    // Esc / 遮罩点击关闭：同样算「取消」，让调用方回滚视觉状态。
-    if (decided) return;
-    decided = true;
-    if (onCancel) onCancel();
-  });
-  cancelBtn.focus();
-  return dialog;
 }
 
 /* ---- 页面 ---- */
@@ -333,12 +246,10 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     credentials: [],
     credsLoading: false,
     credsError: false,
-    proposals: [],
-    proposalsLoading: false,
-    proposalsError: false,
     editor: null,
     token: null,
-    conflictIds: new Set(),
+    /** 0.4.13（M4 §3、M21 §3）：回收站小节的数据（条目数、保留期、加载/失败态）。 */
+    trash: { items: [], count: 0, retentionDays: 7, loading: false, loaded: false, error: false, saving: false },
   };
   let loaded = false;
 
@@ -354,7 +265,13 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
 
   const serviceBody = el('div', { class: 'ai-section__body' });
   const credsSection = el('section', { class: 'ai-section ai-section--creds' });
-  const proposalsSection = el('section', { class: 'ai-section ai-section--proposals' });
+  /**
+   * 0.4.14（M4 §2 硬规则 1、M21 第 3 版 §2.4）：回收站设置是全局的，但入口只放在
+   * 删除方式为「回收站」的凭据编辑器里；AI 页底部不再有独立回收站块。
+   */
+  let trashBlock = null;
+  // 0.4.9（用户 2026-11-04）：「设置里这行字不要」——提案队列整块（含标题）
+  // 从本页删除，不留空壳；入口只有顶栏铃铛。
 
   const page = el('div', {
     class: 'settings__page ai-page',
@@ -368,7 +285,6 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       serviceBody,
     ]),
     credsSection,
-    proposalsSection,
   ]);
 
   /* ---- ① 服务块（规范 §2.1） ---- */
@@ -397,6 +313,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         !isAdmin ? el('span', { class: 'ai-hint-inline', text: t('settings.ai.serviceAdminOnly') }) : null,
       ]),
     ]);
+
+    /* 0.4.13（用户 2026-11-04 口径 + M4 §2 硬规则⑧）：删除方式不再是全局设置，
+       已改为凭据编辑器里的「操作方式」两组之一（见 renderEditor）。服务块只剩总开关与 MCP 信息。 */
 
     const addressInput = el('input', {
       class: 'input ai-mcp-address',
@@ -488,6 +407,121 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     }
   }
 
+  /* ---- ①-b 回收站小节（M4 §3、M21 §3）：自动清理下拉 + 已存条数 + 清空 ---- */
+
+  function trashCountText() {
+    const trash = state.trash;
+    if (trash.loading) return t('settings.ai.loading');
+    if (trash.error) return t('settings.ai.trash.loadFailed');
+    return trash.count > 0 ? t('settings.ai.trash.count', { n: trash.count }) : t('settings.ai.trash.empty');
+  }
+
+  function renderTrashBlock() {
+    if (!trashBlock) return;
+    clear(trashBlock);
+    const trash = state.trash;
+    const countHint = el('p', { class: 'ai-hint', text: trashCountText() });
+    const select = el('select', {
+      class: 'input ai-trash__retention',
+      disabled: !isAdmin || trash.loading || trash.error || trash.saving,
+      'aria-label': t('settings.ai.trash.retention'),
+      on: {
+        change: () => { saveRetention(Number(select.value)); },
+      },
+    });
+    for (const option of [3, 7, 14, 30]) {
+      select.append(el('option', { value: String(option), text: t('settings.ai.trash.retentionOption', { n: option }) }));
+    }
+    select.value = String(trash.retentionDays);
+    const retentionRow = el('div', { class: 'settings__row' }, [
+      el('span', { class: 'settings__label', text: t('settings.ai.trash.retention') }),
+      el('div', { class: 'settings__control settings__control--inline' }, [select, countHint]),
+    ]);
+    const clearBtn = el('button', {
+      class: 'btn btn--danger ai-trash__clear',
+      type: 'button',
+      disabled: !isAdmin || trash.loading || trash.error || trash.saving || trash.count <= 0,
+      'aria-disabled': String(trash.count <= 0),
+      text: t('settings.ai.trash.clear'),
+      on: { click: () => { requestClearTrash(); } },
+    });
+    const clearRow = el('div', { class: 'settings__row' }, [
+      el('span', { class: 'settings__label', text: t('settings.ai.trash.clear') }),
+      el('div', { class: 'settings__control settings__control--inline' }, [clearBtn]),
+    ]);
+    trashBlock.append(el('p', { class: 'ai-hint ai-trash__global', text: t('settings.ai.trash.globalHint') }));
+    if (trash.error) {
+      trashBlock.append(el('div', { class: 'ai-error' }, [
+        el('span', { class: 'ai-error__text', role: 'alert', text: t('settings.ai.trash.loadFailed') }),
+        el('button', {
+          class: 'btn btn--ghost',
+          type: 'button',
+          text: t('settings.ai.retry'),
+          on: { click: () => { loadTrash(); } },
+        }),
+      ]));
+    }
+    trashBlock.append(retentionRow, clearRow);
+  }
+
+  async function loadTrash() {
+    state.trash.loading = true;
+    state.trash.error = false;
+    renderTrashBlock();
+    try {
+      const payload = await listAiTrash();
+      state.trash.items = (payload && payload.items) || [];
+      state.trash.count = Number(payload && payload.count) || state.trash.items.length;
+      if (payload && Number(payload.retentionDays)) state.trash.retentionDays = Number(payload.retentionDays);
+    } catch {
+      state.trash.error = true;
+    } finally {
+      state.trash.loading = false;
+      state.trash.loaded = true;
+      renderTrashBlock();
+    }
+  }
+
+  /** 改保留期即保存（M21 §3）；读回列表，条数变少时追加「已按新保留期清理」提示。 */
+  async function saveRetention(days) {
+    const before = state.trash.count;
+    state.trash.saving = true;
+    try {
+      const payload = await updateAiSettings({ trashRetentionDays: days });
+      state.settings = (payload && payload.settings) || state.settings;
+      state.trash.retentionDays = days;
+      await loadTrash();
+      let text = t('settings.ai.trash.toastRetention', { n: days });
+      if (state.trash.count < before) text += ` · ${t('settings.ai.trash.retentionPruned')}`;
+      toast(text, { variant: 'success' });
+    } catch (err) {
+      toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
+    } finally {
+      state.trash.saving = false;
+      renderTrashBlock();
+    }
+  }
+
+  function requestClearTrash() {
+    if (state.trash.count <= 0) return;
+    confirmAction({
+      title: t('settings.ai.trash.clearTitle'),
+      text: t('settings.ai.trash.clearText', { n: state.trash.count }),
+      confirmLabel: t('settings.ai.trash.clearConfirm'),
+      cancelLabel: t('settings.ai.cancel'),
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await clearAiTrash();
+          toast(t('settings.ai.trash.toastCleared'), { variant: 'success' });
+          await loadTrash();
+        } catch (err) {
+          toast((err && err.message) || t('settings.ai.trash.failed'), { variant: 'danger' });
+        }
+      },
+    });
+  }
+
   /**
    * 0.3.2（用户）：「AI设置修改，直接应用了」——开关只改暂存，不落库。
    * 点设置弹窗页脚的「应用」才调 `updateAiSettings`；点「取消/放弃更改」回到已保存值。
@@ -547,6 +581,10 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     timeWindow: { ...DEFAULT_TIME_WINDOW },
     fieldMask: { ...DEFAULT_FIELD_MASK },
     writeMode: 'proposal',
+    // 0.4.13（用户 2026-11-04 口径 / M21 §2.3）：删除方式按凭据存，默认提案。
+    deleteMode: 'proposal',
+    // 0.4.13（M4 §4）：AI 端批准开关，默认关。旧凭据没有该字段时按 false 处理。
+    agentApproval: false,
   });
 
   function draftFromCredential(credential) {
@@ -575,6 +613,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         attendees: typeof mask.attendees === 'boolean' ? mask.attendees : DEFAULT_FIELD_MASK.attendees,
       },
       writeMode: credential && credential.writeMode === 'direct' ? 'direct' : 'proposal',
+      // 0.4.13：旧凭据没有 deleteMode 时按 proposal 处理（后端也会补默认）。
+      deleteMode: credential && credential.deleteMode === 'trash' ? 'trash' : 'proposal',
+      agentApproval: Boolean(credential && credential.agentApproval === true),
     };
   }
 
@@ -692,6 +733,25 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
 
   function renderCredRow(credential) {
     const revoked = Boolean(credential.revokedAt);
+    /* 0.4.14（M21 第 3 版 §4）：行内标记——`对话内代办` 在前、`可直删` 在后；
+       `可直删` 只看该凭据自己的 `deleteMode === 'trash'`，且至少有一个写档日历。 */
+    const badges = [];
+    if (credential.agentApproval === true) {
+      badges.push(el('span', {
+        class: 'ai-badge ai-cred-row__badge ai-badge--agent',
+        title: t('settings.ai.badge.agentApprovalTitle'),
+        text: t('settings.ai.badge.agentApproval'),
+      }));
+    }
+    const deleteMode = credential.deleteMode === 'trash' ? 'trash' : 'proposal';
+    const writeGrants = credential.grantSummary && Number(credential.grantSummary.write) > 0;
+    if (deleteMode === 'trash' && writeGrants) {
+      badges.push(el('span', {
+        class: 'ai-badge ai-cred-row__badge ai-badge--direct-delete',
+        title: t('settings.ai.badge.directDeleteTitle'),
+        text: t('settings.ai.badge.directDelete'),
+      }));
+    }
     const row = el('div', {
       class: `ai-cred-row${revoked ? ' ai-cred-row--revoked' : ''}`,
       role: 'listitem',
@@ -700,6 +760,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       el('div', { class: 'ai-cred-row__meta' }, [
         el('span', { class: 'ai-cred-row__name', text: credential.label || credential.id }),
         el('span', { class: 'ai-cred-row__summary', text: credentialSummary(credential) }),
+        badges.length ? el('span', { class: 'ai-cred-row__badges' }, badges) : null,
       ]),
       el('span', { class: 'ai-cred-row__used', text: relativeUsedAt(credential.lastUsedAt, now()) }),
       el('div', { class: 'ai-cred-row__actions' }, [
@@ -745,6 +806,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     const editor = state.editor;
     const draft = editor.draft;
     clear(credsSection);
+    // 编辑器每次重建都会丢弃旧的回收站子块引用（0.4.14、M21 第 3 版 §2.4）。
+    trashBlock = null;
 
     const backBtn = el('button', {
       class: 'btn btn--ghost ai-editor__back',
@@ -791,6 +854,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
             group.setValue(level);
           }
           hint.textContent = t('settings.ai.editor.setAllDone', { n: matrixRows.size, perm: permLabel(level) });
+          refreshModeAvailability();
         },
       },
     }));
@@ -811,7 +875,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         label: t('settings.ai.matrix.aria', { name: calendar.displayName || calendar.id }),
         options: PERM_LEVELS.map((level) => ({ value: level, label: permLabel(level) })),
         value: draft.grants[calendar.id] || 'hidden',
-        onChange: (next) => { draft.grants[calendar.id] = next; },
+        onChange: (next) => { draft.grants[calendar.id] = next; refreshModeAvailability(); },
       });
       matrixRows.set(calendar.id, group);
       matrixRowsEl.append(el('div', { class: 'ai-matrix__row', 'data-calendar-id': calendar.id }, [
@@ -828,44 +892,164 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       matrix,
     ]);
 
-    /* 写入模式（规范 §2.3）：默认 proposal；direct 必须过一次显式二次确认（默认焦点在「取消」）。 */
-    const applyMode = (next) => {
-      draft.writeMode = next;
-      modeGroup.setValue(next);
-      modeHint.replaceChildren(document.createTextNode(t('settings.ai.writeMode.hint')));
-      if (next === 'direct') {
-        modeHint.append(el('span', { class: 'ai-danger-hint', text: ` ${t('settings.ai.writeMode.directWarn')}` }));
+    /* 操作方式（M21 §2 第 2 版）：两组对称模式，都按凭据存、默认都「提案」。
+       行一「新建、修改」= writeMode（沿用既有字段，不改名）；行二「删除」= deleteMode（0.4.13 新增）。
+       位置固定：日历权限矩阵之后、时间窗之前。切「直接通过」「回收站」都要二次确认；
+       取消只回滚控件、不改草稿；切回「提案」不确认，但旁注说明回收站条目仍可恢复。 */
+    const hasWriteGrant = () => Object.values(draft.grants || {}).some((level) => level === 'write');
+    const serviceOn = Boolean(state.settings && state.settings.enabled);
+    const modesDisabled = () => !serviceOn || !hasWriteGrant();
+    /** 0.4.14：编辑器 DOM 建好后才允许同步回收站子块（模式切换、矩阵改动都会触发）。 */
+    let editorReady = false;
+
+    const writeHint = el('p', { class: 'ai-hint ai-mode__hint' });
+    const deleteHint = el('p', { class: 'ai-hint ai-mode__hint' });
+
+    function paintWriteHint(mode) {
+      writeHint.replaceChildren(document.createTextNode(t('settings.ai.writeMode.hintProposal')));
+      if (mode === 'direct') {
+        writeHint.append(el('span', { class: 'ai-danger-hint', text: ` ${t('settings.ai.writeMode.directWarn')}` }));
       }
-    };
-    const modeGroup = segmentedRadioGroup({
-      label: t('settings.ai.editor.writeMode'),
-      options: WRITE_MODES.map((mode) => ({ value: mode, label: t(`settings.ai.writeMode.${mode}`) })),
+    }
+    function paintDeleteHint(mode) {
+      deleteHint.replaceChildren(document.createTextNode(t('settings.ai.deleteMode.hintProposal')));
+      if (mode === 'trash') {
+        deleteHint.append(el('span', { class: 'ai-danger-hint', text: ` ${t('settings.ai.deleteMode.trashWarn')}` }));
+      } else {
+        deleteHint.append(el('span', { class: 'ai-hint-inline', text: ` ${t('settings.ai.deleteMode.proposalHint')}` }));
+      }
+    }
+
+    const writeGroup = segmentedRadioGroup({
+      label: t('settings.ai.writeMode.group'),
+      options: [
+        { value: 'direct', label: t('settings.ai.writeMode.direct') },
+        { value: 'proposal', label: t('settings.ai.writeMode.proposal') },
+      ],
       value: draft.writeMode,
+      disabled: modesDisabled(),
       onChange: (next) => {
+        if (next === draft.writeMode) return;
         if (next === 'direct') {
           // 取消 → 视觉回滚到当前真实值（分段控件已被用户点成 direct）。
           confirmAction({
-            title: t('settings.ai.editor.writeMode'),
-            text: t('settings.ai.writeMode.directWarn'),
-            confirmLabel: t('settings.ai.writeMode.direct'),
+            title: t('settings.ai.writeMode.confirmTitle'),
+            text: t('settings.ai.writeMode.confirmText'),
+            confirmLabel: t('settings.ai.writeMode.confirmLabel'),
             cancelLabel: t('settings.ai.cancel'),
             danger: true,
-            onConfirm: () => applyMode('direct'),
-            onCancel: () => modeGroup.setValue(draft.writeMode),
+            onConfirm: () => {
+              draft.writeMode = 'direct';
+              writeGroup.setValue('direct');
+              paintWriteHint('direct');
+            },
+            onCancel: () => writeGroup.setValue(draft.writeMode),
           });
           return;
         }
-        applyMode(next);
+        draft.writeMode = 'proposal';
+        writeGroup.setValue('proposal');
+        paintWriteHint('proposal');
       },
     });
-    const modeHint = el('p', { class: 'ai-hint', text: t('settings.ai.writeMode.hint') });
-    if (draft.writeMode === 'direct') {
-      modeHint.append(el('span', { class: 'ai-danger-hint', text: ` ${t('settings.ai.writeMode.directWarn')}` }));
+
+    const deleteGroup = segmentedRadioGroup({
+      label: t('settings.ai.deleteMode.group'),
+      options: [
+        { value: 'trash', label: t('settings.ai.deleteMode.trash') },
+        { value: 'proposal', label: t('settings.ai.deleteMode.proposal') },
+      ],
+      value: draft.deleteMode,
+      disabled: modesDisabled(),
+      onChange: (next) => {
+        if (next === draft.deleteMode) return;
+        if (next === 'trash') {
+          confirmAction({
+            title: t('settings.ai.deleteMode.confirmTitle'),
+            text: t('settings.ai.deleteMode.confirmText'),
+            confirmLabel: t('settings.ai.deleteMode.confirmLabel'),
+            cancelLabel: t('settings.ai.cancel'),
+            danger: true,
+            onConfirm: () => {
+              draft.deleteMode = 'trash';
+              deleteGroup.setValue('trash');
+              paintDeleteHint('trash');
+              syncTrashBlock();
+            },
+            onCancel: () => deleteGroup.setValue(draft.deleteMode),
+          });
+          return;
+        }
+        draft.deleteMode = 'proposal';
+        deleteGroup.setValue('proposal');
+        paintDeleteHint('proposal');
+        syncTrashBlock();
+      },
+    });
+
+    const writeRow = el('div', { class: 'settings__row ai-mode-row', 'data-mode': 'writeMode' }, [
+      el('span', { class: 'settings__label', text: t('settings.ai.writeMode.group') }),
+      el('div', { class: 'settings__control' }, [writeGroup.node, writeHint]),
+    ]);
+    const deleteRow = el('div', { class: 'settings__row ai-mode-row', 'data-mode': 'deleteMode' }, [
+      el('span', { class: 'settings__label', text: t('settings.ai.deleteMode.group') }),
+      el('div', { class: 'settings__control' }, [deleteGroup.node, deleteHint]),
+    ]);
+    const modeNotes = el('div', { class: 'ai-mode__notes' });
+
+    /** 只读凭据（没有 write 档）与 AI 接入关闭：两组都禁用并旁注（不隐藏，避免布局跳动）。 */
+    function refreshModeAvailability() {
+      const disabled = modesDisabled();
+      writeGroup.setDisabled(disabled);
+      deleteGroup.setDisabled(disabled);
+      writeRow.classList.toggle('ai-mode-row--disabled', disabled);
+      deleteRow.classList.toggle('ai-mode-row--disabled', disabled);
+      clear(modeNotes);
+      if (!serviceOn) {
+        modeNotes.append(el('p', { class: 'ai-hint', text: t('settings.ai.deleteMode.disabled') }));
+      } else if (!hasWriteGrant()) {
+        modeNotes.append(el('p', { class: 'ai-hint', text: t('settings.ai.deleteMode.readonly') }));
+      }
+      syncTrashBlock();
     }
-    const modeBlock = el('div', { class: 'ai-block' }, [
-      el('span', { class: 'settings__label', text: t('settings.ai.editor.writeMode') }),
-      modeGroup.node,
-      modeHint,
+
+    paintWriteHint(draft.writeMode);
+    paintDeleteHint(draft.deleteMode);
+    refreshModeAvailability();
+
+    const operationBlock = el('div', { class: 'ai-block ai-operation' }, [
+      el('span', { class: 'settings__label', text: t('settings.ai.operation') }),
+      writeRow,
+      deleteRow,
+      modeNotes,
+    ]);
+
+    /* 0.4.13（M4 §4、M21 §4）：AI 端批准开关，默认关；打开必须二次确认，取消回滚。 */
+    const agentSwitch = switchControl({
+      checked: draft.agentApproval === true,
+      ariaLabel: t('settings.ai.agentApproval.label'),
+      onChange: (next) => {
+        if (!next) {
+          draft.agentApproval = false;
+          return;
+        }
+        confirmAction({
+          title: t('settings.ai.agentApproval.confirmTitle'),
+          text: t('settings.ai.agentApproval.confirmText'),
+          confirmLabel: t('settings.ai.agentApproval.confirmLabel'),
+          cancelLabel: t('settings.ai.cancel'),
+          danger: true,
+          onConfirm: () => { draft.agentApproval = true; },
+          onCancel: () => { agentSwitch.input.checked = draft.agentApproval === true; },
+        });
+      },
+    });
+    const agentBlock = el('div', { class: 'ai-block' }, [
+      el('div', { class: 'settings__row' }, [
+        el('span', { class: 'settings__label', text: t('settings.ai.agentApproval.label') }),
+        el('div', { class: 'settings__control' }, [agentSwitch.node]),
+      ]),
+      el('p', { class: 'ai-hint', text: t('settings.ai.agentApproval.hint') }),
     ]);
 
     /* 时间窗（规范 §2.3；0.3.3 用户：「过去日期和未来日期可以无限制」） */
@@ -960,13 +1144,40 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       el('div', { class: 'ai-editor__head' }, [backBtn, title]),
       nameRow,
       matrixBlock,
-      modeBlock,
+      operationBlock,
+      agentBlock,
       windowBlock,
       fieldsBlock,
       errorLine,
       el('div', { class: 'ai-editor__actions' }, [saveBtn]),
     ]);
     credsSection.append(editorEl);
+    editorReady = true;
+
+    /**
+     * 0.4.14（M21 第 3 版 §2.4）：回收站子块的出现条件 = 该凭据「删除」为回收站 + 有写档日历。
+     * 只读凭据不渲染（§2.7）；AI 接入关闭时照常渲染并可用（§2.4）。
+     * 位置固定在「操作方式」块之后、「代办批准」块之前。
+     */
+    function syncTrashBlock() {
+      if (!editorReady) return;
+      const should = draft.deleteMode === 'trash' && hasWriteGrant();
+      if (!should) {
+        if (trashBlock) {
+          trashBlock.remove();
+          trashBlock = null;
+        }
+        return;
+      }
+      if (!trashBlock) {
+        trashBlock = el('div', { class: 'ai-block ai-block--trash' });
+        editorEl.insertBefore(trashBlock, agentBlock);
+      }
+      renderTrashBlock();
+      if (!state.trash.loaded && !state.trash.loading) loadTrash();
+    }
+
+    syncTrashBlock();
   }
 
   async function saveEditor() {
@@ -979,6 +1190,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       timeWindow: { ...draft.timeWindow },
       fieldMask: { ...draft.fieldMask },
       writeMode: draft.writeMode,
+      // 0.4.13：两组操作方式都按凭据存，脏判定与保存都必须带上删除方式。
+      deleteMode: draft.deleteMode,
+      agentApproval: draft.agentApproval === true,
     };
     editor.saving = true;
     editor.error = '';
@@ -1082,205 +1296,16 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     }
   }
 
-  /* ---- ③ 提案队列（规范 §2.4 / §5） ---- */
-
-  function renderProposals() {
-    clear(proposalsSection);
-    const pendingCount = state.proposals.filter((proposal) => !proposalIsExpired(proposal, now())).length;
-    const head = el('div', { class: 'ai-section__head' }, [
-      el('h3', { class: 'ai-section__title', text: t('settings.ai.proposals') }),
-      el('span', {
-        class: 'ai-count',
-        text: t('settings.ai.proposals.pending', { n: pendingCount }),
-        'data-count': String(pendingCount),
-      }),
-      el('button', {
-        class: 'btn btn--ghost ai-proposals-refresh',
-        type: 'button',
-        text: t('settings.ai.refresh'),
-        on: { click: () => { loadProposals(); } },
-      }),
-    ]);
-    const body = el('div', { class: 'ai-section__body' });
-    proposalsSection.append(head, body);
-
-    if (state.proposalsLoading) {
-      body.setAttribute('aria-busy', 'true');
-      body.append(el('p', { class: 'ai-hint', text: t('settings.ai.loading') }));
-      return;
-    }
-    if (state.proposalsError) {
-      body.append(el('div', { class: 'ai-error' }, [
-        el('span', { class: 'ai-error__text', role: 'alert', text: t('settings.ai.loadFailed') }),
-        el('button', {
-          class: 'btn btn--ghost',
-          type: 'button',
-          text: t('settings.ai.retry'),
-          on: { click: () => { loadProposals(); } },
-        }),
-      ]));
-      return;
-    }
-    if (!state.proposals.length) {
-      body.append(el('p', { class: 'ai-hint ai-proposals__empty', text: t('settings.ai.proposals.empty') }));
-      return;
-    }
-
-    const list = el('div', { class: 'ai-proposals', role: 'list' });
-    for (const proposal of sortProposals(state.proposals, state.conflictIds, now())) {
-      list.append(renderProposal(proposal));
-    }
-    body.append(list);
-  }
-
-  function renderProposal(proposal) {
-    const expired = proposalIsExpired(proposal, now());
-    const conflict = !expired && state.conflictIds.has(proposal.id);
-    const calendar = calendarById(proposal.calendarId);
-    const dot = el('span', { class: 'ai-proposal__dot', 'aria-hidden': 'true' });
-    dot.style.setProperty('--cal-color', colorHex(calendar && calendar.color) || 'var(--text-3)');
-    const diff = proposalDiff(proposal);
-    const classes = ['ai-proposal'];
-    if (conflict) classes.push('ai-proposal--conflict');
-    if (expired) classes.push('ai-proposal--expired');
-
-    const badge = el('span', {
-      class: `ai-badge ai-badge--${diff.action}`,
-      text: t(`settings.ai.proposal.${diff.action}`),
-    });
-
-    const diffLine = diff.deleteOnly
-      ? el('p', { class: 'ai-proposal__diff' }, [
-        el('span', { class: 'ai-proposal__diff-label', text: t('settings.ai.proposal.before') }),
-        el('span', { class: 'ai-proposal__diff-value', text: diff.before || t('settings.ai.proposal.none') }),
-        el('span', { class: 'ai-danger-hint', text: ` ${t('settings.ai.proposal.deleteWill')}` }),
-      ])
-      : el('p', { class: 'ai-proposal__diff' }, [
-        el('span', { class: 'ai-proposal__diff-label', text: t('settings.ai.proposal.before') }),
-        el('span', { class: 'ai-proposal__diff-value', text: diff.before || t('settings.ai.proposal.none') }),
-        el('span', { class: 'ai-proposal__diff-arrow', text: '→' }),
-        el('span', { class: 'ai-proposal__diff-label', text: t('settings.ai.proposal.after') }),
-        el('span', { class: 'ai-proposal__diff-value ai-proposal__diff-value--next', text: diff.after || t('settings.ai.proposal.none') }),
-      ]);
-
-    const actions = expired
-      ? [el('span', { class: 'ai-proposal__state', text: t('settings.ai.proposal.expired') })]
-      : conflict
-        ? [
-          el('span', { class: 'ai-proposal__state ai-proposal__state--conflict', text: t('settings.ai.proposal.conflict') }),
-          el('button', {
-            class: 'btn btn--ghost ai-proposal__refresh',
-            type: 'button',
-            text: t('settings.ai.proposal.refreshRetry'),
-            on: { click: () => { state.conflictIds.delete(proposal.id); loadProposals(); } },
-          }),
-          el('button', {
-            class: 'btn btn--danger ai-proposal__reject',
-            type: 'button',
-            text: t('settings.ai.proposal.reject'),
-            on: { click: () => requestReject(proposal) },
-          }),
-        ]
-        : [
-          el('span', { class: 'ai-proposal__expires', text: t('settings.ai.proposal.expiresIn', { h: proposalHoursLeft(proposal, now()) }) }),
-          el('button', {
-            class: 'btn btn--primary ai-proposal__accept',
-            type: 'button',
-            text: t('settings.ai.proposal.accept'),
-            on: { click: () => accept(proposal) },
-          }),
-          el('button', {
-            class: 'btn btn--danger ai-proposal__reject',
-            type: 'button',
-            text: t('settings.ai.proposal.reject'),
-            on: { click: () => requestReject(proposal) },
-          }),
-        ];
-
-    return el('div', {
-      class: classes.join(' '),
-      role: 'listitem',
-      'data-proposal-id': proposal.id,
-    }, [
-      el('div', { class: 'ai-proposal__head' }, [
-        badge,
-        dot,
-        el('span', { class: 'ai-proposal__calendar', text: calendarName(proposal.calendarId) }),
-        el('span', { class: 'ai-proposal__title', text: diff.after || diff.before || proposal.uid || '' }),
-      ]),
-      proposal.note ? el('p', { class: 'ai-proposal__note', text: proposal.note }) : null,
-      diffLine,
-      el('div', { class: 'ai-proposal__actions' }, actions),
-    ]);
-  }
-
-  async function accept(proposal) {
-    try {
-      await acceptAiProposal(proposal.id);
-      toast(t('settings.ai.toast.accepted'), { variant: 'success' });
-      state.proposals = state.proposals.filter((item) => item.id !== proposal.id);
-      state.conflictIds.delete(proposal.id);
-      renderProposals();
-      void refreshAiBadge();
-    } catch (err) {
-      const status = err && (err.status || err.code);
-      if (Number(status) === 409 || (err && err.code === 'conflict')) {
-        state.conflictIds.add(proposal.id);
-        renderProposals();
-        return;
-      }
-      toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
-    }
-  }
-
-  function requestReject(proposal) {
-    const title = proposalDiff(proposal).title || proposal.uid || '';
-    confirmAction({
-      title: t('settings.ai.proposal.rejectTitle'),
-      text: t('settings.ai.proposal.rejectText', { title }),
-      confirmLabel: t('settings.ai.proposal.reject'),
-      danger: true,
-      onConfirm: async () => {
-        try {
-          await rejectAiProposal(proposal.id);
-          toast(t('settings.ai.toast.rejected'), { variant: 'success' });
-          state.proposals = state.proposals.filter((item) => item.id !== proposal.id);
-          state.conflictIds.delete(proposal.id);
-          renderProposals();
-          void refreshAiBadge();
-        } catch (err) {
-          toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
-        }
-      },
-    });
-  }
-
-  async function loadProposals() {
-    state.proposalsLoading = true;
-    state.proposalsError = false;
-    renderProposals();
-    try {
-      const payload = await listAiProposals({ status: 'pending' });
-      state.proposals = (payload && payload.proposals) || [];
-    } catch {
-      state.proposalsError = true;
-    } finally {
-      state.proposalsLoading = false;
-      renderProposals();
-    }
-  }
-
   /* ---- 首次加载 ---- */
 
   async function refresh() {
     if (!state.settings && !state.settingsLoading) await loadService();
-    await Promise.all([loadCredentials(), loadProposals()]);
+    await loadCredentials();
     loaded = true;
   }
 
   renderService();
   renderCreds();
-  renderProposals();
 
   return {
     page,

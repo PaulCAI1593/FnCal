@@ -10,11 +10,30 @@
 //   - 受理提案的 409 带冲突详情（期望/当前 ETag），供用户侧刷新后重试；
 //   - 404 统一用 ai-grants 的 NOT_FOUND_BODY，保证「不存在」的响应体处处一致。
 
-import { NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
+import { NOT_FOUND_BODY, DELETE_MODE_TRASH, deleteModeOf } from '../lib/ai-grants.mjs';
 import { publicCredential } from '../lib/ai-store.mjs';
-import { summaryOfIcs } from '../lib/ical.mjs';
+import { proposalFieldsOfIcs, summaryOfIcs } from '../lib/ical.mjs';
+import { TRASH_RETENTION_OPTIONS } from '../lib/ai-trash.mjs';
 
 const MAX_BODY_BYTES = 64 * 1024;
+/** 0.4.12：批量决策一次最多 100 条（再多应分页，避免一个请求写太久）。 */
+const BATCH_MAX_IDS = 100;
+
+/**
+ * 0.4.12：把 store 单条决策抛出的错误映射成批量结果里的失败码。
+ * 能对应的沿用既有语义（`not_found` / `expired` / `conflict` / `calendar_missing`），
+ * 对不上的回 `failed`，并把原始 `message`/`reason` 带回去，便于前端汇总。
+ */
+function decisionCodeOf(err) {
+  if (!err) return 'failed';
+  if (err.code === 'conflict') {
+    return err.reason === 'expired' ? 'expired' : 'conflict';
+  }
+  if (err.code === 'missing_calendar') return 'calendar_missing';
+  if (err.code === 'invalid') return 'invalid';
+  if (err.code === 'forbidden') return 'forbidden';
+  return 'failed';
+}
 
 /**
  * 提案快照的标题（0.3.6 缺陷 2）。
@@ -30,6 +49,29 @@ function proposalTitle(snapshot) {
   return summaryOfIcs(snapshot.ics);
 }
 
+/**
+ * 提案快照的「时间 / 地点」（0.4.10）：卡片排版要直接可用的四个字段。
+ *
+ * 只从**该快照自己的 ICS** 解析，不把整份 ICS 回给前端；坏 ICS 给全空值，
+ * 由 `proposalFieldsOfIcs` 兜底，列表接口不会因此 500。
+ */
+function proposalCardFields(snapshot) {
+  return proposalFieldsOfIcs(snapshot && typeof snapshot === 'object' ? snapshot.ics : '');
+}
+
+/** 回收站条目的用户侧字段：**不返回 ics**（M4 §3），与提案队列同一边界。 */
+function trashView(item) {
+  return {
+    id: item.id,
+    calendarId: item.calendarId,
+    calendarName: item.calendarName,
+    uid: item.uid,
+    title: item.title,
+    credentialLabel: item.credentialLabel,
+    deletedAt: item.deletedAt,
+    restoreUntil: item.restoreUntil,
+  };
+}
 function json(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -74,9 +116,20 @@ function methodNotAllowed(res, allow) {
   json(res, 405, { ok: false, code: 'method_not_allowed', allow });
 }
 
-export function createAiApi({ aiStore, auth, logger = null } = {}) {
+export function createAiApi({ aiStore, auth, logger = null, audit = null, trash = null } = {}) {
   if (!aiStore) throw new Error('createAiApi 需要 aiStore');
   if (!auth) throw new Error('createAiApi 需要 auth');
+
+  // 0.4.12：提案决策审计。单条与批量走同一个写入口，保证「同一审计条目」口径一致；
+  // 批量在逐条审计之外再加一条汇总条目（action = bulk_accept / bulk_reject）。
+  function writeDecisionAudit(record) {
+    if (!audit || typeof audit.write !== 'function') return;
+    try {
+      audit.write({ type: 'ai', event: 'proposal-decision', ...record });
+    } catch (err) {
+      logEvent('ai-audit-error', { message: String((err && err.message) || err) });
+    }
+  }
 
   function logEvent(event, detail = {}) {
     if (logger && typeof logger.event === 'function') logger.event(event, detail);
@@ -128,6 +181,16 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
     }
     if (err.code === 'missing_calendar') {
       return json(res, 409, { ok: false, code: 'missing_calendar', message: '目标日历不存在' });
+    }
+    // 0.4.15（M23 §5）：回收站模式受理删除提案时，先写回收站再受理；
+    // 写失败要保留明确失败码，前端据此提示「日程未删除」，不能退化成 internal。
+    if (err.code === 'trash_write_failed') {
+      return json(res, err.status || 500, { ok: false, code: 'trash_write_failed', message: err.message || '回收站写入失败，日程未删除' });
+    }
+    // 0.4.13：回收站错误带明确 status（404 条目不存在 / 409 同名冲突 / 410 超保留期），
+    // 原样回中文 message，不给前端英文码。
+    if (err.status && (err.status === 404 || err.status === 409 || err.status === 410) && err.code) {
+      return json(res, err.status, { ok: false, code: err.code, message: err.message });
     }
     logEvent('ai-api-error', { message: String((err && err.message) || err) });
     return json(res, 500, { ok: false, code: 'internal', message: '服务内部错误' });
@@ -195,6 +258,63 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
     return json(res, 404, { ...NOT_FOUND_BODY });
   }
 
+  /**
+   * 0.4.15（M23 §13-6）：残留删除提案 × 回收站模式。
+   *
+   * 用户把某凭据的「删除」改成回收站之后，早先排队的删除提案若被批准，仍应走
+   * 「进回收站」而不是硬删。判定用**该提案凭据当前**的 deleteMode（不是建提案时的快照）。
+   * 顺序与 AI 直删一致：先写回收站 → 再受理；写失败不删，受理失败回滚条目。
+   * 提案模式（默认）行为完全不变：不写回收站、直接 applyChange。
+   */
+  async function acceptProposalSafely(userId, id) {
+    const proposal = await aiStore.getProposal(userId, id);
+    if (!proposal || !trash || typeof trash.add !== 'function') {
+      return aiStore.acceptProposal(userId, id);
+    }
+    let item = null;
+    if (proposal.action === 'delete') {
+      const credential = proposal.credentialId
+        ? await aiStore.getCredential(userId, proposal.credentialId)
+        : null;
+      if (credential && deleteModeOf(credential) === DELETE_MODE_TRASH) {
+        const snapshot = proposal.before && typeof proposal.before === 'object' ? proposal.before : {};
+        const settings = await aiStore.readSettings().catch(() => null);
+        const metas = await aiStore.listCalendarMetasFor(userId).catch(() => []);
+        const meta = (Array.isArray(metas) ? metas : [])
+          .find((row) => row && row.id === proposal.calendarId) || null;
+        try {
+          item = await trash.add(userId, {
+            credentialId: credential.id,
+            credentialLabel: credential.label || '',
+            calendarId: proposal.calendarId,
+            calendarName: meta ? (meta.displayName || meta.name || meta.id) : proposal.calendarId,
+            uid: proposal.uid,
+            etag: snapshot.etag || null,
+            ics: snapshot.ics || '',
+            title: snapshot.title || '',
+            retentionDays: settings ? settings.trashRetentionDays : undefined,
+          });
+        } catch {
+          // 硬规则（M4 §2⑤）：回收站写不进来就不删。
+          throw Object.assign(new Error('删除失败：回收站写入失败，日程未删除'), {
+            code: 'trash_write_failed',
+            status: 500,
+          });
+        }
+      }
+    }
+    try {
+      const result = await aiStore.acceptProposal(userId, id);
+      if (item && result && result.missing) {
+        await Promise.resolve(trash.drop(userId, item.id)).catch(() => {});
+      }
+      return result;
+    } catch (err) {
+      if (item) await Promise.resolve(trash.drop(userId, item.id)).catch(() => {});
+      throw err;
+    }
+  }
+
   async function handleProposals(req, res, identity, rest, searchParams) {
     const userId = identity.account.id;
     if (rest === '') {
@@ -202,11 +322,25 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
       const status = searchParams.get('status');
       const list = await aiStore.listProposals(userId, { status: status || null });
       const calendarIds = await aiStore.calendarIdsFor(userId);
+      // 0.4.12：徽标前缀要写凭据名（用户：「test新建」）。列表页一次批量取，不在循环里逐条读；
+      // 凭据已删/查不到 → null，前端不显示前缀（不编造名字）。
+      const credentials = await aiStore.listCredentials(userId);
+      const credentialNames = new Map(credentials.map((credential) => [credential.id, credential]));
+      const credentialNameOf = (proposal) => {
+        const credential = proposal.credentialId ? credentialNames.get(proposal.credentialId) : null;
+        const label = credential && typeof credential.label === 'string' ? credential.label.trim() : '';
+        return label || null;
+      };
       return json(res, 200, {
         ok: true,
         proposals: list.map((proposal) => ({
           id: proposal.id,
           action: proposal.action,
+          // 0.4.12：徽标文案由前端拼「凭据名 + 动作」，这里只给名字。
+          credentialName: credentialNameOf(proposal),
+          // 0.4.15（M23 §5.1）：卡片要按「该提案凭据当前 deleteMode」选影响文案，
+          // 名字可能重名，给稳定 ID 让前端去凭据列表里查模式。
+          credentialId: proposal.credentialId || null,
           calendarId: proposal.calendarId,
           uid: proposal.uid,
           note: proposal.note,
@@ -215,11 +349,25 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
           expiresAt: proposal.expiresAt,
           decidedAt: proposal.decidedAt || null,
           decidedReason: proposal.decidedReason || '',
+          // 0.4.13：用户批准 / AI 端批准（decidedBy:'agent'）——卡片据此标「AI 批准」。
+          decidedBy: proposal.decidedBy || null,
           // 用户在日历里只该看到目标日历的显示名，不需要整份 ICS。
           calendarExists: calendarIds.includes(proposal.calendarId),
-          before: proposal.before ? { etag: proposal.before.etag || null, title: proposalTitle(proposal.before) } : null,
+          // 0.4.10：卡片要的「时间 / 地点」在快照自己的 ICS 里解析成分级字段。
+          before: proposal.before
+            ? {
+              etag: proposal.before.etag || null,
+              title: proposalTitle(proposal.before),
+              ...proposalCardFields(proposal.before),
+            }
+            : null,
           after: proposal.after
-            ? { title: proposalTitle(proposal.after), summary: proposal.after.summary || '', etag: proposal.after.etag || null }
+            ? {
+              title: proposalTitle(proposal.after),
+              summary: proposal.after.summary || '',
+              etag: proposal.after.etag || null,
+              ...proposalCardFields(proposal.after),
+            }
             : null,
         })),
       });
@@ -236,21 +384,109 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
       return json(res, 200, { ok: true, pending: list.length, enabled: settings.enabled === true });
     }
 
+    // 0.4.12：批量决策（提案面板「全部批准 / 全部拒绝」）。
+    // 逐条执行、单条失败不中断；权限/过期/冲突判定全部复用 store 的单条逻辑，
+    // 批量层不重新实现。
+    if (rest === 'batch' || rest === 'batch/') {
+      if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
+      if (!requireWrite(req, res, identity)) return undefined;
+      const body = await readJsonBody(req).catch(() => ({}));
+      const action = body.action;
+      if (action !== 'accept' && action !== 'reject') {
+        return json(res, 400, { ok: false, code: 'invalid', field: 'action', message: 'action 必须是 accept 或 reject' });
+      }
+      if (!Array.isArray(body.ids) || body.ids.length === 0) {
+        return json(res, 400, { ok: false, code: 'invalid', field: 'ids', message: 'ids 必须是非空数组' });
+      }
+      if (body.ids.length > BATCH_MAX_IDS) {
+        return json(res, 400, {
+          ok: false, code: 'invalid', field: 'ids', message: `一次最多 ${BATCH_MAX_IDS} 条`,
+        });
+      }
+      const reason = typeof body.reason === 'string' ? body.reason.slice(0, 200) : '';
+      const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
+      const actor = identity.account.username || identity.account.id;
+      const results = [];
+      for (const rawId of body.ids) {
+        const id = typeof rawId === 'string' ? rawId.trim() : '';
+        if (!id) {
+          results.push({ id: rawId === undefined ? null : rawId, ok: false, code: 'invalid', message: 'id 必须是非空字符串' });
+          continue;
+        }
+        try {
+          const outcome = action === 'accept'
+            ? await acceptProposalSafely(userId, id)
+            : await aiStore.rejectProposal(userId, id, { reason });
+          if (outcome && outcome.missing) {
+            results.push({ id, ok: false, code: 'not_found', message: '提案不存在' });
+            writeDecisionAudit({ actor, userId, proposalId: id, action, ok: false, code: 'not_found', remoteAddress });
+            continue;
+          }
+          results.push({ id, ok: true, status: outcome && outcome.status ? outcome.status : '' });
+          writeDecisionAudit({ actor, userId, proposalId: id, action, ok: true, code: '', remoteAddress });
+        } catch (err) {
+          const code = decisionCodeOf(err);
+          const entry = { id, ok: false, code, message: (err && err.message) || '决策失败' };
+          if (err && err.reason) entry.reason = err.reason;
+          if (err && err.code === 'conflict' && err.details) entry.details = err.details;
+          results.push(entry);
+          writeDecisionAudit({ actor, userId, proposalId: id, action, ok: false, code, remoteAddress });
+        }
+      }
+      const okCount = results.filter((item) => item.ok).length;
+      if (audit && typeof audit.write === 'function') {
+        try {
+          // 汇总审计：一次批量只写一条，不重复写 N 条正文。
+          audit.write({
+            type: 'ai',
+            event: 'proposal-batch-decision',
+            action: action === 'accept' ? 'bulk_accept' : 'bulk_reject',
+            actor,
+            userId,
+            total: results.length,
+            ok: okCount,
+            failed: results.length - okCount,
+            remoteAddress,
+          });
+        } catch (err) {
+          logEvent('ai-audit-error', { message: String((err && err.message) || err) });
+        }
+      }
+      return json(res, 200, {
+        ok: true,
+        action,
+        total: results.length,
+        ok: okCount,
+        failed: results.length - okCount,
+        results,
+      });
+    }
+
     const matched = /^([^/]+)\/(accept|reject)$/.exec(rest);
     if (!matched) return json(res, 404, { ...NOT_FOUND_BODY });
     if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
     if (!requireWrite(req, res, identity)) return undefined;
     const [, id, action] = matched;
+    const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
+    const actor = identity.account.username || identity.account.id;
 
     if (action === 'accept') {
-      const result = await aiStore.acceptProposal(userId, id);
-      if (result && result.missing) return json(res, 404, { ...NOT_FOUND_BODY });
+      const result = await acceptProposalSafely(userId, id);
+      if (result && result.missing) {
+        writeDecisionAudit({ actor, userId, proposalId: id, action, ok: false, code: 'not_found', remoteAddress });
+        return json(res, 404, { ...NOT_FOUND_BODY });
+      }
+      writeDecisionAudit({ actor, userId, proposalId: id, action, ok: true, code: '', remoteAddress });
       return json(res, 200, { ok: true, proposal: result });
     }
     const body = await readJsonBody(req).catch(() => ({}));
     const reason = typeof body.reason === 'string' ? body.reason.slice(0, 200) : '';
     const result = await aiStore.rejectProposal(userId, id, { reason });
-    if (result && result.missing) return json(res, 404, { ...NOT_FOUND_BODY });
+    if (result && result.missing) {
+      writeDecisionAudit({ actor, userId, proposalId: id, action, ok: false, code: 'not_found', remoteAddress });
+      return json(res, 404, { ...NOT_FOUND_BODY });
+    }
+    writeDecisionAudit({ actor, userId, proposalId: id, action, ok: true, code: '', remoteAddress });
     return json(res, 200, { ok: true, proposal: result });
   }
 
@@ -271,12 +507,38 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
             return json(res, 403, { ok: false, code: 'forbidden', message: '只有管理员可以修改 AI 设置' });
           }
           if (!requireWrite(req, res, identity)) return undefined;
+          // 0.4.13（用户 2026-11-04 追加口径 + M4 §2 硬规则⑩）：设置 PUT 只剩总开关与
+          // 回收站保留期；删除方式已改为凭据字段，由 PATCH /credentials/:id 保存。
           const body = await readJsonBody(req);
-          if (typeof body.enabled !== 'boolean') {
-            return json(res, 400, { ok: false, code: 'invalid', field: 'enabled', message: 'enabled 必须是布尔值' });
+          const patch = {};
+          if (body.enabled !== undefined) {
+            if (typeof body.enabled !== 'boolean') {
+              return json(res, 400, { ok: false, code: 'invalid', field: 'enabled', message: 'enabled 必须是布尔值' });
+            }
+            patch.enabled = body.enabled;
+          }
+          if (body.deleteMode !== undefined) {
+            return json(res, 400, {
+              ok: false,
+              code: 'invalid',
+              field: 'deleteMode',
+              message: '删除方式已改为按凭据设置，请调用 PATCH /api/v1/ai/credentials/:id',
+            });
+          }
+          if (body.trashRetentionDays !== undefined) {
+            const days = Number(body.trashRetentionDays);
+            if (!TRASH_RETENTION_OPTIONS.includes(days)) {
+              return json(res, 400, {
+                ok: false, code: 'invalid', field: 'trashRetentionDays', message: 'trashRetentionDays 必须是 3、7、14 或 30',
+              });
+            }
+            patch.trashRetentionDays = days;
+          }
+          if (Object.keys(patch).length === 0) {
+            return json(res, 400, { ok: false, code: 'invalid', field: 'enabled', message: '没有可保存的设置' });
           }
           const settings = await aiStore.writeSettings(
-            { enabled: body.enabled },
+            patch,
             { actor: identity.account.username || identity.account.id },
           );
           return json(res, 200, { ok: true, settings });
@@ -284,6 +546,55 @@ export function createAiApi({ aiStore, auth, logger = null } = {}) {
         return methodNotAllowed(res, 'GET, PUT');
       }
 
+      // 0.4.13：回收站。读取即修剪（零云环境没有定时任务），恢复/清空只在本界面，
+      // MCP 不暴露这两个动作（M4 §3）。
+      if (rest === 'trash' || rest === 'trash/') {
+        if (!trash) return json(res, 404, { ...NOT_FOUND_BODY });
+        // 回收站只在日历界面操作：AI 凭据（Bearer）连读都不给，MCP 更不暴露。
+        if (identity.via !== 'session') {
+          return json(res, 403, { ok: false, code: 'forbidden', message: '回收站只能在日历界面操作' });
+        }
+        const settings = await aiStore.readSettings();
+        const retentionDays = settings.trashRetentionDays;
+        if (req.method === 'GET') {
+          const result = await trash.list(identity.account.id, { retentionDays });
+          return json(res, 200, {
+            ok: true,
+            items: result.items.map(trashView),
+            count: result.count,
+            retentionDays,
+          });
+        }
+        if (req.method === 'DELETE') {
+          if (!requireWrite(req, res, identity)) return undefined;
+          const removed = await trash.clear(identity.account.id, { retentionDays });
+          return json(res, 200, { ok: true, removed });
+        }
+        return methodNotAllowed(res, 'GET, DELETE');
+      }
+
+      const restoreMatch = /^trash\/([^/]+)\/restore\/?$/.exec(rest);
+      if (restoreMatch) {
+        if (!trash) return json(res, 404, { ...NOT_FOUND_BODY });
+        if (identity.via !== 'session') {
+          return json(res, 403, { ok: false, code: 'forbidden', message: '回收站只能在日历界面操作' });
+        }
+        if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
+        if (!requireWrite(req, res, identity)) return undefined;
+        const settings = await aiStore.readSettings();
+        const restored = await trash.restore(
+          identity.account.id,
+          decodeURIComponent(restoreMatch[1]),
+          { retentionDays: settings.trashRetentionDays },
+        );
+        return json(res, 200, {
+          ok: true,
+          uid: restored.uid,
+          calendarId: restored.calendarId,
+          title: restored.title,
+          calendarName: restored.calendarName,
+        });
+      }
       if (rest === 'credentials' || rest.startsWith('credentials/')) {
         return await handleCredentials(req, res, identity, rest.replace(/^credentials\/?/, ''));
       }

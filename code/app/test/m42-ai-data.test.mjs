@@ -94,7 +94,14 @@ eq('read 档 isReadable', true, grantsMod.isReadable(cred2, 'tasks'));
 eq('未知日历 → hidden', 'hidden', grantsMod.grantLevel(cred2, 'nope'));
 eq('未知档位降级 hidden', 'hidden', grantsMod.grantLevel({ grants: { default: 'admin' } }, 'default'));
 eq('visibleCalendarIds 只含可见', 'default,tasks', grantsMod.visibleCalendarIds(cred2, ['default', 'tasks', 'x']).join(','));
-eq('删除永远只能走提案', false, grantsMod.canDelete(cred2, 'default'));
+// 0.4.13（用户 2026-11-04 口径更正：删除方式按凭据存）：原「删除永远只能走提案」改为矩阵断言。
+eq('无 deleteMode → 提案模式，canDelete=false', false, grantsMod.canDelete(cred2, 'default'));
+eq('deleteMode=trash + write 档 → canDelete', true,
+  grantsMod.canDelete({ ...cred2, deleteMode: 'trash' }, 'default'));
+eq('deleteMode=trash + read 档 → 不能删', false,
+  grantsMod.canDelete({ ...cred2, deleteMode: 'trash' }, 'tasks'));
+eq('deleteMode=trash + 隐藏日历 → 不能删', false,
+  grantsMod.canDelete({ ...cred2, deleteMode: 'trash' }, 'nope'));
 eq('writeMode 默认 proposal', 'proposal', grantsMod.writeModeOf(cred2));
 eq('不可见 404 体与 uid 不存在同字节', JSON.stringify({ ok: false, code: 'not_found' }), grantsMod.NOT_FOUND_JSON);
 eq('notFoundBody() 每次都是新对象但字节相同', true,

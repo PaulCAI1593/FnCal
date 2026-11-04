@@ -268,7 +268,8 @@ try {
   const writeNames = listWrite.body.result.tools.map((tool) => tool.name).sort();
   eq('可写凭据 4+3 个工具', [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES].sort().join(','), writeNames.join(','));
   const deleteDef = listWrite.body.result.tools.find((tool) => tool.name === 'delete_event');
-  ok('delete_event 的 description 讲明只出提案', deleteDef.description.includes('提案') && deleteDef.description.includes('不会直接删除'));
+  // 0.4.13 起删除有双模式：提案模式只出提案，回收站模式立即删除并进回收站。
+  ok('delete_event 的 description 讲明双模式', deleteDef.description.includes('提案模式') && deleteDef.description.includes('回收站模式'));
 
   const nobody = await mintCredential(admin, { label: 'MCP 全不可见', grants: {} });
   const listNobodyCal = await callTool(nobody.token, 'list_calendars');
