@@ -227,8 +227,13 @@ try {
   });
   eq('只带 Basic → 401', 401, basicOnly.status);
 
+  /* 0.4.18 起 GET /mcp 是 SSE 下行通道，不再一律 405：
+     无会话头的 GET 按「会话不存在」处理（404 session_not_found）；
+     有会话头 + Accept: text/event-stream 的 GET 返回 200 与心跳，由 m49-mcp-elicitation 覆盖。
+     旧断言只验 405 状态码；新断言同时验状态码与错误码，覆盖不减弱。 */
   const getMcp = await mcp(undefined, { token: tokenRead, method: 'GET', bodyOverride: undefined });
-  eq('GET /mcp → 405（无状态实现不提供 SSE 下行通道）', 405, getMcp.status);
+  eq('GET /mcp（无会话头）→ 404 会话不存在', 404, getMcp.status);
+  eq('GET /mcp（无会话头）→ code = session_not_found', 'session_not_found', getMcp.body && getMcp.body.code);
 
   /* ------------------------------------------------------------ ② 协议面 */
 

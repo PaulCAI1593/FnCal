@@ -1050,6 +1050,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         el('div', { class: 'settings__control' }, [agentSwitch.node]),
       ]),
       el('p', { class: 'ai-hint', text: t('settings.ai.agentApproval.hint') }),
+      /* 0.4.18 M4 §5：有的客户端会弹确认框，行为与文字确认一致，用户要知道差别。 */
+      el('p', { class: 'ai-hint', text: t('settings.ai.agentApproval.clientHint') }),
     ]);
 
     /* 时间窗（规范 §2.3；0.3.3 用户：「过去日期和未来日期可以无限制」） */

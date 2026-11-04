@@ -12,28 +12,12 @@
 
 import { NOT_FOUND_BODY, DELETE_MODE_TRASH, deleteModeOf } from '../lib/ai-grants.mjs';
 import { publicCredential } from '../lib/ai-store.mjs';
+import { runProposalBatch } from '../lib/ai-service.mjs';
 import { proposalFieldsOfIcs, summaryOfIcs } from '../lib/ical.mjs';
 import { TRASH_RETENTION_OPTIONS } from '../lib/ai-trash.mjs';
 
 const MAX_BODY_BYTES = 64 * 1024;
-/** 0.4.12：批量决策一次最多 100 条（再多应分页，避免一个请求写太久）。 */
-const BATCH_MAX_IDS = 100;
-
-/**
- * 0.4.12：把 store 单条决策抛出的错误映射成批量结果里的失败码。
- * 能对应的沿用既有语义（`not_found` / `expired` / `conflict` / `calendar_missing`），
- * 对不上的回 `failed`，并把原始 `message`/`reason` 带回去，便于前端汇总。
- */
-function decisionCodeOf(err) {
-  if (!err) return 'failed';
-  if (err.code === 'conflict') {
-    return err.reason === 'expired' ? 'expired' : 'conflict';
-  }
-  if (err.code === 'missing_calendar') return 'calendar_missing';
-  if (err.code === 'invalid') return 'invalid';
-  if (err.code === 'forbidden') return 'forbidden';
-  return 'failed';
-}
+/* 0.4.19：批量上限与循环判定已抽到 lib/ai-service.mjs（REST 与 MCP 共用一份，M4 §1 S6）。 */
 
 /**
  * 提案快照的标题（0.3.6 缺陷 2）。
@@ -385,55 +369,43 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
     }
 
     // 0.4.12：批量决策（提案面板「全部批准 / 全部拒绝」）。
-    // 逐条执行、单条失败不中断；权限/过期/冲突判定全部复用 store 的单条逻辑，
-    // 批量层不重新实现。
+    // 0.4.19：上限、逐条不中断、部分失败汇总与失败码映射抽到 `runProposalBatch`
+    // （lib/ai-service.mjs），与 MCP `decide_proposals` 的 all 模式共用一份判定。
+    // 本路由只提供「单条怎么决策」：受理走回收站感知的 acceptProposalSafely。
     if (rest === 'batch' || rest === 'batch/') {
       if (req.method !== 'POST') return methodNotAllowed(res, 'POST');
       if (!requireWrite(req, res, identity)) return undefined;
       const body = await readJsonBody(req).catch(() => ({}));
       const action = body.action;
-      if (action !== 'accept' && action !== 'reject') {
-        return json(res, 400, { ok: false, code: 'invalid', field: 'action', message: 'action 必须是 accept 或 reject' });
-      }
-      if (!Array.isArray(body.ids) || body.ids.length === 0) {
-        return json(res, 400, { ok: false, code: 'invalid', field: 'ids', message: 'ids 必须是非空数组' });
-      }
-      if (body.ids.length > BATCH_MAX_IDS) {
-        return json(res, 400, {
-          ok: false, code: 'invalid', field: 'ids', message: `一次最多 ${BATCH_MAX_IDS} 条`,
-        });
-      }
       const reason = typeof body.reason === 'string' ? body.reason.slice(0, 200) : '';
       const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
       const actor = identity.account.username || identity.account.id;
-      const results = [];
-      for (const rawId of body.ids) {
-        const id = typeof rawId === 'string' ? rawId.trim() : '';
-        if (!id) {
-          results.push({ id: rawId === undefined ? null : rawId, ok: false, code: 'invalid', message: 'id 必须是非空字符串' });
-          continue;
+      let batch;
+      try {
+        batch = await runProposalBatch({
+          action,
+          ids: body.ids,
+          decideOne: (id) => (action === 'accept'
+            ? acceptProposalSafely(userId, id)
+            : aiStore.rejectProposal(userId, id, { reason })),
+          onItem: (entry) => writeDecisionAudit({
+            actor,
+            userId,
+            proposalId: entry.id,
+            action,
+            ok: entry.ok,
+            code: entry.ok ? '' : entry.code,
+            remoteAddress,
+          }),
+        });
+      } catch (err) {
+        if (err && err.code === 'invalid') {
+          return json(res, 400, {
+            ok: false, code: 'invalid', field: err.field || null, message: err.message || '参数不合法',
+          });
         }
-        try {
-          const outcome = action === 'accept'
-            ? await acceptProposalSafely(userId, id)
-            : await aiStore.rejectProposal(userId, id, { reason });
-          if (outcome && outcome.missing) {
-            results.push({ id, ok: false, code: 'not_found', message: '提案不存在' });
-            writeDecisionAudit({ actor, userId, proposalId: id, action, ok: false, code: 'not_found', remoteAddress });
-            continue;
-          }
-          results.push({ id, ok: true, status: outcome && outcome.status ? outcome.status : '' });
-          writeDecisionAudit({ actor, userId, proposalId: id, action, ok: true, code: '', remoteAddress });
-        } catch (err) {
-          const code = decisionCodeOf(err);
-          const entry = { id, ok: false, code, message: (err && err.message) || '决策失败' };
-          if (err && err.reason) entry.reason = err.reason;
-          if (err && err.code === 'conflict' && err.details) entry.details = err.details;
-          results.push(entry);
-          writeDecisionAudit({ actor, userId, proposalId: id, action, ok: false, code, remoteAddress });
-        }
+        throw err;
       }
-      const okCount = results.filter((item) => item.ok).length;
       if (audit && typeof audit.write === 'function') {
         try {
           // 汇总审计：一次批量只写一条，不重复写 N 条正文。
@@ -443,23 +415,16 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
             action: action === 'accept' ? 'bulk_accept' : 'bulk_reject',
             actor,
             userId,
-            total: results.length,
-            ok: okCount,
-            failed: results.length - okCount,
+            total: batch.total,
+            ok: batch.ok,
+            failed: batch.failed,
             remoteAddress,
           });
         } catch (err) {
           logEvent('ai-audit-error', { message: String((err && err.message) || err) });
         }
       }
-      return json(res, 200, {
-        ok: true,
-        action,
-        total: results.length,
-        ok: okCount,
-        failed: results.length - okCount,
-        results,
-      });
+      return json(res, 200, { ok: true, action, ...batch });
     }
 
     const matched = /^([^/]+)\/(accept|reject)$/.exec(rest);

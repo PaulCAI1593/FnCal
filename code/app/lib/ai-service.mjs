@@ -16,10 +16,12 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  DELETE_MODE_TRASH,
   NOT_FOUND_BODY,
   WRITE_MODE_DIRECT,
   canAgentApprove,
   canDelete,
+  deleteModeOf,
   grantLevel,
   isReadable,
   isWritable,
@@ -41,6 +43,84 @@ const DRAFT_FIELDS = Object.freeze([
 
 export function invalidError(field, message) {
   return Object.assign(new Error(message || '参数不合法'), { code: 'invalid', status: 400, field });
+}
+
+/* ------------------------------------------- 0.4.19：批量决策（REST 与 MCP 共用） */
+
+/**
+ * 0.4.12 / 0.4.19：批量决策一次最多 100 条（再多应分页，避免一个请求写太久）。
+ * 网页端 `POST /api/v1/ai/proposals/batch` 与 MCP `decide_proposals` 用同一个上限。
+ */
+export const BATCH_MAX_IDS = 100;
+
+/**
+ * 0.4.12：把 store 单条决策抛出的错误映射成批量结果里的失败码。
+ * 能对应的沿用既有语义（`not_found` / `expired` / `conflict` / `calendar_missing`），
+ * 对不上的回 `failed`，并把原始 `message`/`reason` 带回去，便于前端汇总。
+ */
+export function decisionCodeOf(err) {
+  if (!err) return 'failed';
+  if (err.code === 'conflict') {
+    return err.reason === 'expired' ? 'expired' : 'conflict';
+  }
+  if (err.code === 'missing_calendar') return 'calendar_missing';
+  if (err.code === 'invalid') return 'invalid';
+  if (err.code === 'forbidden') return 'forbidden';
+  return 'failed';
+}
+
+/**
+ * 0.4.19（M4 §1 S6 / §2 硬规则 3–5）：批量决策的**唯一**判定与循环。
+ *
+ * 抽到服务层的理由：网页端批量（`api/ai.mjs` 的 `proposals/batch`）与 MCP
+ * `decide_proposals` 的 `all` 模式必须同一套「上限 / 非空 / 逐条不中断 / 部分失败汇总」，
+ * 任何一处再写一遍就会分叉。本函数只负责批量层判定：**逐条怎么决策仍由 `decideOne` 提供**
+ * （REST 用回收站感知的受理、MCP 用带凭据闸门的 agentDecide），它不是第二套授权判定。
+ *
+ * @param {(id: string) => Promise<object|null>} decideOne 单条决策；返回 `{missing:true}` 或结果
+ * @param {(entry: object, action: string) => void} [onItem] 每条之后回调（逐条审计用）
+ */
+export async function runProposalBatch({ action, ids, decideOne, onItem = null } = {}) {
+  if (action !== 'accept' && action !== 'reject') {
+    throw invalidError('action', 'action 必须是 accept 或 reject');
+  }
+  if (!Array.isArray(ids) || ids.length === 0) {
+    throw invalidError('ids', 'ids 必须是非空数组');
+  }
+  if (ids.length > BATCH_MAX_IDS) {
+    throw invalidError('ids', `一次最多 ${BATCH_MAX_IDS} 条`);
+  }
+  const results = [];
+  for (const rawId of ids) {
+    const id = typeof rawId === 'string' ? rawId.trim() : '';
+    let entry;
+    if (!id) {
+      entry = { id: rawId === undefined ? null : rawId, ok: false, code: 'invalid', message: 'id 必须是非空字符串' };
+    } else {
+      try {
+        const outcome = await decideOne(id);
+        if (outcome && outcome.missing) {
+          entry = { id, ok: false, code: 'not_found', message: '提案不存在' };
+        } else {
+          entry = { id, ok: true, status: outcome && outcome.status ? outcome.status : '' };
+        }
+      } catch (err) {
+        entry = { id, ok: false, code: decisionCodeOf(err), message: (err && err.message) || '决策失败' };
+        if (err && err.reason) entry.reason = err.reason;
+        if (err && err.code === 'conflict' && err.details) entry.details = err.details;
+      }
+    }
+    results.push(entry);
+    if (typeof onItem === 'function') {
+      try {
+        onItem(entry, action);
+      } catch {
+        /* 逐条审计失败不能中断批量 */
+      }
+    }
+  }
+  const okCount = results.filter((item) => item.ok).length;
+  return { total: results.length, ok: okCount, failed: results.length - okCount, results };
 }
 
 /**
@@ -695,6 +775,57 @@ export function createAiService({
    *   ② 只处理本凭据自己的 pending 提案，别家凭据 / 不存在一律 missing（不证明存在性）；
    *   ③ 批准前**再校验**提案所属日历仍可见且是写档（防改权限后越权）。
    */
+  /**
+   * 0.4.19（M4 §1 S5 的回收站口径）：AI 端受理「删除类」提案时，若该凭据**当前**
+   * deleteMode 是回收站，先写回收站再受理；写失败不删、受理失败回滚条目。
+   * 与 0.4.15 网页端 `acceptProposalSafely` 同一顺序（先写回收站 → 再受理 → 失败回滚），
+   * 只是这里的决策来源是 AI（`decidedBy:'agent'`），所以留在服务层而不是 REST 路由里。
+   * 提案模式（默认）行为不变：不写回收站、直接 applyChange。
+   */
+  async function acceptProposalForAgent(ctx, proposal) {
+    let item = null;
+    if (
+      proposal
+      && proposal.action === 'delete'
+      && trash
+      && typeof trash.add === 'function'
+      && deleteModeOf(ctx.credential) === DELETE_MODE_TRASH
+    ) {
+      const snapshot = proposal.before && typeof proposal.before === 'object' ? proposal.before : {};
+      const settings = await aiStore.readSettings().catch(() => null);
+      const meta = await calendarMetaOf(ctx.userId, proposal.calendarId).catch(() => null);
+      try {
+        item = await trash.add(ctx.userId, {
+          credentialId: ctx.credential.id,
+          credentialLabel: ctx.credential.label || '',
+          calendarId: proposal.calendarId,
+          calendarName: meta ? (meta.displayName || meta.name || meta.id) : proposal.calendarId,
+          uid: proposal.uid,
+          etag: snapshot.etag || null,
+          ics: snapshot.ics || '',
+          title: snapshot.title || '',
+          retentionDays: settings ? settings.trashRetentionDays : undefined,
+        });
+      } catch {
+        // 硬规则：回收站写不进来就不删。
+        throw Object.assign(new Error('删除失败：回收站写入失败，日程未删除'), {
+          code: 'trash_write_failed',
+          status: 500,
+        });
+      }
+    }
+    try {
+      const saved = await aiStore.acceptProposal(ctx.userId, proposal.id, { decidedBy: 'agent' });
+      if (item && saved && saved.missing) {
+        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+      }
+      return saved;
+    } catch (err) {
+      if (item) await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+      throw err;
+    }
+  }
+
   async function agentDecide(ctx, id, action, { reason = '' } = {}) {
     if (!canAgentApprove(ctx.credential)) throw agentApprovalDisabled();
     const proposal = await aiStore.getProposal(ctx.userId, id);
@@ -704,7 +835,7 @@ export function createAiService({
       if (!isWritable(ctx.credential, proposal.calendarId)) return { missing: true };
       if (!(await aiStore.calendarExistsFor(ctx.userId, proposal.calendarId))) return { missing: true };
       ctx.action = 'proposal-accept';
-      const saved = await aiStore.acceptProposal(ctx.userId, id, { decidedBy: 'agent' });
+      const saved = await acceptProposalForAgent(ctx, proposal);
       if (saved && saved.missing) return { missing: true };
       return { proposal: proposalView(saved, ctx.nowMs) };
     }

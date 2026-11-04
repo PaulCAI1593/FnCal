@@ -389,7 +389,9 @@ try {
   ok('列表含时间/地点字段', 'start' in agentList[0] && 'end' in agentList[0] && 'location' in agentList[0] && agentList[0].allDay === false);
   ok('列表不带 ICS', !agentProposals.toolText.includes('BEGIN:VCALENDAR'));
 
-  const approve = await callTool(agent.token, 'approve_proposal', { id: agentList[0].id });
+  // 0.4.17 起 approve/reject 必须先带 confirmed: true（文字确认闸门）；本用例只验证批准链路，
+  // 因此直接带确认位，未确认分支由 m48-mcp-confirmed 覆盖。
+  const approve = await callTool(agent.token, 'approve_proposal', { id: agentList[0].id, confirmed: true });
   eq('AI 端批准删除类 → 成功', true, JSON.parse(approve.toolText).approved);
   ok('批准后对象被删除', !objectExists(userId, 'default', 'trash-b'));
   const accepted = await raw('/api/v1/ai/proposals?status=accepted', { cookie: admin.cookie });
@@ -404,7 +406,7 @@ try {
   await callTool(createByAgent.token, 'delete_event', { uid: 'trash-a' });
   const ownList = JSON.parse((await callTool(createByAgent.token, 'list_proposals')).toolText).proposals;
   eq('自建提案 1 条', 1, ownList.length);
-  const wrongOwner = await callTool(agent.token, 'approve_proposal', { id: ownList[0].id });
+  const wrongOwner = await callTool(agent.token, 'approve_proposal', { id: ownList[0].id, confirmed: true });
   eq('批准别家凭据的提案 → isError', true, wrongOwner.result.isError);
 
   // 改权限后二次校验：先自建提案，再把 grants 收紧，批准必须失败。
@@ -422,14 +424,14 @@ try {
     method: 'PATCH', cookie: admin.cookie, csrf: admin.csrf, body: { grants: {} },
   });
   eq('收紧授权 → 200', 200, patch.status);
-  const afterShrink = await callTool(shrink.token, 'approve_proposal', { id: shrinkList[0].id });
+  const afterShrink = await callTool(shrink.token, 'approve_proposal', { id: shrinkList[0].id, confirmed: true });
   eq('改权限后批准被拒', true, afterShrink.result.isError);
 
   // 拒绝：权限恢复后再次开会话。
   const rejectCred = await mintCredential(admin, { label: 'AI 拒绝', grants: { default: 'write' }, agentApproval: true });
   await callTool(rejectCred.token, 'delete_event', { uid: 'trash-a' });
   const rejectList = JSON.parse((await callTool(rejectCred.token, 'list_proposals')).toolText).proposals;
-  const rejected = await callTool(rejectCred.token, 'reject_proposal', { id: rejectList[0].id, reason: '不需要了' });
+  const rejected = await callTool(rejectCred.token, 'reject_proposal', { id: rejectList[0].id, reason: '不需要了', confirmed: true });
   eq('AI 端拒绝 → 成功', true, JSON.parse(rejected.toolText).rejected);
   ok('拒绝后对象还在', objectExists(userId, 'default', 'trash-a'));
 

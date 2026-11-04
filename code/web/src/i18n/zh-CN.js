@@ -818,6 +818,8 @@ export const zhCN = {
   'settings.ai.trash.deletedAt': '删除于 {at}',
   'settings.ai.agentApproval.label': '允许代办批准',
   'settings.ai.agentApproval.hint': '打开后，AI 助手会在对话里列出提案内容问你批准还是拒绝；你同意后才执行。',
+  // 0.4.18（M4-0.4.18 S8）：部分客户端支持 elicitation 弹窗，行为等价，提前说明。
+  'settings.ai.agentApproval.clientHint': '支持的客户端会弹出确认按钮；其他客户端在对话里文字确认。',
   'settings.ai.agentApproval.confirmTitle': '允许 AI 助手代你批准',
   'settings.ai.agentApproval.confirmText': '打开后，使用该凭据的 AI 助手会先在对话里列出提案摘要并发起确认，只有你明确同意后，它才会批准或拒绝。它不会自行批准，也不会批量静默执行。',
   'settings.ai.agentApproval.confirmLabel': '允许',

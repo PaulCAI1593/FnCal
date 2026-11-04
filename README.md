@@ -6,7 +6,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 装好之后在浏览器里管理日程；也可以把它当 CalDAV 服务器，让手机、电脑上的日历客户端直接读写同一批日程。
 它还内置 MCP 服务器：Claude、ChatGPT、Cursor 这类 AI 客户端可以接入你的日历，而**能看到哪些日历、能不能写、能读哪段时间，全部由你逐项授权**。
 
-当前版本：**0.4.16**
+当前版本：**0.4.19**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -41,7 +41,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 
 **AI 助手接入（MCP）**
 
-- 内置 MCP 服务器（`POST /mcp`，无状态 JSON-RPC）。Claude、ChatGPT、Cursor 等支持自定义 MCP 服务器的客户端可直接接入
+- 内置 MCP 服务器（`POST /mcp`，Streamable HTTP + JSON-RPC，`initialize` 返回 `Mcp-Session-Id`）。Claude、Cursor 等支持自定义 MCP 服务器的客户端可直接接入；支持弹窗确认的客户端会在 AI 批准前弹出选项，不支持的自动走文字确认
 - **一个 AI 客户端一个凭据**：单独签发、单独吊销、单独限流；令牌形如 `fncal_ai_…`，只显示一次
 - **按日历授权，三档**：不可见 / 只读 / 读写。默认新建的凭据对所有日历都是「不可见」
 - **「不可见」等于不存在**：日历列表里没有它，搜索、空闲检测、冲突检测、单条查询与按 id 访问一律按不存在处理（返回 404，不泄露它存在）
@@ -49,11 +49,11 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 - **字段级开关**：标题与时间必给；地点、描述、参与者可选（默认只给地点）
 - **新建、修改：两档，按凭据选**——「提案」或「直接通过」。默认提案：AI 提出方案，你在提案面板点「接受」才真正落库；提案 24 小时有效，接受时做版本冲突检测
 - **删除：两档，按凭据选**——「提案」或「回收站」。回收站档下 AI 删除立即生效，日程进入回收站，保留期内可在提案面板「最近删除」还原；回收站保留期默认 7 天，可选 3 / 7 / 14 / 30 天。两种档位切换都要二次确认
-- **对话内代办批准**（可选，默认关）：打开后 AI 助手可以在对话里替你执行提案，但必须先列出提案摘要、得到你明确同意，一次只处理一条；不允许自行批准，也不允许批量静默执行
+- **对话内代办批准**（可选，默认关）：打开后 AI 助手可以在对话里替你执行提案，但**必须先让你选「全部批准」还是「逐条审批」**——支持弹窗的客户端由 FnCal 直接弹选项，不支持的客户端由 AI 用文字问，服务端在没选模式时返回「需要先选模式」且一条都不执行。批准前必须列出提案摘要、得到你明确同意；不允许自行批准，也不允许静默批量。「全部批准」一次最多 100 条，逐条执行；部分失败不中断，最后给成功 / 失败汇总。确认方式有两种：支持 MCP 弹窗的客户端（Cursor、VS Code、Claude Code 等）会在调用批准前弹出选项，你点批准 / 拒绝 / 取消；不支持的客户端走文字确认——AI 先展示摘要，你同意后它再带 `confirmed: true` 重调，服务端只认这个确认参数，无法证明你真的点过
 - **检查更新**：头像菜单「立即同步」下方有「检查更新」；弹窗显示当前版本、更新源（国内加速 / GitHub 直连）与结果，发现新版本可直达下载页
 - 按凭据限流（默认 60 次/分钟，可按凭据调整），审计只记工具名与时间，不记令牌与事件正文
 - **待确认提案看顶栏铃铛**：AI 接入关闭时铃铛隐藏；开启后一直显示——没有待确认是普通描边图标，有待确认变为主题色实心，悬停提示与读屏标签会报条数。点铃铛打开提案队列，处理完最后一条后恢复描边。设置里不再有红点
-- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.4.16.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明
+- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.4.19.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明。技能包可自升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 gh-proxy / jsDelivr / raw 三个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话
 - 认证用自定义 Bearer 令牌，不使用 OAuth；客户端需要支持「Streamable HTTP + 自定义 Authorization 头」
 
 **中文与移动端**
@@ -88,7 +88,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 从本仓库 Release 下载 `FnCal-0.4.16.fpk`；
+1. 从本仓库 Release 下载 `FnCal-0.4.19.fpk`；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -96,8 +96,8 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.4.16.fpk
-# Windows: Get-FileHash .\FnCal-0.4.16.fpk -Algorithm SHA256
+sha256sum FnCal-0.4.19.fpk
+# Windows: Get-FileHash .\FnCal-0.4.19.fpk -Algorithm SHA256
 ```
 
 期望值见 `SHA256SUMS.txt`（正文内也附了一份）。
@@ -152,10 +152,10 @@ sha256sum FnCal-0.4.16.fpk
 |---|---|
 | 连接地址 | `http(s)://<你的地址>/mcp`（直连用 http，套 HTTPS 反代用 https；地址在 AI 页的「服务」块里，可复制） |
 | 认证 | `Authorization: Bearer fncal_ai_…` |
-| 协议 | MCP Streamable HTTP，无状态（不建会话） |
-| 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；提案：`list_proposals` / `approve_proposal` / `reject_proposal`（后三个只在凭据开启「对话内代办批准」后可用，且必须先问你、一次一条） |
+| 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500，只服务弹窗与 `GET /mcp`）。不带会话头的客户端照常可用，走文字确认 |
+| 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用）。`decide_proposals` 先问你「全部批准 / 逐条审批」——支持弹窗的客户端由 FnCal 弹选项，不支持的客户端由 AI 用文字问，服务端在缺 `scope` 时返回 `mode_required` 且一条都不执行；`approve_proposal` / `reject_proposal`（逐条模式的单条批准）也必须带 `confirmed: true`，否则返回 `confirmation_required` 与服务端生成的摘要 |
 
-细节与排错见技能包 `FnCal-MCP-Skill-0.4.16.zip` 里的 `reference/setup.md`。
+细节与排错见技能包 `FnCal-MCP-Skill-0.4.19.zip` 里的 `reference/setup.md`。
 
 ---
 
