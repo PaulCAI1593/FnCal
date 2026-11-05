@@ -526,7 +526,72 @@ await raw('/api/v1/kv/cal%3Asettings', {
   method: 'PUT', cookie: admin.cookie, csrf: admin.csrf, body: originalSettings,
 });
 
-/* -------- 规则：页面仍不含 API 路径/第三方资源；令牌只在 action -------- */
+/* -------- S15/S16（0.5.2）：审批页显示地点与备注，与提案队列同款 -------- */
+  const locStart = Date.parse('2026-12-07T04:00:00Z');
+  const locCreated = await callTool(plainToken, 'create_event', {
+    calendarId: 'default',
+    title: 'S15 地点与备注',
+    start: new Date(locStart).toISOString(),
+    end: new Date(locStart + 30 * 60 * 1000).toISOString(),
+    location: '5F 大会议室, B 座\n请带电脑',
+    note: 'AI：为周会新建',
+  });
+  ok('S15 create_event(location+note) → 提案', JSON.parse(locCreated.toolText).applied === false,
+    locCreated.toolText.slice(0, 200));
+  const locRows = JSON.parse((await callTool(plainToken, 'list_proposals')).toolText).proposals || [];
+  const locRow = locRows.find((row) => row.title === 'S15 地点与备注');
+  ok('S15 找到地点提案', Boolean(locRow), JSON.stringify(locRows.map((row) => row.title)));
+  const locAsk = await callTool(plainToken, 'decide_proposals', { action: 'approve', ids: [locRow.id] });
+  const locPath = `/a/${(/\/a\/([A-Za-z0-9_-]{20,})$/.exec(String(sc(locAsk.result).approvalUrl || '')) || [])[1] || ''}`;
+  const locPage = await getPage(locPath);
+  eq('S15 地点页 → 200', 200, locPage.status);
+  ok('S15 地点行渲染（换行折叠成单行）',
+    locPage.text.includes('<span class="ai-proposal__location" title="5F 大会议室, B 座 请带电脑">5F 大会议室, B 座 请带电脑</span>'),
+    '未找到地点行');
+  ok('S15 无描述时正文行回落 AI 备注', locPage.text.includes('<p class="ai-proposal__note ai-proposal__desc" title="AI：为周会新建">AI：为周会新建</p>'),
+    '未找到备注行');
+
+  // 删除类：固定影响文案 + AI 备注只作 title（M23 §2.2），与提案队列一致。
+  writeObject(userId, 'default', 's16-del', icsEvent({ uid: 's16-del', summary: 'S16 待删', start: START, end: START + HOUR }));
+  const delNoNote = await callTool(plainToken, 'delete_event', { uid: 's16-del', note: 'AI：重复日程' });
+  ok('S16 delete_event(note) → 提案', JSON.parse(delNoNote.toolText).applied === false);
+  const delRows = JSON.parse((await callTool(plainToken, 'list_proposals')).toolText).proposals || [];
+  const delRow = delRows.find((row) => row.uid === 's16-del');
+  const delAsk = await callTool(plainToken, 'decide_proposals', { action: 'approve', ids: [delRow.id] });
+  const delPath = `/a/${(/\/a\/([A-Za-z0-9_-]{20,})$/.exec(String(sc(delAsk.result).approvalUrl || '')) || [])[1] || ''}`;
+  const delPage = await getPage(delPath);
+  ok('S16 删除卡片显示固定影响文案',
+    delPage.text.includes('<p class="ai-proposal__note ai-proposal__impact" title="AI：重复日程">将删除这一条日程</p>'),
+    '未找到影响文案');
+  ok('S16 删除卡片不把 AI 备注当正文重复渲染', !delPage.text.includes('>AI：重复日程<'), '备注被当正文渲染');
+
+  /* -------- S17（0.5.2）：正文行显示日程描述，与提案队列同一口径 -------- */
+  const descStart = Date.parse('2026-12-08T04:00:00Z');
+  const descCreated = await callTool(plainToken, 'create_event', {
+    calendarId: 'default',
+    title: 'S17 描述一行',
+    start: new Date(descStart).toISOString(),
+    end: new Date(descStart + 30 * 60 * 1000).toISOString(),
+    location: '3F 小会议室',
+    description: '周会：同步进度\n带上报表',
+    note: 'AI：为周会新建',
+  });
+  ok('S17 create_event(description) → 提案', JSON.parse(descCreated.toolText).applied === false,
+    descCreated.toolText.slice(0, 200));
+  const descRows = JSON.parse((await callTool(plainToken, 'list_proposals')).toolText).proposals || [];
+  const descRow = descRows.find((row) => row.title === 'S17 描述一行');
+  ok('S17 list_proposals 带 description 字段',
+    Boolean(descRow) && descRow.description === '周会：同步进度\n带上报表',
+    JSON.stringify(descRow && descRow.description));
+  const descAsk = await callTool(plainToken, 'decide_proposals', { action: 'approve', ids: [descRow.id] });
+  const descPath = `/a/${(/\/a\/([A-Za-z0-9_-]{20,})$/.exec(String(sc(descAsk.result).approvalUrl || '')) || [])[1] || ''}`;
+  const descPage = await getPage(descPath);
+  ok('S17 审批页描述行渲染（换行折叠、单行，AI 备注进 title）',
+    descPage.text.includes('<p class="ai-proposal__note ai-proposal__desc" title="周会：同步进度 带上报表 · AI 备注：AI：为周会新建">周会：同步进度 带上报表</p>'),
+    descPage.text.includes('ai-proposal__desc') ? '描述行存在但文本不符' : '未找到描述行');
+  ok('S17 AI 备注不占正文', !descPage.text.includes('>AI：为周会新建<'), '备注被当正文渲染');
+
+  /* -------- 规则：页面仍不含 API 路径/第三方资源；令牌只在 action -------- */
   const rulePage = await getPage(persistPath.replace(/\/$/, ''));
   ok('规则 页面不含 /api/', !rulePage.text.includes('/api/'));
   ok('规则 页面无第三方资源', !/<(script|link)\b[^>]*(https?:)?\/\//i.test(rulePage.text));

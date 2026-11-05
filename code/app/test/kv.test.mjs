@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * M3.5 REST + KV facade tests (port 5291, two accounts).
+ * M3.5 REST + KV facade tests (port 5297, two accounts; 0.4.22 起 5291 在本机 EACCES)。
  *
  * Verifies the `puter.kv`-shaped surface the web client needs:
  *   CRUD + prefix list (`cal:evt:*` / `cal:task:*` / `cal:settings` / generic),
@@ -18,7 +18,7 @@ import { hashPassword } from '../auth/accounts.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
-const PORT = Number(process.env.CALDAV_KV_PORT || 5291);
+const PORT = Number(process.env.CALDAV_KV_PORT || 5297);
 const BASE = `http://127.0.0.1:${PORT}`;
 const VAR_DIR = '.var-kv-test';
 
@@ -258,3 +258,4 @@ main().catch((err) => {
   if (child) child.kill();
   process.exit(2);
 });
+

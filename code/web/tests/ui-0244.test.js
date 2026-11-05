@@ -46,6 +46,8 @@ const { openAccountDialog } = await import('../src/js/account-dialog.js');
 const { DEFAULT_SETTINGS } = await import('../src/js/store.js');
 
 const REPO = 'https://github.com/PaulCAI1593/FnCal';
+// 0.4.30 起口径（用户 2026-11-06 00:55 定：项目页面放到「发布者」链接，开发者仍是 GitHub 仓库）。
+const PROJECT_PAGE = 'https://paulcai1593.github.io/FnCal/';
 const readSrc = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 function makeStore() {
@@ -124,12 +126,13 @@ describe('0.2.44 设置页脚：开发者 · 项目仓库', () => {
     expect(kids[1].classList.contains('settings__about-meta')).toBe(true);
   });
 
-  it('fnOS manifest 的开发者与发布者都指向该项目仓库', () => {
+  it('fnOS manifest 的开发者指向仓库、发布者指向项目页面', () => {
     const manifest = readSrc('../../fnos/manifest');
     expect(manifest).toContain('maintainer=PaulCAI1593');
     expect(manifest).toContain('distributor=PaulCAI1593');
     expect(manifest).toContain(`maintainer_url=${REPO}`);
-    expect(manifest).toContain(`distributor_url=${REPO}`);
+    // 0.4.30 起口径（用户 2026-11-06 00:55 定：项目页面放到「发布者」链接，开发者仍是 GitHub 仓库）。
+    expect(manifest).toContain(`distributor_url=${PROJECT_PAGE}`);
   });
 
   it('源码口径：仓库地址只写一次（REPO_URL），页脚把它交给外链', () => {

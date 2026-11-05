@@ -304,6 +304,8 @@ function icsPropertyValue(line) {
 /* 不回整份 ICS。解析失败一律给空值（null / false / ''），绝不让列表接口 500。 */
 
 const PROPOSAL_LOCATION_MAX = 200;
+// 0.5.2：日程描述与提案卡片同一行口径，截断 400 字符（比地点长，仍单行省略）。
+const PROPOSAL_DESCRIPTION_MAX = 400;
 
 /** DTSTART/DTEND 的原始值 -> epoch ms（TZID 按该时区换算；floating 按 UTC 解释）。 */
 function instantOfDateProp(info) {
@@ -346,16 +348,17 @@ function isoOfInstant(ms, zone) {
     + `T${pad2(wall.getUTCHours())}:${pad2(wall.getUTCMinutes())}:${pad2(wall.getUTCSeconds())}${sign}${hh}:${mm}`;
 }
 
-const EMPTY_PROPOSAL_FIELDS = Object.freeze({ start: null, end: null, allDay: false, location: '' });
+const EMPTY_PROPOSAL_FIELDS = Object.freeze({ start: null, end: null, allDay: false, location: '', description: '' });
 
 /**
- * 提案快照的卡片字段（0.4.10）：`{ start, end, allDay, location }`。
+ * 提案快照的卡片字段（0.4.10）：`{ start, end, allDay, location, description }`。
  *
  * - `start` / `end`：ISO 8601；定时事件用 ICS 的 TZID 换算成带偏移的本地时间，
  *   无时区（floating）与全天事件用 UTC 的 `Z`。
  * - `allDay`：DTSTART 是 `VALUE=DATE`（或 8 位日期）时为 true。
  * - `end`：无 DTEND 时——全天按 RFC 5545 默认 1 天（次日 00:00Z）；定时按同一瞬时。
  * - `location`：解 ICS 转义（`\\,` `\\n` `\\;` `\\\\`），截断 200 字符；没有则空串。
+ * - `description`（0.5.2）：同日历转义口径，截断 400 字符；没有则空串。
  * - 坏 ICS / 没有 VEVENT / DTSTART 解析不出：返回全空值，不抛错。
  */
 export function proposalFieldsOfIcs(text) {
@@ -383,11 +386,17 @@ export function proposalFieldsOfIcs(text) {
       ? unescapeIcsText(String(locationProp.value ?? '')).slice(0, PROPOSAL_LOCATION_MAX)
       : '';
 
+    const descriptionProp = propNamed(block, 'DESCRIPTION');
+    const description = descriptionProp
+      ? unescapeIcsText(String(descriptionProp.value ?? '')).slice(0, PROPOSAL_DESCRIPTION_MAX)
+      : '';
+
     return {
       start: isoOfInstant(startMs, startZone),
       end: isoOfInstant(endMs, endZone),
       allDay,
       location,
+      description,
     };
   } catch {
     return { ...EMPTY_PROPOSAL_FIELDS };

@@ -370,6 +370,16 @@ a:focus-visible,
   text-overflow: ellipsis;
 }
 .ai-proposal__time { flex: 0 0 auto; font-size: var(--fs-sm); color: var(--text); white-space: nowrap; }
+/* 0.5.2：地点与提案队列同款，跟时间同一行、放不下省略号收缩（calendar.css:2923-2931）。 */
+.ai-proposal__location {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ai-proposal__note {
   margin: 0;
   min-width: 0;
@@ -572,18 +582,49 @@ function cardMeta(view, colorById) {
     + '</div>';
 }
 
-function timeLine(view) {
-  if (!view.when) return '';
-  return `<div class="ai-proposal__when"><span class="ai-proposal__time">${escapeHtml(view.when)}</span></div>`;
+// proposals-panel.js:181-192：地点可能带真实换行（`5F 大会议室, B 座\n请带电脑`），
+// 折叠成单行再显示；空串 = 整行不渲染。
+function collapseWhitespace(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
-// proposals-panel.js 行④：删除类的固定影响文案（i18n zh-CN.js:746-747）。
-function deleteNote(action, { trashMode, retentionDays }) {
-  if (action !== 'delete') return '';
+function timeLine(view) {
+  if (!view.when) return '';
+  const location = collapseWhitespace(view.location);
+  const locationHtml = location
+    ? `<span class="ai-proposal__location" title="${escapeHtml(location)}">${escapeHtml(location)}</span>`
+    : '';
+  return `<div class="ai-proposal__when"><span class="ai-proposal__time">${escapeHtml(view.when)}</span>${locationHtml}</div>`;
+}
+
+// 0.5.2（用户 m01011/m01024）：正文那一行是**日程描述**，与提案队列同一口径：
+// 描述优先、单行省略；AI 备注不再占正文，只作 title 的后半段。
+function noteTitle(description, note) {
+  return [description, description && note ? `AI 备注：${note}` : ''].filter(Boolean).join(' · ') || note;
+}
+
+// proposals-panel.js 行④：删除类的固定影响文案（i18n zh-CN.js:746-747）；
+// 描述与 AI 备注原文只放 title（M23 §2.2），与提案队列一致。
+function deleteNote(view, { trashMode, retentionDays }) {
+  if (view.action !== 'delete') return '';
   const text = trashMode
     ? `将删除这一条日程，${Number(retentionDays) || 14} 天内可在最近删除里恢复`
     : '将删除这一条日程';
-  return `<p class="ai-proposal__note ai-proposal__impact">${escapeHtml(text)}</p>`;
+  const title = noteTitle(collapseWhitespace(view.description), collapseWhitespace(view.note));
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : '';
+  return `<p class="ai-proposal__note ai-proposal__impact"${titleAttr}>${escapeHtml(text)}</p>`;
+}
+
+// proposals-panel.js 行④：非删除类显示**日程描述**一行；描述为空时才回落 AI 备注；
+// 两者都空 = 整行不渲染。
+function descLine(view) {
+  if (view.action === 'delete') return '';
+  const description = collapseWhitespace(view.description);
+  const note = collapseWhitespace(view.note);
+  const text = description || note;
+  if (!text) return '';
+  const title = noteTitle(description, note);
+  return `<p class="ai-proposal__note ai-proposal__desc" title="${escapeHtml(title)}">${escapeHtml(text)}</p>`;
 }
 
 function viewOfRow(row, timeZone = PAGE_TIME_ZONE) {
@@ -595,6 +636,8 @@ function viewOfRow(row, timeZone = PAGE_TIME_ZONE) {
     calendarId: row.calendarId || '',
     when: formatWhenInZone(row, timeZone),
     location: row.location || '',
+    description: row.description || '',
+    note: row.note || '',
     hoursLeft: hoursLeftOf(row.expiresAt),
   };
 }
@@ -613,7 +656,8 @@ function renderPendingCard(view, { csrf, token, colorById, credentialLabel, tras
     + cardHead(view, credentialLabel)
     + cardMeta(view, colorById)
     + timeLine(view)
-    + deleteNote(view.action, { trashMode, retentionDays })
+    + descLine(view)
+    + deleteNote(view, { trashMode, retentionDays })
     + '<div class="ai-proposal__actions">'
     + `<span class="ai-proposal__expires">剩余 ${view.hoursLeft} 小时</span>`
     + '<div class="ai-proposal__buttons">'
@@ -639,7 +683,8 @@ function renderDoneCard(view, decision, { colorById, credentialLabel, trashMode,
     + cardHead(view, credentialLabel)
     + cardMeta(view, colorById)
     + timeLine(view)
-    + deleteNote(view.action, { trashMode, retentionDays })
+    + descLine(view)
+    + deleteNote(view, { trashMode, retentionDays })
     + status
     + '</article>';
 }
@@ -750,6 +795,8 @@ export function createApprovalPage({
   rateLimiter = null,
   // 0.4.26（S13/S14）：读链接所属用户的 accentColor / theme；null 表示不读（测试/静态页）。
   readAccent = null,
+  // 0.5.1（M5 §2）：判定后写回执，供 MCP 侧推送（L1）/ 等待工具（L2）/ 搭车（L3）。
+  approvalReceipts = null,
 } = {}) {
   if (!aiStore) throw new Error('createApprovalPage 需要 aiStore');
   if (!aiService) throw new Error('createApprovalPage 需要 aiService');
@@ -1101,6 +1148,23 @@ export function createApprovalPage({
     for (const id of ids) {
       const entry = results.get(id) || { ok: false, code: 'failed' };
       approvalLinks.settle(link, id, { action, ok: entry.ok === true, code: entry.ok ? '' : entry.code });
+      // 0.5.1（M5 §2）：每条判定都落一条回执；写失败只记日志，不影响审批结果。
+      if (approvalReceipts) {
+        try {
+          approvalReceipts.publish({
+            credentialId: credential.id,
+            proposalId: id,
+            action,
+            ok: entry.ok === true,
+          });
+        } catch (err) {
+          logEvent('approval-receipt-publish-failed', {
+            id: link.id,
+            proposalId: id,
+            message: String((err && err.message) || err),
+          });
+        }
+      }
       if (!entry.ok) {
         const view = approvalLinks.snapshotOf(link, id) || (byId.get(id) ? viewOfRow(byId.get(id)) : null);
         failedRows.push({

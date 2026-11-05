@@ -2,11 +2,11 @@
 /**
  * M4 / 0.1.4–0.2.0 —— 自定义端口 + TCP 直连的真实 HTTP 端到端断言。
  *
- * 1) 用 `CALDAV_PORT=5291` 真起服务：
+ * 1) 用 `CALDAV_PORT=5297` 真起服务（0.4.22 起 5291 在本机 EACCES）：
  *    - /api/health 200 且 version=0.1.6；
  *    - 静态首页 200（text/html）；
  *    - CalDAV PROPFIND 路径仍是 /calendars/<uid>/（路径不随端口变化）。
- * 2) 端口冲突：先占住 5292，再起第二个实例（独立 var）：
+ * 2) 端口冲突：先占住 5298，再起第二个实例（独立 var）：
  *    - 进程非 0 退出；
  *    - 输出含中文「已被占用」与改端口指引（config.json / 重装）。
  *
@@ -24,8 +24,8 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(__dirname, '..');
 const WEB_DIR = path.resolve(appRoot, '..', 'web', 'dist');
-const PORT = Number(process.env.CALDAV_M4PORT_PORT || 5291);
-const CONFLICT_PORT = Number(process.env.CALDAV_M4PORT_CONFLICT || 5292);
+const PORT = Number(process.env.CALDAV_M4PORT_PORT || 5297);
+const CONFLICT_PORT = Number(process.env.CALDAV_M4PORT_CONFLICT || 5298);
 // 临时数据目录：默认沿用固定的 .var-m4-port-a/b；可用环境变量换一个干净目录。
 // 固定的目录一旦被上一次运行留下的子进程或外来权限项占住，本机删除会报 EPERM，
 // 整个文件就变成 0 断言直接 FATAL——不是产品代码的问题，但会污染核包数字。
@@ -193,3 +193,4 @@ main().catch(async (err) => {
   console.log('SUMMARY: pass=0 fail=1');
   process.exit(2);
 });
+

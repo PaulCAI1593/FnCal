@@ -20,7 +20,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const spikeRoot = path.resolve(__dirname, '..');
-const PORT = Number(process.env.CALDAV_EXPIRY_PORT || 5286);
+// 0.4.22：5286 在本机返回 EACCES（系统/sandbox 保留），默认端口改 5290；断言不变。
+const PORT = Number(process.env.CALDAV_EXPIRY_PORT || 5290);
 const BASE = `http://127.0.0.1:${PORT}`;
 const AUTH = `Basic ${Buffer.from('caldav:caldav').toString('base64')}`;
 const DATA_DIR = '.var-test';
@@ -89,6 +90,8 @@ async function main() {
     env: {
       ...process.env,
       CALDAV_PORT: String(PORT),
+      // 0.4.22：本机沙箱不允许监听 0.0.0.0，固定回环地址（只改环境，不改断言）。
+      CALDAV_HOST: '127.0.0.1',
       CALDAV_CALENDARS_DIR: path.join(DATA_DIR, 'calendars'),
       CALDAV_LOG: LOG_FILE,
       // M3.3: expiry is driven by the tombstone window (deletions), not by an

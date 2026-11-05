@@ -21,7 +21,8 @@ describe('0.2.3 命名与署名', () => {
     // 0.2.44（用户：应用开发者和发布者连接到该项目仓库）：两处 URL 由个人主页改为项目仓库。
     expect(m).toMatch(/^maintainer_url=https:\/\/github\.com\/PaulCAI1593\/FnCal$/m);
     expect(m).toMatch(/^distributor=PaulCAI1593$/m);
-    expect(m).toMatch(/^distributor_url=https:\/\/github\.com\/PaulCAI1593\/FnCal$/m);
+    // 0.4.30 起口径（用户 2026-11-06 00:55 定：项目页面放到「发布者」链接，开发者仍是 GitHub 仓库）。
+    expect(m).toMatch(/^distributor_url=https:\/\/paulcai1593\.github\.io\/FnCal\/$/m);
     expect(m).not.toContain('display_name=日历');
     expect(m).not.toContain('FnCal 日历');
   });

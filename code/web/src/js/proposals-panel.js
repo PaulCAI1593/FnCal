@@ -310,6 +310,15 @@ export function proposalLocation(proposal) {
 }
 
 /**
+ * 提案的正文行文案（0.5.2，与审批页同一口径）：**日程描述**优先，为空才回落 AI 备注；
+ * 空串 = 整行不渲染。删除类看 before（被删的那条），其余看 after。
+ */
+export function proposalBodyLine(proposal) {
+  const snapshot = proposalTimeSnapshot(proposal);
+  return collapseWhitespace((snapshot && snapshot.description) || proposal.note);
+}
+
+/**
  * 危险动作二次确认（规范 §7）：`role=alertdialog`，取消在左，确认按钮实心危险色，
  * 打开时焦点落在「取消」（危险动作默认安全侧），Esc = 取消。
  * 提醒类确认（新建时零可见日历）用 `danger: false`，按钮不着红。
@@ -861,9 +870,13 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
         el('span', { class: 'ai-proposal__diff-value ai-proposal__diff-value--next', text: diff.after || t('settings.ai.proposal.none') }),
       ]);
 
-    // ④ 备注行：删除类换成固定影响文案（按该凭据当前 deleteMode 取提案/回收站两版），
-    // AI note 原文只放 title（M23 §2.2）；其它类仍是「AI 理由」原文。
+    // ④ 正文行（0.5.2，用户 m01011/m01024）：显示**日程描述**，与审批页同一口径；
+    // 删除类换成固定影响文案（按该凭据当前 deleteMode 取提案/回收站两版）。
+    // 描述优先，AI 备注只作 title 的后半段（M23 §2.2）。
+    const snapshot = proposalTimeSnapshot(proposal);
+    const descText = collapseWhitespace(snapshot && snapshot.description);
     const noteText = collapseWhitespace(proposal.note);
+    const bodyTitle = [descText, descText && noteText ? `AI 备注：${noteText}` : ''].filter(Boolean).join(' · ') || noteText;
     let noteRow = null;
     if (diff.deleteOnly) {
       const mode = deleteModeOfProposal(proposal);
@@ -871,9 +884,9 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
         mode === 'trash' ? 'settings.ai.proposal.deleteImpactTrash' : 'settings.ai.proposal.deleteImpact',
         { n: state.retentionDays },
       );
-      noteRow = el('p', { class: 'ai-proposal__note ai-proposal__impact', text: impact, title: noteText || impact });
-    } else if (noteText) {
-      noteRow = el('p', { class: 'ai-proposal__note', text: noteText, title: noteText });
+      noteRow = el('p', { class: 'ai-proposal__note ai-proposal__impact', text: impact, title: bodyTitle || impact });
+    } else if (descText || noteText) {
+      noteRow = el('p', { class: 'ai-proposal__note ai-proposal__desc', text: descText || noteText, title: bodyTitle });
     }
 
     // ⑥ 操作区：左端状态/剩余时间，右端按钮组。删除类用「删除 / 保留」（0.4.16 用户口径：

@@ -751,7 +751,7 @@ export function createAiService({
       const before = stored.before && typeof stored.before === 'object' ? stored.before : {};
       const after = stored.after && typeof stored.after === 'object' ? stored.after : {};
       const ics = after.ics || before.ics || '';
-      const fields = ics ? proposalFieldsOfIcs(ics) : { start: null, end: null, allDay: false, location: '' };
+      const fields = ics ? proposalFieldsOfIcs(ics) : { start: null, end: null, allDay: false, location: '', description: '' };
       rows.push({
         id: proposal.id,
         action: proposal.action,
@@ -760,6 +760,9 @@ export function createAiService({
         uid: proposal.uid,
         title: String(after.title || before.title || '').slice(0, 500),
         summary: typeof after.summary === 'string' ? after.summary : '',
+        // 0.5.2：审批页与提案队列同款——正文一行显示日程描述，AI 备注只作 title。
+        description: fields.description || '',
+        note: typeof stored.note === 'string' ? stored.note : '',
         start: fields.start,
         end: fields.end,
         allDay: fields.allDay === true,
@@ -773,7 +776,7 @@ export function createAiService({
   }
 
   /**
-   * MCP pprove_proposal / eject_proposal：
+   * MCP pprove_proposal / eject_proposal：
    *   ① 凭据必须显式打开 gentApproval（关闭时任何路径都拒绝）；
    *   ② 只处理本凭据自己的 pending 提案，别家凭据 / 不存在一律 missing（不证明存在性）；
    *   ③ 批准前**再校验**提案所属日历仍可见且是写档（防改权限后越权）。

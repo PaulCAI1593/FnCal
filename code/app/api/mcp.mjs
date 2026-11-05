@@ -13,6 +13,9 @@
 //     工具内部失败用结果里的 `isError:true`（不是 JSON-RPC error）。
 //   - 普通请求回普通 JSON；需要弹窗的 `tools/call` 与 `GET /mcp` 回 `text/event-stream`
 //     （Streamable HTTP 两种形态都合法，客户端按 Content-Type 分流）。
+//   - 0.5.1（M5 §2）：审批结果分三层回给客户端——L1 向该凭据已打开的 SSE 流推
+//     `notifications/fncal/approval-decision`；L2 工具 `wait_for_approval` 等回执；
+//     L3 任意工具回包在存在未交付回执时补 `receipts`（只含 proposalId/action/ok/decidedAt）。
 
 import { randomBytes } from 'node:crypto';
 import { DELETE_MODE_TRASH, canAgentApprove, deleteModeOf, NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
@@ -452,6 +455,24 @@ const AGENT_TOOLS = Object.freeze([
     },
     ['action'],
   ),
+  // 0.5.1（M5 §2 L2）：等待型工具，避免助手反复调 list_proposals 轮询。
+  tool(
+    'wait_for_approval',
+    '等待提案被用户判定（用户在审批链接或确认弹窗里点接受/拒绝）。timeoutSeconds 默认 60 秒、范围 5–120；'
+      + '可带 proposalIds 只等指定提案，省略则等该凭据任意提案。任一相关提案被判定就立即返回 '
+      + '{decided, pending, timedOut:false}；到点仍未判定时返回 timedOut:true 与仍待确认的 pending 列表。'
+      + '等待期间不会阻塞其他请求。已被其他调用交付过的回执不会再出现在回包的 receipts 里；'
+      + '拿到 decided 后照 decided[].action / ok 告诉用户结果，不要重复催用户点链接。',
+    {
+      timeoutSeconds: { type: 'integer', description: '最长等待秒数，默认 60，范围 5–120' },
+      proposalIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '只等这几条提案的判定（可省略；省略时等该凭据任意提案）',
+      },
+    },
+    [],
+  ),
 ]);
 
 const AGENT_TOOL_NAMES = Object.freeze(AGENT_TOOLS.map((entry) => entry.name));
@@ -569,6 +590,7 @@ export function createMcp({
   now = () => Date.now(),
   limiter = null,
   approvalLinks = null,
+  approvalReceipts = null,
 } = {}) {
   if (!aiStore && !aiService) throw new Error('createMcp 需要 aiStore');
   const service = aiService || createAiService({ aiStore, health, now });
@@ -616,6 +638,51 @@ export function createMcp({
   /** elicitation id → 等待中的弹窗；只接受同会话响应（M4 §2.6）。 */
   const pendingElicits = new Map();
   let elicitSeq = 0;
+
+  /* -------------------------------------------- 0.5.1（M5 §2 L1）：审批结果推送 */
+
+  /** L2 工具名；没有回执表时从工具集里裁掉它，避免客户端调用不存在的等待能力。 */
+  const WAIT_TOOL_NAME = 'wait_for_approval';
+
+  /**
+   * 把一条回执推给该凭据已打开的全部 SSE 流（A1/A2）。
+   * 通知只含 proposalId/action/ok/decidedAt/credentialId，不含令牌、PIN、链接（A6）。
+   * 一条都没发出去时记 `mcp-approval-push-failed`（A3），审批本身已经成功，不影响页面。
+   */
+  function pushApprovalDecision(receipt) {
+    if (!receipt || !receipt.credentialId) return 0;
+    const notification = {
+      jsonrpc: '2.0',
+      method: 'notifications/fncal/approval-decision',
+      params: {
+        proposalId: receipt.proposalId,
+        action: receipt.action,
+        ok: receipt.ok === true,
+        decidedAt: receipt.decidedAt,
+        credentialId: receipt.credentialId,
+      },
+    };
+    let sent = 0;
+    for (const entry of sessions.values()) {
+      if (!entry || entry.credentialId !== receipt.credentialId) continue;
+      for (const stream of Array.from(entry.streams)) {
+        if (sseWrite(stream, notification)) sent += 1;
+        else entry.streams.delete(stream);
+      }
+    }
+    if (sent === 0) {
+      logEvent('mcp-approval-push-failed', {
+        proposalId: receipt.proposalId,
+        credentialId: receipt.credentialId,
+        reason: 'no_stream',
+      });
+    }
+    return sent;
+  }
+
+  if (approvalReceipts && typeof approvalReceipts.onDecision === 'function') {
+    approvalReceipts.onDecision(pushApprovalDecision);
+  }
 
   /** 弹窗里只能选「批准 / 拒绝」一个字段，不放任何敏感信息（M4 §2.8）。 */
   const ELICITATION_SCHEMA = {
@@ -696,13 +763,15 @@ export function createMcp({
     }
   }
 
-  function openSession(capabilities, protocolVersion) {
+  function openSession(capabilities, protocolVersion, credentialId = null) {
     const id = randomBytes(16).toString('hex');
     const nowMs = now();
     const entry = {
       id,
       capabilities: capabilities && typeof capabilities === 'object' ? capabilities : {},
       protocolVersion: String(protocolVersion || ''),
+      // 0.5.1（M5 §2 L1）：推送要按凭据选流，所以会话记住建立它的凭据。
+      credentialId: typeof credentialId === 'string' && credentialId ? credentialId : null,
       createdAt: nowMs,
       lastSeen: nowMs,
       streams: new Set(),
@@ -909,7 +978,13 @@ export function createMcp({
     const tools = [...READ_TOOLS];
     if (await service.hasWritableCalendar(ctx)) tools.push(...WRITE_TOOLS);
     // AI 端代办批准是**凭据级开关**：没打开就不注册，避免助手误以为可用。
-    if (canAgentApprove(ctx.credential)) tools.push(...AGENT_TOOLS);
+    if (canAgentApprove(ctx.credential)) {
+      for (const entry of AGENT_TOOLS) {
+        // 0.5.1：没有回执表就没有等待能力，别把不可用的工具列给客户端。
+        if (entry.name === WAIT_TOOL_NAME && !approvalReceipts) continue;
+        tools.push(entry);
+      }
+    }
     return tools;
   }
 
@@ -919,6 +994,33 @@ export function createMcp({
 
   function toolFailure(message) {
     return { content: [{ type: 'text', text: message }], isError: true };
+  }
+
+  /**
+   * 0.5.1（M5 §2 L3）：把未交付回执搭在工具回包上（A5）。
+   * 只在成功结果、且正文是 JSON 对象时追加 `receipts`；没有未交付回执时不出现该字段，
+   * 这样既有断言与客户端解析都不受影响。取走即标已交付，同一条不会出现两次。
+   */
+  function attachReceipts(ctx, result) {
+    if (!approvalReceipts || !result || result.isError) return result;
+    const credentialId = ctx && ctx.credential ? ctx.credential.id : null;
+    if (!credentialId) return result;
+    const first = Array.isArray(result.content) ? result.content[0] : null;
+    if (!first || typeof first.text !== 'string') return result;
+    let payload;
+    try {
+      payload = JSON.parse(first.text);
+    } catch {
+      return result;
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return result;
+    const receipts = approvalReceipts.take({ credentialId });
+    if (!receipts.length) return result;
+    payload.receipts = receipts;
+    const merged = { ...result, content: [{ type: 'text', text: JSON.stringify(payload) }] };
+    if (result.structuredContent && typeof result.structuredContent === 'object') merged.structuredContent = payload;
+    if (result.data && typeof result.data === 'object') merged.data = payload;
+    return merged;
   }
 
   /**
@@ -1524,13 +1626,52 @@ export function createMcp({
           }),
         });
       }
+      case 'wait_for_approval': {
+        // 0.5.1（M5 §2 L2）：异步等待回执，不阻塞同一进程的其他请求（A4）。
+        // 测试/排障可用 FNCAL_MCP_WAIT_TIMEOUT_MS 把等待缩到毫秒级。
+        if (!approvalReceipts) throw rpcError(-32602, '当前实例不支持等待审批回执');
+        let seconds = 60;
+        if (args.timeoutSeconds !== undefined && args.timeoutSeconds !== null) {
+          const raw = Number(args.timeoutSeconds);
+          if (!Number.isFinite(raw) || raw < 5 || raw > 120) {
+            throw rpcError(-32602, '参数不合法：timeoutSeconds 需在 5–120 之间');
+          }
+          seconds = raw;
+        }
+        let proposalIds = null;
+        if (args.proposalIds !== undefined && args.proposalIds !== null) {
+          if (!Array.isArray(args.proposalIds) || !args.proposalIds.every((id) => typeof id === 'string' && id.trim())) {
+            throw rpcError(-32602, '参数不合法：proposalIds 需为字符串数组');
+          }
+          proposalIds = args.proposalIds.map((id) => id.trim());
+        }
+        const pendingRows = await service.listAgentProposals(ctx);
+        const pending = (Array.isArray(pendingRows) ? pendingRows : []).map((row) => String(row.id));
+        const timeoutMs = envMs('FNCAL_MCP_WAIT_TIMEOUT_MS', Math.round(seconds * 1000));
+        const outcome = await approvalReceipts.wait({
+          credentialId: ctx.credential.id,
+          proposalIds,
+          timeoutMs,
+        });
+        const decidedIds = new Set(outcome.decided.map((item) => item.proposalId));
+        logEvent('mcp-approval-wait', {
+          credentialId: ctx.credential.id,
+          timeoutMs,
+          decided: outcome.decided.length,
+          timedOut: outcome.timedOut === true,
+        });
+        return toolResult({
+          decided: outcome.decided,
+          pending: pending.filter((id) => !decidedIds.has(id)),
+          timedOut: outcome.timedOut === true,
+        });
+      }
       default:
         throw rpcError(-32602, `未知工具：${name}`);
     }
   }
 
   /* ---------------------------------------------------------------- 方法 */
-
   async function callMethod(ctx, message) {
     const params = message.params && typeof message.params === 'object' ? message.params : {};
     switch (message.method) {
@@ -1539,7 +1680,7 @@ export function createMcp({
         const protocolVersion = SUPPORTED_PROTOCOLS.includes(requested) ? requested : LATEST_PROTOCOL;
         // 0.4.18：每个 initialize 开一个会话，响应头回 Mcp-Session-Id；
         // 客户端声明的 capabilities.elicitation 决定后面能不能弹窗确认（M4 §2.1–§2.2）。
-        ctx.session = openSession(params.capabilities, protocolVersion);
+        ctx.session = openSession(params.capabilities, protocolVersion, ctx.credential && ctx.credential.id);
         return {
           protocolVersion,
           capabilities: { tools: { listChanged: false } },
@@ -1562,7 +1703,11 @@ export function createMcp({
             + '以用户点击为准，用户选了之后才带对应参数重调。'
             + '不得替用户选择模式：不得默认 all、不得因为「看起来都该批」就自行批量、不得把用户上一句泛泛同意当成模式选择。'
             + '一次只处理一条（scope:"single" 或 approve_proposal / reject_proposal）：每条都要单独弹确认。'
-            + '提示：若希望 AI 只生成提案、不直接写库，请在 FnCal 凭据里把「新建、修改」设为「提案」；设为「直接通过」时 create_event / update_event 会直接写入日历，不产生提案。',
+            + '提示：若希望 AI 只生成提案、不直接写库，请在 FnCal 凭据里把「新建、修改」设为「提案」；设为「直接通过」时 create_event / update_event 会直接写入日历，不产生提案。'
+            + '审批回执：用户在审批链接里点完后，服务端会推送通知 notifications/fncal/approval-decision（客户端开着 GET /mcp 的 SSE 流时）；'
+            + '没有推送时调 wait_for_approval 等结果（timeoutSeconds 默认 60，范围 5–120，可带 proposalIds），不要反复调 list_proposals 轮询。'
+            + '任何工具回包若带 receipts 字段（proposalId/action/ok/decidedAt，最多 20 条），就是刚发生的审批结果：'
+            + '直接按 action 与 ok 告诉用户；同一条回执只出现一次，已交付的不会再出现在 receipts 里。',
         };
       }
       case 'ping':
@@ -1577,7 +1722,8 @@ export function createMcp({
       case 'tools/call': {
         const name = requireString(params, 'name', { max: 128 });
         ctx.action = name;
-        return callTool(ctx, name, params.arguments);
+        // 0.5.1（M5 §2 L3）：成功回包若有未交付回执，搭车补 receipts（空则原样返回）。
+        return attachReceipts(ctx, await callTool(ctx, name, params.arguments));
       }
       default:
         throw rpcError(-32601, `不支持的方法：${message.method}`);

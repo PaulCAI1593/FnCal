@@ -40,6 +40,7 @@ const {
   formatSnapshotTime,
   formatProposalTime,
   proposalLocation,
+  proposalBodyLine,
 } = await import('../src/js/proposals-panel.js');
 const { DEFAULT_SETTINGS } = await import('../src/js/store.js');
 const { t } = await import('../src/i18n/index.js');
@@ -212,6 +213,25 @@ describe('0.4.10 · 地点与备注折叠（M19 §3）', () => {
     })).toBe('3F 会议室');
     expect(proposalLocation({ action: 'create', after: { title: '无地点' } })).toBe('');
   });
+
+  // 0.5.2（用户 m01011/m01024）：正文行是**日程描述**，与审批页同一口径；描述为空才回落 AI 备注。
+  it('proposalBodyLine 取日程描述并折叠；描述为空回落 AI 备注；删除类取 before', () => {
+    expect(proposalBodyLine({
+      action: 'update',
+      before: { description: '旧描述' },
+      after: { description: '周会：同步进度\n带上报表' },
+      note: 'AI：为周会新建',
+    })).toBe('周会：同步进度 带上报表');
+    expect(proposalBodyLine({
+      action: 'delete',
+      before: { description: '被删那条的描述' },
+      after: null,
+      note: 'AI：重复日程',
+    })).toBe('被删那条的描述');
+    expect(proposalBodyLine({ action: 'create', after: { title: '无描述' }, note: 'AI：只有备注' }))
+      .toBe('AI：只有备注');
+    expect(proposalBodyLine({ action: 'create', after: { title: '都没有' } })).toBe('');
+  });
 });
 
 describe('0.4.10 · 卡片 DOM 行序与缺失行（M19 §3/§5）', () => {
@@ -243,7 +263,7 @@ describe('0.4.10 · 卡片 DOM 行序与缺失行（M19 §3/§5）', () => {
       'ai-proposal__head',
       'ai-proposal__meta',
       'ai-proposal__when',
-      'ai-proposal__note',
+      'ai-proposal__note ai-proposal__desc',
       'ai-proposal__diff',
       'ai-proposal__actions',
     ]);
@@ -259,6 +279,28 @@ describe('0.4.10 · 卡片 DOM 行序与缺失行（M19 §3/§5）', () => {
     expect(note.textContent).toBe('总经理临时加入 请提前十分钟到');
     expect(note.getAttribute('title')).toBe('总经理临时加入 请提前十分钟到');
     expect(note.textContent).not.toContain('\n');
+  });
+
+  it('正文行显示日程描述（0.5.2）：描述优先，AI 备注只进 title', async () => {
+    const panel = await mount([proposal({
+      action: 'update',
+      before: { title: '周会', start: localIso(2026, 11, 5, 13, 0), end: localIso(2026, 11, 5, 14, 0), allDay: false },
+      after: {
+        title: '周会（改期）',
+        summary: '',
+        start: localIso(2026, 11, 9, 18, 30),
+        end: localIso(2026, 11, 9, 19, 30),
+        allDay: false,
+        location: '5F 大会议室, B 座\n请带电脑',
+        description: '周会：同步进度\n带上报表',
+      },
+      note: '总经理临时加入',
+    })]);
+    const card = cardOf(panel);
+    const body = card.querySelector('.ai-proposal__note');
+    expect(body.textContent).toBe('周会：同步进度 带上报表');
+    expect(body.getAttribute('title')).toBe('周会：同步进度 带上报表 · AI 备注：总经理临时加入');
+    expect(body.classList.contains('ai-proposal__desc')).toBe(true);
   });
 
   it('新建类不渲染 diff 行（与名称行重复）', async () => {

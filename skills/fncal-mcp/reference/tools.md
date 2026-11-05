@@ -205,6 +205,42 @@ Never pick the mode yourself: no default `all`, no batch on a vague "ok".
 - Cancel, decline, timeout and a dropped popup all leave data unchanged and write an audit entry. A refused approval writes `proposal-agent-approval-blocked` (`reason: "no_elicitation"` / `"stream_unavailable"`) and no decision audit.
 - Never choose the mode for the user; with exactly one pending never ask for a mode either. Without elicitation, the conversation cannot settle anything at all.
 
+## wait_for_approval
+
+Waits for the user's decision on already-issued approval links. Requires agent approval on the credential. Call it after handing the user an `approvalUrl`; do not loop or poll with it.
+
+| arg | type | notes |
+|---|---|---|
+| `timeoutSeconds` | integer | optional, default `60`, range `5`–`120`; outside the range is a JSON-RPC `-32602` |
+| `proposalIds` | string[] | optional; only these proposals wake the wait. Omit to accept any proposal of this credential |
+
+```json
+{ "decided": [ { "proposalId": "…", "action": "accept", "ok": true, "decidedAt": "2026-11-06T03:20:00.000Z" } ],
+  "pending": [ "…" ], "timedOut": false }
+```
+
+- Resolves as soon as one matching decision arrives; a timeout returns `{ "decided": [], "pending": [ … ], "timedOut": true }` with the ids still pending.
+- A receipt returned by `wait_for_approval` is marked delivered: it will not appear again in `receipts`.
+- Waiting is off the request path — other tool calls and HTTP requests keep working. Never call it repeatedly in a tight loop; one wait per link is enough.
+
+## Approval receipts and push notifications
+
+Every settlement on the FnCal approval page produces a hidden receipt retained for 24 hours (dropped with a log entry when it expires undelivered). Three ways to receive it:
+
+1. **Push (open SSE stream).** While the client holds a `GET /mcp` event stream for this credential, the server writes a JSON-RPC notification:
+
+   ```json
+   { "jsonrpc": "2.0", "method": "notifications/fncal/approval-decision",
+     "params": { "proposalId": "…", "action": "accept", "ok": true,
+                 "decidedAt": "2026-11-06T03:20:00.000Z", "credentialId": "…" } }
+   ```
+
+   `action` is `accept` or `reject`; `ok` is false when that row failed to apply. The notification contains no approval link, token or PIN. With no open stream nothing is pushed — the page decision still succeeds and the server writes `mcp-approval-push-failed` in its log.
+
+2. **`wait_for_approval`** — blocks (bounded) until a matching decision, see above.
+
+3. **`receipts` piggyback.** Any successful tool reply carries `receipts` when undelivered receipts exist, at most 20 per reply, fields `proposalId`, `action`, `ok`, `decidedAt`; they are marked delivered and the field is absent when there is nothing to deliver. Treat a receipt as a report of what already happened — never as a reason to re-approve or re-submit.
+
 ## Error classes
 
 - Tool level (`isError: true`): not-found (hidden/absent), `read`-level write refusal, out-of-window write refusal, bad time range (`结束时间必须晚于开始时间。`), validation, conflict. Reads keep one identical not-found text for hidden/absent/out-of-window; **writes** separate the three causes so the human can act on the message.
