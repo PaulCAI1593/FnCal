@@ -9,6 +9,11 @@
 <meta property="og:title" content="FnCal · 跑在自己 NAS 上的日历">
 <meta property="og:description" content="飞牛OS 应用，自带 CalDAV 服务；AI 提案 → 一次性审批链接 → 你批准，数据只在本机。">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://paulcai1593.github.io/FnCal/">
+<meta property="og:image" content="https://paulcai1593.github.io/FnCal/screenshots/main.png">
+<meta property="og:image:alt" content="FnCal 主界面：年视图色块、左侧日历列表与顶部工具栏">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://paulcai1593.github.io/FnCal/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%231d73d6'/%3E%3Cstop offset='.52' stop-color='%231094b7'/%3E%3Cstop offset='1' stop-color='%2302b497'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Crect x='15' y='18' width='34' height='30' rx='5' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M24 14v8M40 14v8M15 27h34' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -395,7 +400,7 @@
     </div>
     <dl class="spec">
       <div><dt>协议</dt><dd>CalDAV · RFC 4791</dd></div>
-      <div><dt>数据</dt><dd>本机 <code>/data</code></dd></div>
+      <div><dt>数据</dt><dd>本机 <code>/vol1/<wbr>@appdata/<wbr>FnCal/</code></dd></div>
       <div><dt>许可</dt><dd>MIT</dd></div>
       <div><dt>体积</dt><dd>703 KB</dd></div>
     </dl>
@@ -641,9 +646,7 @@ sha256sum FnCal-0.4.28.fpk
 Get-FileHash .\FnCal-0.4.28.fpk -Algorithm SHA256
 
 <span># 期望值</span>
-7BBB308B25EA0A3EC15E4A3417E86C
-2172056B32BF23AAB2DE862E5D05
-DEDB6D</pre>
+7BBB308B25EA0A3EC15E4A3417E86C2172056B32BF23AAB2DE862E5D05DEDB6D</pre>
         <div class="callout">
           <strong>对公网开放时请套 HTTPS 反向代理。</strong>FnCal 不做来源 IP 白名单：谁能访问这个端口，谁就能看到登录页。限流、CSRF 与会话安全始终开启。
         </div>
@@ -657,22 +660,22 @@ DEDB6D</pre>
       <div class="sec__head">
         <p class="kicker">Download</p>
         <h2>v0.4.28</h2>
-        <p>2026-11-06 发布。旧版本不要再装；升级请用应用中心覆盖安装，数据保留。</p>
+        <p>2026-11-05 发布。旧版本不要再装；升级请用应用中心覆盖安装，数据保留。</p>
       </div>
       <div class="assets">
         <div class="asset">
           <div class="asset__name">安装包 <code>FnCal-0.4.28.fpk</code></div>
-          <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.4.28/FnCal-0.4.28.fpk">下载</a>
+          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.4.28.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.4.28/FnCal-0.4.28.fpk">下载</a>
           <div class="asset__meta">703,341 B · SHA-256 7BBB308B25EA0A3EC15E4A3417E86C2172056B32BF23AAB2DE862E5D05DEDB6D</div>
         </div>
         <div class="asset">
           <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.4.28.zip</code></div>
-          <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.4.28/FnCal-MCP-Skill-0.4.28.zip">下载</a>
+          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.4.28.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.4.28/FnCal-MCP-Skill-0.4.28.zip">下载</a>
           <div class="asset__meta">24,738 B · SHA-256 5DE0D3C201BCEBC590A298FB98F4836A1D10463C76B61E3B9C770D8C22A8B76C</div>
         </div>
         <div class="asset">
           <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
-          <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.4.28/SHA256SUMS.txt">下载</a>
+          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.4.28/SHA256SUMS.txt">下载</a>
           <div class="asset__meta">175 B · 含上面两个文件的哈希，可一条命令核对</div>
         </div>
       </div>
@@ -701,7 +704,7 @@ DEDB6D</pre>
         </details>
         <details class="faq">
           <summary>怎么备份？</summary>
-          <p>整目录备份 <code>/data</code> 即可（账号、密钥、日历与日志都在里面）；单本日历也可以用「导出」拿到标准 <code>.ics</code>。恢复时把目录放回原位重启。</p>
+          <p>整目录备份应用数据目录即可（飞牛 OS 是 <code>/vol1/@appdata/FnCal/</code>，Docker 是 <code>/data</code> 卷；账号、密钥、日历与日志都在里面）；单本日历也可以用「导出」拿到标准 <code>.ics</code>。恢复时把目录放回原位重启。</p>
         </details>
         <details class="faq">
           <summary>能不能只给家人用、不开公网？</summary>
