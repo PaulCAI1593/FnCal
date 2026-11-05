@@ -391,18 +391,18 @@
 
 <main>
   <section class="hero wrap">
-    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.5.0</p>
+    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.5.1</p>
     <h1>日历留在自己的 NAS 上</h1>
     <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
-      <a class="btn btn--primary" href="#download">下载 0.5.0</a>
+      <a class="btn btn--primary" href="#download">下载 0.5.1</a>
       <a class="btn" href="#ai">看看 AI 怎么接入</a>
     </div>
     <dl class="spec">
       <div><dt>协议</dt><dd>CalDAV · RFC 4791</dd></div>
       <div><dt>数据</dt><dd>本机 <code>/vol1/<wbr>@appdata/<wbr>FnCal/</code></dd></div>
       <div><dt>许可</dt><dd>MIT</dd></div>
-      <div><dt>体积</dt><dd>703,352 B</dd></div>
+      <div><dt>体积</dt><dd>708,184 B</dd></div>
     </dl>
     <figure class="shot">
       <div class="shot__frame">
@@ -632,7 +632,7 @@
           <p>飞牛 OS 用户走应用中心；其他环境用 Docker。装之前先核对包的 SHA-256。</p>
         </div>
         <ol class="steps">
-          <li><div><strong>下载安装包</strong><br>从 Release 下载 <code>FnCal-0.5.0.fpk</code>，先核对哈希再安装。</div></li>
+          <li><div><strong>下载安装包</strong><br>从 Release 下载 <code>FnCal-0.5.1.fpk</code>，先核对哈希再安装。</div></li>
           <li><div><strong>安装向导</strong><br>填一个空闲端口（建议 1024 以上，避开 5232）与管理员用户名、密码；两步都必填。</div></li>
           <li><div><strong>打开</strong><br>装完点桌面图标，浏览器新标签打开 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>。<strong>桌面图标不会随端口修改自动更新</strong>，改端口后要手动改。</div></li>
           <li><div><strong>配 CalDAV 客户端</strong><br>服务器地址填 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用户名密码同登录；推荐在「安全设置 → 我的安全」建一个 CalDAV 专用密码。</div></li>
@@ -640,13 +640,13 @@
       </div>
       <div>
         <pre class="code"><span># 先核对哈希（Linux / macOS）</span>
-sha256sum FnCal-0.5.0.fpk
+sha256sum FnCal-0.5.1.fpk
 
 <span># Windows PowerShell</span>
-Get-FileHash .\FnCal-0.5.0.fpk -Algorithm SHA256
+Get-FileHash .\FnCal-0.5.1.fpk -Algorithm SHA256
 
 <span># 期望值</span>
-0DF7664DAF53C77052C6EA8E52D1358379F209EE50299E4D0755C633A3173FC3</pre>
+E0FC1E7A34389BCA1D84D65C74E9CF55B15DC74F5C7D58EDD08DF92DF0308995</pre>
         <div class="callout">
           <strong>对公网开放时请套 HTTPS 反向代理。</strong>FnCal 不做来源 IP 白名单：谁能访问这个端口，谁就能看到登录页。限流、CSRF 与会话安全始终开启。
         </div>
@@ -659,23 +659,23 @@ Get-FileHash .\FnCal-0.5.0.fpk -Algorithm SHA256
     <div class="wrap">
       <div class="sec__head">
         <p class="kicker">Download</p>
-        <h2>v0.5.0</h2>
+        <h2>v0.5.1</h2>
         <p>2026-11-06 发布。旧版本不要再装；升级请用应用中心覆盖安装，数据保留。</p>
       </div>
       <div class="assets">
         <div class="asset">
-          <div class="asset__name">安装包 <code>FnCal-0.5.0.fpk</code></div>
-          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.5.0.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.0/FnCal-0.5.0.fpk">下载</a>
-          <div class="asset__meta">703,352 B · SHA-256 0DF7664DAF53C77052C6EA8E52D1358379F209EE50299E4D0755C633A3173FC3</div>
+          <div class="asset__name">安装包 <code>FnCal-0.5.1.fpk</code></div>
+          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.5.1.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.1/FnCal-0.5.1.fpk">下载</a>
+          <div class="asset__meta">708,184 B · SHA-256 E0FC1E7A34389BCA1D84D65C74E9CF55B15DC74F5C7D58EDD08DF92DF0308995</div>
         </div>
         <div class="asset">
-          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.5.0.zip</code></div>
-          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.5.0.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.0/FnCal-MCP-Skill-0.5.0.zip">下载</a>
-          <div class="asset__meta">24,738 B · SHA-256 45F85542AFBE7F0843AE49C8594E40A05CC4B810F954EB3ACEDE9254AAB8FB75</div>
+          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.5.1.zip</code></div>
+          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.5.1.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.1/FnCal-MCP-Skill-0.5.1.zip">下载</a>
+          <div class="asset__meta">26,201 B · SHA-256 AF8C43F7AD28E494A98DBA9CFD1228DF417E163214193A8DB51930E7F1534900</div>
         </div>
         <div class="asset">
           <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
-          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.0/SHA256SUMS.txt">下载</a>
+          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.1/SHA256SUMS.txt">下载</a>
           <div class="asset__meta">174 B · 含上面两个文件的哈希，可一条命令核对</div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 ---
 name: fncal-mcp
 description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.5.0
+version: 0.5.1
 user-invocable: true
 license: MIT
 ---
@@ -107,6 +107,7 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 | `approve_proposal` | decide (needs agent approval; no popup → `approval_requires_ui` + `approvalUrl`) | `id` (`confirmed` deprecated) |
 | `reject_proposal` | decide (needs agent approval; no popup → `approval_requires_ui` + `approvalUrl`) | `id` (`reason` optional; `confirmed` deprecated) |
 | `decide_proposals` | decide (needs agent approval; mode question only when 2+ are pending; no popup → `approval_requires_ui` + `approvalUrl`) | `action` (`approve`/`reject`); `scope` only when 2+ pending; `ids` for one id (`confirmed` deprecated) |
+| `wait_for_approval` | wait (needs agent approval) | `timeoutSeconds` optional (default 60, range 5–120); `proposalIds` optional |
 
 ### Ask before settling — and never choose for the user
 
@@ -123,6 +124,16 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 Exact argument and result shapes: [reference/tools.md](reference/tools.md).
 
 Result shape is uniformly `{ content: [{ type: "text", text: "<JSON>" }] }`; a tool-level failure sets `isError: true` with the same text form. Parse the JSON out of `text` before using it. Do not echo raw tool JSON to the user — speak in dates and titles.
+
+### Approval receipts — do not poll
+
+When the user settles a proposal on the FnCal approval page, the result comes back to the MCP client in one of three ways; no polling loop is needed.
+
+- **Push notification** (client already has a `GET /mcp` event stream open): a JSON-RPC notification `notifications/fncal/approval-decision` with `proposalId`, `action` (`accept` / `reject`), `ok`, `decidedAt` and `credentialId`. It carries no link, token or PIN. A client without an open stream simply receives none; the decision is still applied.
+- **`wait_for_approval`** — call it after handing the user an `approvalUrl` when you want to block briefly instead of ending the turn. `timeoutSeconds` defaults to 60 (5–120), `proposalIds` narrows it. The reply is `{ decided, pending, timedOut }`: `decided` holds settled receipts, a timeout returns `timedOut: true` and the still-pending ids. Other requests keep working while it waits; do not call it in a retry loop.
+- **`receipts` on any tool reply** — if a decision happened since your last call, the next successful tool reply carries an extra `receipts` array (at most 20, fields `proposalId`, `action`, `ok`, `decidedAt`) and each receipt appears exactly once. Report those decisions to the user as ordinary sentences; do not repeat a receipt you already reported.
+
+Receipts are kept for 24 hours; an expired, undelivered one is dropped. A decision never depends on the client being connected.
 
 ## 4 How to work
 

@@ -6,7 +6,7 @@
 # 构建（在仓库根目录执行，即与 code/ 同级的那层）：
 #   docker build -f Dockerfile -t fncal:dev .
 # 或：
-#   docker build -f Dockerfile --build-arg VERSION=0.5.0 -t fncal:dev .
+#   docker build -f Dockerfile --build-arg VERSION=0.5.1 -t fncal:dev .
 #
 # 运行（命名卷）：
 #   docker run -d --name fncal -p 5581:5280 -v fncal-data:/data \
@@ -21,7 +21,7 @@ FROM node:${NODE_VERSION}-alpine AS web
 
 # 版本号只作为构建参数注入：OCI 标签、前端版本戳、后端源码三处必须一致，
 # 不一致时构建直接失败（见下面的校验），避免镜像标签与代码脱钩。
-ARG VERSION=0.5.0
+ARG VERSION=0.5.1
 
 WORKDIR /build/code
 
@@ -42,11 +42,11 @@ RUN printf 'version=%s\n' "${VERSION}" > ./fnos-manifest \
 # ---------- 阶段 2：运行时 ----------
 FROM node:${NODE_VERSION}-alpine AS runtime
 
-ARG VERSION=0.5.0
+ARG VERSION=0.5.1
 ARG REVISION=unknown
 ARG SOURCE=https://github.com/PaulCAI1593/FnCal
 
-# OCI 镜像标签（docker inspect 可见；version 来自构建参数，默认 0.5.0）。
+# OCI 镜像标签（docker inspect 可见；version 来自构建参数，默认 0.5.1）。
 LABEL org.opencontainers.image.title="FnCal" \
       org.opencontainers.image.description="Self-hosted CalDAV calendar with web UI (fnOS / Docker)" \
       org.opencontainers.image.version="${VERSION}" \
