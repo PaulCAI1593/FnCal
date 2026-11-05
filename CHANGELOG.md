@@ -4,26 +4,6 @@
 因此把此前已具备的能力按主题汇总，供第一次接触这个项目的人快速判断它能做什么。
 0.2.39–0.2.41 是首次发布之后的连续修复（内部测试版，未对外发布），0.2.42 是第二次公开发布。
 
-## 0.5.1 — 审批回执（2026-11-06）
-
-### 新增
-
-- **审批结果即时回执（推送）**：审批页判定成功后，向该凭据当前打开的 `GET /mcp` 事件流发一条 JSON-RPC 通知 `notifications/fncal/approval-decision`，参数 `proposalId`、`action`（`accept` / `reject`）、`ok`、`decidedAt`、`credentialId`。没有打开的流时只写一条 `mcp-approval-push-failed` 日志，审批照常成功；通知不含审批链接、令牌或 PIN。
-- **新工具 `wait_for_approval`**：参数 `timeoutSeconds`（默认 60 秒、范围 5–120）与可选 `proposalIds`；返回 `{decided, pending, timedOut}`。`decided` 是已判定提案的回执，超时返回 `timedOut:true` 并列出未决提案 id；等待期间不阻塞同进程其他请求。
-- **回执搭车**：任何工具回包在存在未交付回执时追加 `receipts`（最多 20 条，字段 `proposalId`、`action`、`ok`、`decidedAt`）并标记已交付；同一条回执只出现一次。回执保留 24 小时，过期丢弃并写日志；没有回执时不出现该字段。
-
-### 变更
-
-- 技能包补三条口径：写操作回包里的 `approvalUrl` 直接给用户、`wait_for_approval` 的用法、`receipts` 回执字段。
-
-### 版本说明
-
-- 上一对外发布版是 0.5.0。本版只加审批回执能力，不改界面、审批页视觉、elicitation 语义与日历接口。
-
-### 升级
-
-- 应用中心覆盖安装（保留数据）→ 停止 FnCal → 启动 → 强制刷新（`Ctrl+Shift+R`）。
-
 ## 0.5.0 — 项目介绍页与 AI 协作说明（2026-11-06）
 
 ### 新增

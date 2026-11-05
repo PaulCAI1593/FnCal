@@ -38,7 +38,6 @@ import { createMcp } from './api/mcp.mjs';
 import { createApprovalPage, APPROVAL_PAGE_PREFIX } from './api/approval-page.mjs';
 import { DEFAULT_ACCENT } from './lib/accent.mjs';
 import { createApprovalLinks } from './lib/approval-link.mjs';
-import { createApprovalReceipts } from './lib/approval-receipts.mjs';
 import { createAiService } from './lib/ai-service.mjs';
 import { createAiTrash } from './lib/ai-trash.mjs';
 import { createAiRateLimiter } from './lib/ai-rate-limit.mjs';
@@ -76,7 +75,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 开关对比度、迷你月历点线、年视图换行断开、「四日」）——同样是纯前端。
 // 0.2.18：C 批七条（年视图圆几何、迷你点线一整条、四视图拼接条与箭头方向、
 // 搜索面板加宽、编辑弹窗农历日期选择、搜索胶囊圆头等高）——同样是纯前端。
-export const VERSION = '0.5.1';
+export const VERSION = '0.5.0';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -468,9 +467,6 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   const approvalLinks = createApprovalLinks({
     file: path.join(config.varDir, '.data', 'ai-approval-links.json'),
   });
-  // 0.5.1（M5 §2）：审批回执三层共用一张进程内表——审批页写（L1 推送源）、
-  // MCP 侧推送/等待/搭车读。只在内存，保留 24 小时，不落盘、不含令牌。
-  const approvalReceipts = createApprovalReceipts({ logger });
   // 0.4.26（S13–S15）：审批页只读用户的主题色与明暗两个字段，用来给服务端
   // 渲染的 HTML 注入同一套 accent 变量与 data-theme。读失败/无设置一律回落
   // 默认色 + 跟随系统，不阻塞页面（S15）。
@@ -494,7 +490,6 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     // 页面按来源 IP 限速 60 次/分钟（规则 ⑥）；与凭据限流分开，避免互相挤占。
     rateLimiter: createAiRateLimiter(),
     readAccent,
-    approvalReceipts,
   });
   const mcpApi = createMcp({
     aiStore,
@@ -505,7 +500,6 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     version: VERSION,
     limiter: aiRateLimiter,
     approvalLinks,
-    approvalReceipts,
   });
   const apiHandler = createApiHandler({
     version: config.version,
