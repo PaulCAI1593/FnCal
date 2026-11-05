@@ -89,7 +89,7 @@ Same not-found answer for: hidden calendar, outside the window, no such uid, ano
 ```
 
 - Outside the credential's window → not-found. All-day events get a 24 h tolerance at the window edge.
-- In proposal mode nothing is written until the human accepts.
+- In proposal mode nothing is written until the human accepts. If the client has no elicitation popup and the credential has agent approval on, the same result also carries `approvalUrl` / `pinRequired` / `expiresIn` (0.4.27): hand the link to the user directly, no extra `decide_proposals` call is needed.
 - Writing (create or update): a `read`-level target says so explicitly (`该日历只有「只读」权限…`); a time outside the window says so explicitly (`这个时间在你的凭据时间窗外…`); `end` earlier than `start` → `结束时间必须晚于开始时间。` Only a hidden or absent calendar uses the calendar not-found text.
 
 ## update_event
@@ -102,7 +102,7 @@ Same not-found answer for: hidden calendar, outside the window, no such uid, ano
 | `ifMatch` | string | ETag you last saw; mismatch → conflict instead of overwriting |
 | `note` | string | proposal explanation |
 
-Same result shape as `create_event`. Changing the UID is rejected (`400` class) — cancel and create instead.
+Same result shape as `create_event`, including `approvalUrl` in proposal mode for clients without elicitation. Changing the UID is rejected (`400` class) — cancel and create instead.
 
 Pass `ifMatch` whenever you read the event first; it turns a silent overwrite into a `409 stale` you can recover from.
 
@@ -124,7 +124,7 @@ Result depends on the credential's **delete mode** (separate from `writeMode`):
 { "applied": true, "deleted": true, "calendarId": "…" }
 ```
 
-- **proposal** (default): nothing is deleted until the human accepts; tell them a confirmation is waiting in FnCal.
+- **proposal** (default): nothing is deleted until the human accepts; tell them a confirmation is waiting in FnCal. The proposal result itself carries `approvalUrl` when the credential has agent approval on and the client has no elicitation popup (0.4.27) — hand that link to the user; no extra call is needed. To mint a fresh link for a pending delete (for example after the old one expired), call `decide_proposals` with the proposal's id and `action: "approve"`: without elicitation it returns `approval_requires_ui` plus `approvalUrl` and settles nothing. The delete keeps waiting until the user settles it on that page or in FnCal.
 - **trash**: the event is deleted at once and stored in FnCal's trash for the retention period (default 7 days). The user can restore it **only** in the FnCal interface; you have no restore or empty tool. Say "已移到 FnCal 回收站，可在保留期内恢复", not "无法撤销".
 - Either way a failed trash write leaves the event in place: `删除失败：回收站写入失败，日程未删除` / `删除失败：回收站不可用，日程未删除`.
 
@@ -146,7 +146,7 @@ No arguments. Requires the credential to have **agent approval** enabled; otherw
 | arg | type | notes |
 |---|---|---|
 | `id` | string | **required**, from `list_proposals` |
-| `confirmed` | boolean | **required**, must be `true`. Without it the call is refused with code `confirmation_required` and a `summary` to show the user |
+| `confirmed` | boolean | **deprecated**: the server only accepts the popup click; passing `true` is refused with `approval_requires_ui` |
 | `reason` | string | `reject_proposal` only, optional, ≤200 chars |
 
 ```json
@@ -157,34 +157,44 @@ No arguments. Requires the credential to have **agent approval** enabled; otherw
 ```
 
 - Same in-conversation proxy gate as `list_proposals`: **show the proposal summary and get the user's explicit approval or rejection before calling; one proposal at a time.**
-- Two confirmation paths, both enforced by the server: (a) client supports MCP elicitation → the call answers as `text/event-stream` and emits `elicitation/create`; the user clicks approve / reject / cancel, results come back as `{approved:true}` / `{declined:true}` / `{cancelled:true}`, timeout gives `{code:"confirmation_timeout"}`; (b) no elicitation → `confirmation_required` with `summary` and `prompt`; retry with `confirmed: true` after the user agrees. Decline, cancel and timeout never change data.
+- **Approval is only possible through FnCal's popup.** With MCP elicitation the call answers as `text/event-stream` and emits `elicitation/create`; the user clicks approve / reject / cancel — `{approved:true}` / `{declined:true}` / `{cancelled:true}`, timeout gives `{code:"confirmation_timeout"}`. Decline, cancel and timeout never change data.
+- **No elicitation capability → `isError: true`, `code: "approval_requires_ui"`, zero execution.** A chat "yes" is not authorization, and `confirmed` is deprecated and refused. Relay the `message`, the `summary` and the `approvalUrl`; the user settles them on that page — per-card 批准 / 拒绝, 全部批准 / 全部拒绝 when 2+ remain, 刷新; 10 minutes, each proposal once (PIN if the credential has one).
+- A client that declares elicitation but whose popup stream cannot be written also gets `approval_requires_ui` (`reason: "stream_unavailable"`) plus `approvalUrl`. There is no text fallback: the link page is the only other path.
 - Approval re-checks the calendar: if it is no longer visible or writable to this credential, the call is refused instead of applied.
 - A settled, expired, or someone else's proposal → `未找到该提案：它可能不存在、已被处理，或不属于你的凭据。`
 - Approving a `delete` proposal deletes the event (in trash mode it lands in the trash; in proposal mode it is a real deletion). Never approve a delete the user did not ask for.
 
 ## decide_proposals
 
-The mode-first entry point for settling proposals. New in 0.4.18/0.4.19; `approve_proposal` / `reject_proposal` stay available for one-off decisions.
+The entry point for settling proposals. Mode-first only when 2+ are pending (0.4.20); with exactly one it is a single confirmation. `approve_proposal` / `reject_proposal` stay available for one-off decisions.
 
 | arg | type | notes |
 |---|---|---|
 | `action` | string | **required**: `approve` or `reject` |
-| `scope` | string | `all` (your credential’s pending set, or the `ids` you name) or `single` (exactly one id). Omit it on the first call |
+| `scope` | string | `all` or `single`. Omit it when exactly one is pending (single confirmation) or to get the mode question when 2+ are pending |
 | `ids` | string[] | optional; with `all` it narrows the set, with `single` it must hold exactly one id |
-| `confirmed` | boolean | **required with `scope`**, must be `true` |
+| `confirmed` | boolean | **deprecated**: the server only accepts the popup click; passing `true` is refused with `approval_requires_ui` |
 | `reason` | string | reject only, optional, ≤200 chars |
 
-Two-step by contract:
+Call it with `action` first (no `scope`); what comes back depends on the client capability and the pending count:
 
-1. Call with `action` only. With elicitation the server answers as `text/event-stream` and emits one `elicitation/create` popup — 全部批准（N 条）/ 逐条审批 / 取消 — then continues with the user’s choice. Without elicitation it returns `isError: true`, `code: "mode_required"`, `data: { pending, deleteCount, prompt, options }`; nothing is settled.
-2. Retry with `scope` + `confirmed: true` after the user answered in words.
+1. **No elicitation capability (any pending count).** `isError: true`, `code: "approval_requires_ui"`, zero execution — `total`, `deleteCount` when it applies, `message`, `approvalUrl`, `pinRequired`, `expiresIn`, `ui: { panel: "proposals" }`. Relay the `message` and the link; the user settles the batch there (per-card, or 全部批准 / 全部拒绝, 刷新). Do not retry and do not pass `confirmed`. `pinRequired` is true only when the credential has agent approval on, at least one write mode set to proposal, and a PIN saved.
+2. **Nothing pending.** `{ code: "no_proposals", action, total: 0 }`; nothing to ask, nothing settled.
+3. **One pending, with elicitation.** No mode question: one `elicitation/create` popup — 批准 / 拒绝 / 取消 — then the call continues.
+4. **Two or more pending, with elicitation.** One popup — 全部批准（N 条）/ 逐条审批 / 取消 — then the call continues. The `scope` you pass does not decide anything; the click does.
+
+Never pick the mode yourself: no default `all`, no batch on a vague "ok".
 
 ```json
-// mode_required
-{ "code": "mode_required", "pending": 5, "deleteCount": 1,
-  "prompt": "这 5 条里有 1 条是删除日程，批准后无法恢复。全部批准，还是逐条审批？",
-  "options": ["all", "single"] }
-// result (both modes)
+// no elicitation capability (any pending count)
+{ "code": "approval_requires_ui", "tool": "decide_proposals", "reason": "no_elicitation",
+  "total": 5, "deleteCount": 1,
+  "message": "请在浏览器打开上面的链接确认；未确认前未执行。",
+  "approvalUrl": "http://<host>/a/<token>", "pinRequired": false, "expiresIn": 600,
+  "ui": { "panel": "proposals" } }
+// nothing pending
+{ "code": "no_proposals", "action": "approve", "total": 0 }
+// result (after the user clicked in the popup)
 { "action": "approve", "mode": "all", "total": 5, "ok": 4, "failed": 1,
   "results": [ { "id": "…", "ok": true }, { "id": "…", "ok": false, "code": "expired", "message": "已过期" } ] }
 ```
@@ -192,11 +202,12 @@ Two-step by contract:
 - `all` settles at most 100 proposals in one call and keeps going when one fails; report the summary in words, with the Chinese failure reasons.
 - `single` is the same gate as `approve_proposal` / `reject_proposal`: one id, calendar re-checked before applying.
 - Delete proposals in an `all` set must be announced by count before proceeding: permanent deletion in proposal mode, recoverable for N days in trash mode.
-- Cancel, decline, timeout and a dropped popup all leave data unchanged and write an audit entry.
+- Cancel, decline, timeout and a dropped popup all leave data unchanged and write an audit entry. A refused approval writes `proposal-agent-approval-blocked` (`reason: "no_elicitation"` / `"stream_unavailable"`) and no decision audit.
+- Never choose the mode for the user; with exactly one pending never ask for a mode either. Without elicitation, the conversation cannot settle anything at all.
 
 ## Error classes
 
 - Tool level (`isError: true`): not-found (hidden/absent), `read`-level write refusal, out-of-window write refusal, bad time range (`结束时间必须晚于开始时间。`), validation, conflict. Reads keep one identical not-found text for hidden/absent/out-of-window; **writes** separate the three causes so the human can act on the message.
 - HTTP level (outside JSON-RPC): `401` bad/revoked/missing token, `404` MCP disabled or HTTPS required (also `code: "session_not_found"` for a missing or expired `Mcp-Session-Id`), `429` rate limited (+`Retry-After`), `413` body over 256 KB, `405` for methods other than `POST` / `GET` / `DELETE`.
-- Proxy approval gate: `list_proposals` / `approve_proposal` / `reject_proposal` / `decide_proposals` answer `凭据未开启 AI 端代办批准，请到 FnCal 设置里打开，或在日历界面批准` (`isError`, code `agent_approval_disabled`) when the credential has the switch off. Even with the switch on, you must ask the user first and act only on their explicit answer.
+- Proxy approval gate: `list_proposals` / `approve_proposal` / `reject_proposal` / `decide_proposals` answer `凭据未开启 AI 端代办批准，请到 FnCal 设置里打开，或在日历界面批准` (`isError`, code `agent_approval_disabled`) when the credential has the switch off. Even with the switch on, approval requires the FnCal popup click; without elicitation the tools answer `approval_requires_ui` and execute nothing.
 - JSON-RPC errors: `-32700` bad JSON, `-32600` malformed request, `-32601` unknown method, `-32602` invalid params — including **calling a write tool the credential does not have**, which is indistinguishable from a typo on purpose.

@@ -57,10 +57,22 @@ describe('accent 派生变量', () => {
       expect(pal.vars[key], key).toBeTruthy();
     }
     expect(api.contrast(pal.accent, pal.vars['--text-on-accent'])).toBeGreaterThanOrEqual(4.5);
-    // hover 压暗 ~12%、active 压暗 ~20%：亮度 accent > hover > active
+    // 0.4.28（S1）：方向由文字色决定 —— 深墨文字时 hover/active 变亮，白字时变暗；
+    // 且两者相对常态都要 ≥4.5:1。旧断言固定「压暗」已不成立（橙 #c26a1f 压暗会掉到
+    // 3.85:1），按范围文档 S1 改为方向断言。
     const lum = (h) => api.contrast(h, '#000000');
-    expect(lum(pal.vars['--accent-hover'])).toBeLessThan(lum(pal.accent));
-    expect(lum(pal.vars['--accent-active'])).toBeLessThan(lum(pal.vars['--accent-hover']));
+    const inkDark = pal.vars['--text-on-accent'] === '#101216';
+    const hoverLum = lum(pal.vars['--accent-hover']);
+    const activeLum = lum(pal.vars['--accent-active']);
+    if (inkDark) {
+      expect(hoverLum).toBeGreaterThan(lum(pal.accent));
+      expect(activeLum).toBeGreaterThan(hoverLum);
+    } else {
+      expect(hoverLum).toBeLessThan(lum(pal.accent));
+      expect(activeLum).toBeLessThan(hoverLum);
+    }
+    expect(api.contrast(pal.vars['--accent-hover'], pal.vars['--text-on-accent'])).toBeGreaterThanOrEqual(4.5);
+    expect(api.contrast(pal.vars['--accent-active'], pal.vars['--text-on-accent'])).toBeGreaterThanOrEqual(4.5);
   });
 
   it('暗色：accent 先抬到与深底 ≥4.5，文字对比度同样 ≥4.5（含默认深蓝）', () => {

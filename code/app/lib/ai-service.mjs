@@ -736,13 +736,16 @@ export function createAiService({
    * 不返回 ICS、不返回别家凭据的提案；卡片用的时间/地点沿用 0.4.10 的
    * proposalFieldsOfIcs（只在服务端解析，前端拿不到整份 ICS）。
    */
-  async function listAgentProposals(ctx) {
+  async function listAgentProposals(ctx, { ids = null } = {}) {
     if (!canAgentApprove(ctx.credential)) throw agentApprovalDisabled();
     const mine = await listProposals(ctx, 'pending');
+    // 0.4.22（M4 §S3）：审批链接只展示自己绑定的那几条；ids 为空仍按全部处理。
+    const wanted = Array.isArray(ids) && ids.length ? new Set(ids.map((id) => String(id))) : null;
     const metas = await aiStore.listCalendarMetasFor(ctx.userId);
     const names = new Map((Array.isArray(metas) ? metas : []).map((meta) => [meta.id, meta.displayName || meta.name || meta.id]));
     const rows = [];
     for (const proposal of mine) {
+      if (wanted && !wanted.has(String(proposal.id))) continue;
       if (!isReadable(ctx.credential, proposal.calendarId)) continue;
       const stored = (await aiStore.getProposal(ctx.userId, proposal.id)) || {};
       const before = stored.before && typeof stored.before === 'object' ? stored.before : {};

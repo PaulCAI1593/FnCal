@@ -1,8 +1,8 @@
-# FnCal Docker 部署说明（0.4.19）
+# FnCal Docker 部署说明（0.4.28）
 
-FnCal 是自托管日历服务，提供网页界面与 CalDAV 接口。本说明讲清楚用 Docker 在 NAS 或 Linux 主机上部署 FnCal 0.4.19。
+FnCal 是自托管日历服务，提供网页界面与 CalDAV 接口。本说明讲清楚用 Docker 在 NAS 或 Linux 主机上部署 FnCal 0.4.28。
 
-- 适用版本：0.4.19
+- 适用版本：0.4.28
 - 部署方式：Docker Compose（推荐）或 `docker run`
 - 验证状态：**部分完成**
   - 已验证：首启初始化、网页登录、CalDAV 读写、重启后数据保留、随机初始密码文件生成（本机模拟 17 项）；amd64 镜像构建、OCI 标签写入、容器健康检查、容器内非 root 运行、首启密码文件 0600（GitHub Actions run `41506831612`，2026-11-03，两个 job 全绿）。
@@ -17,7 +17,7 @@ FnCal 是自托管日历服务，提供网页界面与 CalDAV 接口。本说明
 
 ## 二、准备源码
 
-1. 取 0.4.19 源码：`git clone --branch v0.4.19 https://github.com/PaulCAI1593/FnCal`，或在 GitHub 下载 tag `v0.4.19` 的源码压缩包并解压。
+1. 取 0.4.28 源码：`git clone --branch v0.4.28 https://github.com/PaulCAI1593/FnCal`，或在 GitHub 下载 tag `v0.4.28` 的源码压缩包并解压。
 2. 进入含 `code/` 的那一层目录，后文命令都在这个目录执行。
 3. 确认目录里有 `Dockerfile` 与 `docker-compose.yml`。缺文件说明包不完整。
 
@@ -28,7 +28,7 @@ FnCal 是自托管日历服务，提供网页界面与 CalDAV 接口。本说明
 1. 设版本号与管理员密码。
 
    ```bash
-   export FNCAL_VERSION=0.4.19
+   export FNCAL_VERSION=0.4.28
    export CALDAV_ADMIN_PASSWORD='替换成你的强密码'
    ```
 
@@ -48,7 +48,7 @@ FnCal 是自托管日历服务，提供网页界面与 CalDAV 接口。本说明
 1. 构建镜像。
 
    ```bash
-   docker build -f Dockerfile --build-arg VERSION=0.4.19 -t fncal:0.4.19 .
+   docker build -f Dockerfile --build-arg VERSION=0.4.28 -t fncal:0.4.28 .
    ```
 
 2. 建卷并启动。
@@ -63,7 +63,7 @@ FnCal 是自托管日历服务，提供网页界面与 CalDAV 接口。本说明
      -e PUID=1000 -e PGID=1000 \
      -e CALDAV_USER=caldav \
      -e CALDAV_ADMIN_PASSWORD='替换成你的强密码' \
-     fncal:0.4.19
+     fncal:0.4.28
    ```
 
 3. 浏览器打开 `http://<NAS-IP>:5581/` 登录。
@@ -107,7 +107,7 @@ Compose 包装变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `FNCAL_VERSION` | `0.4.19` | 镜像版本号。必须与源码版本一致，否则构建失败。 |
+| `FNCAL_VERSION` | `0.4.28` | 镜像版本号。必须与源码版本一致，否则构建失败。 |
 | `FNCAL_HTTP_PORT` | `5581` | 宿主机 HTTP 端口。 |
 | `FNCAL_HTTPS_PORT` | `5243` | 宿主机 HTTPS 端口。 |
 
@@ -204,7 +204,7 @@ docker start fncal
 1. 升级：换新版源码包，在同一目录重新构建并启动。
 
    ```bash
-   export FNCAL_VERSION=0.4.19
+   export FNCAL_VERSION=0.4.28
    docker compose up -d --build
    ```
 

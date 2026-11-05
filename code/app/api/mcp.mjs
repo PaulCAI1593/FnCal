@@ -4,7 +4,7 @@
 //   - **认证仍是每请求独立**：每个请求各自用 Bearer 认证，工具集按凭据实时算。
 //     0.4.18 起 `initialize` 会开一个进程内会话（`Mcp-Session-Id`，30 分钟 TTL、上限 500），
 //     它只服务两件事：客户端弹窗（elicitation/create 需要下行通道）、`GET /mcp` 的 SSE 心跳。
-//     不带会话头的旧客户端照常工作，只是走 0.4.17 的文字确认路径。
+//     不带会话头的旧客户端照常工作，但 0.4.21 起只能读提案，不能批准（approval_requires_ui）。
 //   - 认证/限流/实例开关与 `/api/ai/v1/*` **完全同一套**：同一个 `aiStore`、
 //     同一个限流桶（同一凭据的 REST 与 MCP 合起来算 60/60s）、同一段 availability 判定。
 //   - 授权、字段掩码、时间窗界**全部**在 `lib/ai-service.mjs`（它再调 `lib/ai-grants.mjs`）；
@@ -18,6 +18,8 @@ import { randomBytes } from 'node:crypto';
 import { DELETE_MODE_TRASH, canAgentApprove, deleteModeOf, NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
 import { createAiRateLimiter } from '../lib/ai-rate-limit.mjs';
 import { BATCH_MAX_IDS, createAiService, parseBearer, runProposalBatch } from '../lib/ai-service.mjs';
+// 0.4.27（S2）：摘要时间与审批页同一套服务端时区规则（默认 Asia/Shanghai）。
+import { formatWhenInZone } from '../lib/time-zone.mjs';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const PREFIX = '/mcp';
@@ -59,39 +61,25 @@ const MISSING_CALENDAR_TEXT = '未找到该日历：它可能不存在，或对�
 /** 提案不存在 / 不是本凭据产生的 / 所属日历已不可见 —— 统一一句，不证明存在性。 */
 const PROPOSAL_MISSING_TEXT = '未找到该提案：它可能不存在、已被处理，或不属于你的凭据。';
 
-/* ---------------------------------------- 0.4.17：结构化文字确认（M4 §2、§3） */
+/* ------------------------------ 0.4.17：确认摘要与提示（0.4.21 起只用于弹窗与被拒结果） */
 
 /** 提案动作词；不认识的动作按「修改」写，避免摘要里出现英文枚举。 */
-const PROPOSAL_ACTION_WORDS = Object.freeze({ create: '新建', update: '修改', delete: '删除' });
-const WEEKDAY_NAMES = Object.freeze(['周日', '周一', '周二', '周三', '周四', '周五', '周六']);
-const pad2 = (value) => String(value).padStart(2, '0');
-
+export const PROPOSAL_ACTION_WORDS = Object.freeze({ create: '新建', update: '修改', delete: '删除' });
 /**
- * 从 ISO 书写值里取「墙上时间」。摘要按事件书写值显示（M4 §2.4），
- * 不换算到服务器时区，也不引第三方时区库。
+ * `11-05 周四 10:00–11:00` / 全天写 `11-05 周四 全天` / 缺时间写「未提供」。
+ * 0.4.27（S2）：不再取 ICS 字面墙钟，改为与审批页同一套服务端时区规则
+ * （lib/time-zone.mjs：默认 Asia/Shanghai，CALDAV_TIME_ZONE 覆盖，全天按书写日期）。
  */
-function wallClockOf(iso) {
-  if (typeof iso !== 'string') return null;
-  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(iso);
-  if (!match) return null;
-  const [, y, mo, d, h, mi] = match;
-  const weekday = WEEKDAY_NAMES[new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d))).getUTCDay()];
-  return { y, mo, d, h, mi, weekday, dateKey: `${y}-${mo}-${d}` };
+export function formatProposalWhen(proposal) {
+  const formatted = formatWhenInZone({
+    allDay: proposal && proposal.allDay === true,
+    start: proposal && proposal.start,
+    end: proposal && proposal.end,
+  });
+  return formatted || '未提供';
 }
 
-/** `11-05 周四 10:00–11:00` / 全天写 `11-05 周四 全天` / 缺时间写「未提供」。 */
-function formatProposalWhen(proposal) {
-  const start = wallClockOf(proposal && proposal.start);
-  if (!start) return '未提供';
-  const head = `${start.mo}-${start.d} ${start.weekday}`;
-  if (proposal.allDay === true) return `${head} 全天`;
-  const end = wallClockOf(proposal && proposal.end);
-  if (!end) return `${head} ${start.h}:${start.mi}`;
-  if (end.dateKey === start.dateKey) return `${head} ${start.h}:${start.mi}–${end.h}:${end.mi}`;
-  return `${head} ${start.h}:${start.mi}–${end.mo}-${end.d} ${end.weekday} ${end.h}:${end.mi}`;
-}
-
-function proposalTitleOf(proposal) {
+export function proposalTitleOf(proposal) {
   const title = String((proposal && proposal.title) || '').trim();
   return title || '（无标题）';
 }
@@ -113,46 +101,37 @@ function buildConfirmSummary(proposal, ctx = {}) {
   ];
   const location = typeof row.location === 'string' ? row.location.trim() : '';
   if (location) parts.push(`地点：${location}`);
-  if (row.action === 'delete') parts.push('永久删除，无法恢复');
+  if (row.action === 'delete') {
+    // 0.4.20 §2 规则 3：回收站模式下写可还原，提案模式才写永久删除。
+    if (ctx.trashMode === true) {
+      const days = Number.isFinite(ctx.retentionDays) ? ctx.retentionDays : TRASH_RETENTION_FALLBACK;
+      parts.push(`删除后 ${days} 天内可在最近删除里还原`);
+    } else {
+      parts.push('永久删除，无法恢复');
+    }
+  }
   return parts.join('｜');
 }
 
 /** 给 AI 原样贴给用户的中文确认句；末句固定「同意请回复「批准」/「拒绝」」（M4 §3）。 */
-function buildConfirmPrompt(proposal, decision = '批准') {
+function buildConfirmPrompt(proposal, decision = '批准', ctx = {}) {
   const row = proposal || {};
   const action = PROPOSAL_ACTION_WORDS[row.action] || '修改';
   const ask = decision === '拒绝' ? '拒绝' : '批准';
+  const trashNote = ctx.trashMode === true
+    ? `，${Number.isFinite(ctx.retentionDays) ? ctx.retentionDays : TRASH_RETENTION_FALLBACK} 天内可在最近删除里还原`
+    : '';
   const effect = ask === '批准'
     ? (row.action === 'delete'
-      ? '批准后立即从日历删除，永久删除，无法恢复。'
+      ? (ctx.trashMode === true
+        ? `批准后立即从日历删除${trashNote}。`
+        : '批准后立即从日历删除，永久删除，无法恢复。')
       : '批准后立即写入日历。')
     : '拒绝后不会写入日历。';
   const location = typeof row.location === 'string' ? row.location.trim() : '';
   return `请确认：${ask}（${action}）「${proposalTitleOf(row)}」？`
     + `日历：${row.calendarName || row.calendarId || '未提供'}；`
     + `时间：${formatProposalWhen(row)}${location ? `；地点：${location}` : ''}。${effect}\n\n同意请回复「${ask}」。`;
-}
-
-/** 工具级错误：未确认（M4 §2.2/§2.3）。isError + 现成摘要，数据零变化。 */
-function confirmationRequiredResult({ proposalId, summary, prompt }) {
-  // M4 §3 文字写「data 含 …」；MCP 规范字段名是 structuredContent。两者带同一对象，
-  // 客户端认哪一个都能拿到摘要，服务端只有一份数据。
-  const data = {
-    code: 'confirmation_required',
-    proposalId,
-    summary,
-    prompt,
-    retry: { id: proposalId, confirmed: true },
-  };
-  return {
-    content: [{
-      type: 'text',
-      text: '未确认，未执行。请把下面这段原样发给用户，得到明确同意后再带 confirmed: true 调用。\n\n' + prompt,
-    }],
-    isError: true,
-    structuredContent: data,
-    data,
-  };
 }
 
 /* ------------------------------ 0.4.19：批准模式选择（M4 §1 S2–S5、§3） */
@@ -211,21 +190,64 @@ function modeElicitationSchema({ action, targetCount }) {
   };
 }
 
-/** 工具级错误：先问模式（硬规则 1）。不执行任何一条，只回现成问句与条数。 */
-function modeRequiredResult({ action, pending, deleteCount, prompt }) {
-  const data = {
-    code: 'mode_required',
-    action,
-    pending,
-    deleteCount,
-    prompt,
-    options: ['all', 'single'],
-  };
+/** 0.4.20：待确认为 0 条。不问模式、不弹窗、零执行（M4 §3「0 条」）。 */
+function noProposalsResult({ action }) {
+  const data = { code: 'no_proposals', action, total: 0 };
   return {
-    content: [{
-      type: 'text',
-      text: '未选择处理方式，未执行。请把下面这段原样发给用户，得到明确选择后再带 scope 与 confirmed: true 重新调用。\n\n' + prompt,
-    }],
+    content: [{ type: 'text', text: JSON.stringify(data) }],
+    structuredContent: data,
+    data,
+  };
+}
+
+/* ------------------------------ 0.4.21：无弹窗能力禁止 MCP 批准（M4-0.4.21 §2） */
+
+const APPROVAL_REQUIRES_UI_TEXT = '当前客户端不支持确认弹窗，服务端不执行批准。请在 FnCal 的「提案」面板里确认。';
+// 0.4.22（M4 §3）：有审批链接时的提示语；「打开链接」是唯一放行入口。
+const APPROVAL_LINK_TEXT_PIN = '请在浏览器打开上面的链接确认（需要凭据 PIN）；未确认前未执行。';
+const APPROVAL_LINK_TEXT_NO_PIN = '请在浏览器打开上面的链接确认；未确认前未执行。';
+const APPROVAL_LINK_PIN_HINT = '需要凭据 PIN，请不要把 PIN 告诉 AI 助手。';
+
+/**
+ * 无弹窗能力 / 弹窗写不出去时的统一拒绝结果（M4-0.4.21 §2 S1–S2、M4-0.4.22 §3）：
+ * `isError` + `code:'approval_requires_ui'`，零执行；带单条摘要或批量条数与删除类计数。
+ * 0.4.22 起同时带一次性审批链接：approvalUrl / pinRequired / expiresIn。
+ */
+function approvalRequiresUiResult({
+  tool,
+  reason,
+  total = null,
+  proposalId = null,
+  summary = null,
+  deleteCount = null,
+  approvalUrl = null,
+  pinRequired = null,
+  expiresIn = null,
+  message = null,
+}) {
+  const text = message || APPROVAL_REQUIRES_UI_TEXT;
+  const data = {
+    code: 'approval_requires_ui',
+    tool,
+    reason,
+    ui: { panel: 'proposals' },
+    message: text,
+  };
+  if (Number.isFinite(total)) data.total = total;
+  if (proposalId) data.proposalId = proposalId;
+  if (summary) data.summary = summary;
+  if (Number.isFinite(deleteCount)) data.deleteCount = deleteCount;
+  if (approvalUrl) {
+    data.approvalUrl = approvalUrl;
+    data.pinRequired = pinRequired === true;
+    data.expiresIn = Number.isFinite(expiresIn) ? expiresIn : null;
+  }
+  const tail = summary || (Number.isFinite(total) ? `待处理提案 ${total} 条` : '');
+  const lines = [text];
+  if (approvalUrl) lines.push(`审批链接：${approvalUrl}${data.pinRequired ? `（${APPROVAL_LINK_PIN_HINT}）` : ''}`);
+  if (tail) lines.push(tail);
+  return {
+    content: [{ type: 'text', text: lines.join('\n\n') }],
     isError: true,
     structuredContent: data,
     data,
@@ -315,10 +337,13 @@ const WRITE_TOOLS = Object.freeze([
   tool(
     'create_event',
     '新建事件。需要目标日历的写权限；时间窗外的写入会被拒绝。'
-      + '凭据为提案模式（默认）时只生成待确认提案，用户确认后才真正落库。',
+      + '凭据为提案模式（默认）时只生成待确认提案，用户确认后才真正落库；'
+      + '凭据把「新建、修改」设为「直接通过」时会直接写入日历，不产生提案（想只提案就把凭据设为「提案」）。'
+      + '提案模式下、且客户端没有弹窗能力时，返回里会直接带一次性审批链接 approvalUrl：有就直接给用户，不必再调 decide_proposals。',
     {
       calendarId: { type: 'string', description: '目标日历 id（必填）' },
       title: { type: 'string', description: '标题' },
+      summary: { type: 'string', description: '标题别名（兼容只给 summary 的客户端；两者都给时 title 优先）' },
       start: { type: 'string', description: 'ISO 8601 开始时间（与 ics 二选一）' },
       end: { type: 'string', description: 'ISO 8601 结束时间，可省略（默认开始 +1 小时）' },
       allDay: { type: 'boolean', description: '是否全天事件' },
@@ -332,11 +357,14 @@ const WRITE_TOOLS = Object.freeze([
   ),
   tool(
     'update_event',
-    '修改事件（需要目标日历写权限，且事件在你的时间窗内）。提案模式下只生成待确认提案。',
+    '修改事件（需要目标日历写权限，且事件在你的时间窗内）。提案模式下只生成待确认提案；'
+      + '凭据把「新建、修改」设为「直接通过」时会直接写入日历，不产生提案（想只提案就把凭据设为「提案」）。'
+      + '提案模式下、且客户端没有弹窗能力时，返回里会直接带一次性审批链接 approvalUrl：有就直接给用户，不必再调 decide_proposals。',
     {
       uid: { type: 'string', description: '要修改的事件 UID（必填）' },
       calendarId: { type: 'string', description: '指定日历 id，可省略' },
       title: { type: 'string', description: '新标题' },
+      summary: { type: 'string', description: '新标题别名（兼容只给 summary 的客户端；两者都给时 title 优先）' },
       start: { type: 'string', description: '新的 ISO 8601 开始时间' },
       end: { type: 'string', description: '新的 ISO 8601 结束时间' },
       allDay: { type: 'boolean', description: '是否全天事件' },
@@ -350,7 +378,8 @@ const WRITE_TOOLS = Object.freeze([
   tool(
     'delete_event',
     '请求删除事件。该凭据的「删除」设为提案模式（默认）时只生成待确认提案；'
-      + '设为回收站模式时立即删除并进入回收站，保留期内可在日历界面恢复。',
+      + '设为回收站模式时立即删除并进入回收站，保留期内可在日历界面恢复。'
+      + '提案模式下、且客户端没有弹窗能力时，返回里会直接带一次性审批链接 approvalUrl：有就直接给用户，不必再调 decide_proposals。',
     {
       uid: { type: 'string', description: '要删除的事件 UID（必填）' },
       calendarId: { type: 'string', description: '指定日历 id，可省略' },
@@ -376,46 +405,49 @@ const AGENT_TOOLS = Object.freeze([
   ),
   tool(
     'approve_proposal',
-    '批准一条提案并立即应用到日历（包含删除类提案）。必须分两步：先把 list_proposals 里该条的 summary 原样贴给用户，'
-      + '明确问是否批准；用户明确同意后，才带 confirmed: true 再次调用。未带 confirmed: true 的调用不会改动任何数据，'
-      + '只返回 confirmation_required 与现成的摘要和问句。一次只处理一条，禁止跳过询问批量执行。'
+    '批准一条提案并立即应用到日历（包含删除类提案）。只有客户端声明了 elicitation 弹窗能力时才可用：'
+      + '服务端会弹「批准 / 拒绝 / 取消」确认框，以用户点击为准。没有弹窗能力的客户端一律返回 approval_requires_ui、零执行，'
+      + '回包里带一次性审批链接 approvalUrl：把摘要与链接原样给用户，请用户自己在浏览器打开确认（有 PIN 时输入凭据 PIN）；'
+      + '不要把「用户回复批准」当成授权，也不要带 confirmed: true 重试，更不要索取或转述 PIN。用户没在链接里点之前不会执行。'
       + '需要该凭据打开「允许代办批准」；只会处理本凭据产生的、仍在等待确认的提案。',
     {
       id: { type: 'string', description: '提案 id（必填，取自 list_proposals）' },
-      confirmed: { type: 'boolean', description: '用户已在对话里明确同意。只有 true 才会执行；缺失、false 或其他值都只返回确认摘要' },
+      confirmed: { type: 'boolean', description: '已废弃：服务端不把文字确认当授权，只认弹窗点击或审批链接；传 true 也会被拒绝（approval_requires_ui）' },
     },
     ['id'],
   ),
   tool(
     'reject_proposal',
-    '拒绝一条提案（不应用到日历）。必须分两步：先把 list_proposals 里该条的 summary 原样贴给用户，明确问是否拒绝；'
-      + '用户明确同意后，才带 confirmed: true 再次调用。未带 confirmed: true 的调用不会改动任何数据，'
-      + '只返回 confirmation_required 与现成的摘要和问句。一次只处理一条，禁止跳过询问批量执行。需要该凭据打开「允许代办批准」。',
+    '拒绝一条提案（不应用到日历）。只有客户端声明了 elicitation 弹窗能力时才可用：服务端弹「批准 / 拒绝 / 取消」确认框，'
+      + '以用户点击为准。没有弹窗能力的客户端一律返回 approval_requires_ui、零执行，并带一次性审批链接 approvalUrl：'
+      + '把链接给用户，让用户在浏览器里拒绝；不要带 confirmed: true 重试，也不要索取或转述 PIN。需要该凭据打开「允许代办批准」。',
     {
       id: { type: 'string', description: '提案 id（必填，取自 list_proposals）' },
       reason: { type: 'string', description: '拒绝原因，可省略（最多 200 字）' },
-      confirmed: { type: 'boolean', description: '用户已在对话里明确同意。只有 true 才会执行；缺失、false 或其他值都只返回确认摘要' },
+      confirmed: { type: 'boolean', description: '已废弃：服务端不把文字确认当授权，只认弹窗点击或审批链接；传 true 也会被拒绝（approval_requires_ui）' },
     },
     ['id'],
   ),
   tool(
     'decide_proposals',
-    '批量处理的入口：必须先问用户「全部批准 / 逐条审批」，再按用户选择执行。顺序写死，禁止跳过、禁止静默批量。'
-      + '不带 scope 调用时（客户端无弹窗能力）返回 mode_required 与待处理条数，不会执行任何一条；'
-      + '客户端声明了 elicitation 时，服务端会自己弹出「全部批准（N 条）/ 逐条审批」选择框，以用户点击为准。'
-      + 'scope:"all" 处理该凭据当前全部待确认提案（或用 ids 点名，最多 100 条）；'
-      + 'scope:"single" 时 ids 必须正好 1 条，仍需按 approve_proposal / reject_proposal 的确认口径征得同意。'
+    '批量处理的入口，必须在用户的确认弹窗里选：没有 elicitation 弹窗能力的客户端一律返回 approval_requires_ui、零执行，'
+      + 'confirmed 不放行（不要把「用户回复同意」当授权）；回包带一次性审批链接 approvalUrl，把链接与条数原样给用户，'
+      + '请用户自己在浏览器打开确认（有 PIN 时输入凭据 PIN），不要索取或转述 PIN。有弹窗能力时：先看当前待确认条数。'
+      + '只有 1 条时不要问模式，直接带 ids:[该条] 调本工具，服务端弹单条确认；0 条时返回 no_proposals；'
+      + '≥2 条且没有 scope 时服务端弹「全部批准 / 逐条审批」模式框，以用户点击为准。'
+      + '禁止替用户选择模式：不得默认 all、不得因为「看起来都该批」就自行批量、不得把用户上一句泛泛同意当成模式选择。'
+      + 'scope:"all" 处理该凭据当前全部待确认提案（或用 ids 点名，最多 100 条）；scope:"single" 时 ids 必须正好 1 条。'
       + '含删除类时问句里会写明条数与不可恢复（回收站模式下 N 天内可还原）。需要该凭据打开「允许代办批准」。',
     {
       action: { type: 'string', enum: ['approve', 'reject'], description: '批准或拒绝（必填）' },
-      scope: { type: 'string', enum: ['all', 'single'], description: '用户选的处理方式：all 全部 / single 逐条；不传则返回 mode_required' },
+      scope: { type: 'string', enum: ['all', 'single'], description: '用户选的处理方式：all 全部 / single 逐条；不传时 1 条直接弹单条确认、≥2 条弹模式选择' },
       ids: {
         type: 'array',
         items: { type: 'string' },
         maxItems: BATCH_MAX_IDS,
         description: `要处理哪几条（可选；all 模式最多 ${BATCH_MAX_IDS} 条，single 模式正好 1 条）`,
       },
-      confirmed: { type: 'boolean', description: '用户已明确选择处理方式并同意。只有 true 才会执行；缺失或 false 不执行' },
+      confirmed: { type: 'boolean', description: '已废弃：服务端不把文字确认当授权，只认弹窗点击；传 true 也会被拒绝（approval_requires_ui）' },
       reason: { type: 'string', description: '拒绝原因，可省略（最多 200 字，仅 action:"reject" 使用）' },
     },
     ['action'],
@@ -536,6 +568,7 @@ export function createMcp({
   version = '',
   now = () => Date.now(),
   limiter = null,
+  approvalLinks = null,
 } = {}) {
   if (!aiStore && !aiService) throw new Error('createMcp 需要 aiStore');
   const service = aiService || createAiService({ aiStore, health, now });
@@ -575,7 +608,7 @@ export function createMcp({
   const sessionTtlMs = () => envMs('FNCAL_MCP_SESSION_TTL_MS', SESSION_TTL_MS);
   const elicitTimeoutMs = () => envMs('FNCAL_MCP_ELICITATION_TIMEOUT_MS', ELICITATION_TIMEOUT_MS);
   const sseHeartbeatMs = () => envMs('FNCAL_MCP_SSE_HEARTBEAT_MS', SSE_HEARTBEAT_MS);
-  // 只给测试/排障用：强制走 0.4.17 的文字确认，验证降级路径（M4 §2.9）。
+  // 只给测试/排障用：强制让弹窗不可用，验证 0.4.21 §1 S4 的拒绝路径（零执行）。
   const elicitDisabled = () => process.env.FNCAL_MCP_ELICITATION_DISABLE === '1';
 
   /** Mcp-Session-Id → 会话；进程内 Map，不落盘、不跨实例（M4 §2.7）。 */
@@ -693,7 +726,7 @@ export function createMcp({
 
   /**
    * 客户端声明的 elicitation 能力：form / url / 空对象都按 form（M4 §2.1）。
-   * 没声明、false、null 都算「无能力」，继续走 0.4.17 的文字确认。
+   * 没声明、false、null 都算「无能力」：0.4.21 起这类会话不能批准/拒绝，只能读提案。
    */
   function elicitModeOf(session) {
     if (!session) return null;
@@ -744,9 +777,9 @@ export function createMcp({
     });
   }
 
-  function requestElicitation(res, session, row, decision) {
+  function requestElicitation(res, session, row, decision, ctx = {}) {
     return requestElicitationForm(res, session, {
-      message: buildConfirmPrompt(row, decision),
+      message: buildConfirmPrompt(row, decision, ctx),
       schema: ELICITATION_SCHEMA,
       detail: { proposalId: row.id || null, proposalAction: row.action || null },
     });
@@ -794,6 +827,81 @@ export function createMcp({
       elicitationAction: action,
     });
   }
+  /**
+   * 0.4.21：拒绝批准时的回收站上下文——回收站模式下摘要写「N 天内可还原」，
+   * 提案模式仍写「永久删除，无法恢复」（与网页端/M23 §5.2 同口径）。
+   */
+  async function trashContextOf(credential) {
+    const trashMode = credential ? deleteModeOf(credential) === DELETE_MODE_TRASH : false;
+    if (!trashMode) return { trashMode: false, retentionDays: null };
+    let days = null;
+    try {
+      const settings = aiStore && typeof aiStore.readSettings === 'function'
+        ? await aiStore.readSettings()
+        : null;
+      days = settings && Number.isFinite(settings.trashRetentionDays) ? settings.trashRetentionDays : null;
+    } catch {
+      days = null;
+    }
+    return { trashMode: true, retentionDays: Number.isFinite(days) ? days : TRASH_RETENTION_FALLBACK };
+  }
+
+  /** 0.4.21 §1 S7：被拒绝的批准/拒绝尝试记阻断日志；不写决策审计（没有决策发生）。 */
+  function notifyApprovalBlocked(ctx, { tool, reason, proposalId = null, total = null, deleteCount = null }) {
+    logEvent('proposal-agent-approval-blocked', {
+      tool,
+      reason,
+      proposalId,
+      total: Number.isFinite(total) ? total : null,
+      deleteCount: Number.isFinite(deleteCount) ? deleteCount : null,
+      credentialId: ctx.credential ? ctx.credential.id : null,
+    });
+  }
+
+  /**
+   * 0.4.22（M4 §S2）：无弹窗时发一次性审批链接。链接绑定本凭据 + 本次提案 ids + 动作，
+   * 10 分钟、只存 SHA-256、用过一次即废；返回的字段直接并进 approval_requires_ui。
+   * 失败（未注入链接存储）时返回 null，调用方退回 0.4.21 的纯面板提示，不报 500。
+   */
+  function approvalLinkFor(ctx, { proposalIds, action, mode = null, tool }) {
+    if (!approvalLinks || typeof approvalLinks.create !== 'function') return null;
+    if (!ctx || !ctx.credential) return null;
+    const ids = Array.isArray(proposalIds) ? proposalIds.filter(Boolean) : [];
+    if (!ids.length) return null;
+    try {
+      // 0.4.23（S11/S13）：只在代办批准真实生效（有提案模式）且已设 PIN 时要 PIN。
+      const approvalAllowed = ctx.credential.writeMode === 'proposal' || ctx.credential.deleteMode === 'proposal';
+      const pinRequired = ctx.credential.agentApproval === true && approvalAllowed
+        && Boolean(ctx.credential.pinHash);
+      const created = approvalLinks.create({
+        userId: ctx.userId,
+        credentialId: ctx.credential.id,
+        proposalIds: ids,
+        action,
+        mode,
+        tool,
+        pinRequired,
+      });
+      const origin = String(ctx.origin || '').replace(/\/+$/, '');
+      logEvent('approval-link-created', {
+        id: created.id,
+        tool,
+        credentialId: ctx.credential.id,
+        total: ids.length,
+        pinRequired: created.pinRequired,
+      });
+      return {
+        approvalUrl: `${origin}/a/${created.token}`,
+        pinRequired: created.pinRequired,
+        expiresIn: created.expiresIn,
+        message: created.pinRequired ? APPROVAL_LINK_TEXT_PIN : APPROVAL_LINK_TEXT_NO_PIN,
+      };
+    } catch (err) {
+      logEvent('approval-link-failed', { tool, message: String((err && err.message) || err) });
+      return null;
+    }
+  }
+
   /* ---------------------------------------------------------------- 工具集 */
 
   /** 按凭据实时算工具集：写工具**只在**至少有一个可写日历时注册（不是调用了才报错）。 */
@@ -813,7 +921,24 @@ export function createMcp({
     return { content: [{ type: 'text', text: message }], isError: true };
   }
 
-  function writePayload(result, { created = false } = {}) {
+  /**
+   * 0.4.27（M4 §S1）：写操作生成待确认提案时直接签发审批链接。
+   * 只在四条同时成立时签：代办批准开、有提案模式、客户端未声明 elicitation、
+   * 链接存储可用（approvalLinkFor 内部判断并记 approval-link-failed）。
+   * 失败一律返回 null：写操作照常返回提案，不升级为 500。
+   */
+  function writeApprovalLink(ctx, result, tool) {
+    if (!ctx || !ctx.credential) return null;
+    if (ctx.credential.agentApproval !== true) return null;
+    const proposalMode = ctx.credential.writeMode === 'proposal' || ctx.credential.deleteMode === 'proposal';
+    if (!proposalMode) return null;
+    if (elicitModeOf(ctx.session)) return null;
+    const proposalId = result && result.proposal ? result.proposal.id : null;
+    if (!proposalId) return null;
+    return approvalLinkFor(ctx, { proposalIds: [proposalId], action: 'approve', mode: 'single', tool });
+  }
+
+  function writePayload(result, { created = false, ctx = null, tool = null } = {}) {
     if (!result) return null;
     if (result.applied) {
       const payload = {
@@ -826,11 +951,18 @@ export function createMcp({
       if (created) payload.created = true;
       return payload;
     }
-    return {
+    const payload = {
       applied: false,
       proposal: result.proposal,
       note: '已生成待确认提案，用户确认后才会生效',
     };
+    const link = writeApprovalLink(ctx, result, tool);
+    if (link) {
+      payload.approvalUrl = link.approvalUrl;
+      payload.pinRequired = link.pinRequired;
+      payload.expiresIn = link.expiresIn;
+    }
+    return payload;
   }
 
   /* ---------------------------------------------------------------- 工具调用 */
@@ -890,7 +1022,10 @@ export function createMcp({
       }
       case 'create_event': {
         const body = { calendarId: requireString(args, 'calendarId', { max: 255 }) };
-        for (const field of ['title', 'ics', 'location', 'description', 'note', 'uid']) {
+        // 0.4.25（S5）：接受 summary 作为 title 的别名（不少客户端只发 summary）；title 优先。
+        const createdTitle = optionalString(args, 'title', { max: 8000 }) ?? optionalString(args, 'summary', { max: 8000 });
+        if (createdTitle !== undefined) body.title = createdTitle;
+        for (const field of ['ics', 'location', 'description', 'note', 'uid']) {
           const value = optionalString(args, field, { max: field === 'ics' ? 200 * 1024 : 8000 });
           if (value !== undefined) body[field] = value;
         }
@@ -902,14 +1037,17 @@ export function createMcp({
         if (allDay !== undefined) body.allDay = allDay;
         const result = await service.createEvent(ctx, body);
         if (!result) return toolFailure(MISSING_CALENDAR_TEXT);
-        return toolResult(writePayload(result, { created: true }));
+        return toolResult(writePayload(result, { created: true, ctx, tool: name }));
       }
       case 'update_event': {
         const uid = requireString(args, 'uid', { max: 255 });
         const body = {};
         const calendarId = optionalString(args, 'calendarId', { max: 255 });
         if (calendarId !== undefined) body.calendarId = calendarId;
-        for (const field of ['title', 'location', 'description', 'note']) {
+        // 0.4.25（S5）：summary 是 title 的别名；两者都给时 title 优先。
+        const updatedTitle = optionalString(args, 'title', { max: 8000 }) ?? optionalString(args, 'summary', { max: 8000 });
+        if (updatedTitle !== undefined) body.title = updatedTitle;
+        for (const field of ['location', 'description', 'note']) {
           const value = optionalString(args, field, { max: 8000 });
           if (value !== undefined) body[field] = value;
         }
@@ -922,7 +1060,7 @@ export function createMcp({
         const ifMatch = optionalString(args, 'ifMatch', { max: 255 }) || null;
         const result = await service.updateEvent(ctx, uid, body, { ifMatch });
         if (!result) return toolFailure(MISSING_EVENT_TEXT);
-        return toolResult(writePayload(result));
+        return toolResult(writePayload(result, { ctx, tool: name }));
       }
       case 'delete_event': {
         const uid = requireString(args, 'uid', { max: 255 });
@@ -931,7 +1069,7 @@ export function createMcp({
           note: optionalString(args, 'note', { max: 8000 }) || 'AI 请求删除',
         });
         if (!result) return toolFailure(MISSING_EVENT_TEXT);
-        return toolResult(writePayload(result));
+        return toolResult(writePayload(result, { ctx, tool: name }));
       }
       /* -------- 0.4.13：AI 端批准（凭据开关是唯一闸门，关闭时任何路径都拒绝） -------- */
       case 'list_proposals': {
@@ -952,52 +1090,68 @@ export function createMcp({
         const decision = accepting ? '批准' : '拒绝';
         const reason = accepting ? '' : (optionalString(args, 'reason', { max: 200 }) || '');
         let operation = accepting ? 'accept' : 'reject';
-        let confirmation = 'text';
+        const confirmation = 'elicitation';
         let elicitationAction = null;
 
-        // 0.4.18 M4 §2.1：客户端声明了 elicitation 就**一律弹窗**，忽略 confirmed:true，
-        // 不给「预授权」开口子（模型自己填 true 也绕不过去）。
-        if (elicitModeOf(ctx.session)) {
+        // 0.4.21 §1 S1：没有 elicitation 能力的会话禁止 MCP 批准/拒绝。
+        // `confirmed` 由模型自己填写，服务端证明不了用户点过，不能当授权用；零执行，
+        // 引导用户去 FnCal 的「提案」面板（§1 S2）。
+        if (!elicitModeOf(ctx.session)) {
           const rows = await service.listAgentProposals(ctx);
           const row = rows.find((entry) => entry && entry.id === id);
           if (!row) return toolFailure(PROPOSAL_MISSING_TEXT);
-          const verdict = await requestElicitation(ctx.res, ctx.session, row, decision);
-          if (verdict) {
-            elicitationAction = verdict.action;
-            if (verdict.action === 'timeout') {
-              recordElicitationDecision(ctx, id, operation, 'timeout');
-              return toolResult({ code: 'confirmation_timeout' }, { isError: true });
-            }
-            if (verdict.action === 'decline' || verdict.action === 'cancel') {
-              recordElicitationDecision(ctx, id, operation, verdict.action);
-              return toolResult(verdict.action === 'cancel' ? { cancelled: true } : { declined: true });
-            }
-            operation = verdict.decision === 'reject' ? 'reject' : 'accept';
-            confirmation = 'elicitation';
-          } else {
-            // 弹窗写不出去（客户端没接流等）：降级文字确认，不报 500（M4 §2.9）。
-            logEvent('mcp-elicitation-fallback', { proposalId: id, reason: 'stream_unavailable' });
-          }
+          const trashCtx = await trashContextOf(ctx.credential);
+          notifyApprovalBlocked(ctx, { tool: name, reason: 'no_elicitation', proposalId: id, total: 1 });
+          return approvalRequiresUiResult({
+            tool: name,
+            reason: 'no_elicitation',
+            total: 1,
+            proposalId: id,
+            summary: buildConfirmSummary(row, { decision, ...trashCtx }),
+            ...approvalLinkFor(ctx, {
+              proposalIds: [id],
+              action: accepting ? 'approve' : 'reject',
+              mode: 'single',
+              tool: name,
+            }),
+          });
         }
 
-        // 0.4.17 §2 文字确认闸门：只在无能力/被降级时走；只认布尔 true。
-        if (confirmation === 'text' && args.confirmed !== true) {
-          const rows = await service.listAgentProposals(ctx);
-          const row = rows.find((entry) => entry && entry.id === id);
-          if (!row) return toolFailure(PROPOSAL_MISSING_TEXT);
-          logEvent('proposal-agent-confirm-required', {
+        // 0.4.18 §2.1 / 0.4.21 §1 S3：声明了 elicitation 就一律弹窗，confirmed 一律忽略——
+        // 0.4.21 之后这是唯一能执行批准的路径。
+        const rows = await service.listAgentProposals(ctx);
+        const row = rows.find((entry) => entry && entry.id === id);
+        if (!row) return toolFailure(PROPOSAL_MISSING_TEXT);
+        const trashCtx = await trashContextOf(ctx.credential);
+        const verdict = await requestElicitation(ctx.res, ctx.session, row, decision, trashCtx);
+        if (!verdict) {
+          // 0.4.21 §1 S4：弹窗写不出去（流不可用）时不再降级文字确认，直接拒绝、零执行。
+          logEvent('mcp-elicitation-fallback', { proposalId: id, reason: 'stream_unavailable' });
+          notifyApprovalBlocked(ctx, { tool: name, reason: 'stream_unavailable', proposalId: id, total: 1 });
+          return approvalRequiresUiResult({
+            tool: name,
+            reason: 'stream_unavailable',
+            total: 1,
             proposalId: id,
-            credentialId: ctx.credential.id,
-            action: operation,
-            proposalAction: row.action || null,
-            calendarId: row.calendarId || null,
-          });
-          return confirmationRequiredResult({
-            proposalId: id,
-            summary: buildConfirmSummary(row, { decision }),
-            prompt: buildConfirmPrompt(row, decision),
+            summary: buildConfirmSummary(row, { decision, ...trashCtx }),
+            ...approvalLinkFor(ctx, {
+              proposalIds: [id],
+              action: accepting ? 'approve' : 'reject',
+              mode: 'single',
+              tool: name,
+            }),
           });
         }
+        elicitationAction = verdict.action;
+        if (verdict.action === 'timeout') {
+          recordElicitationDecision(ctx, id, operation, 'timeout');
+          return toolResult({ code: 'confirmation_timeout' }, { isError: true });
+        }
+        if (verdict.action === 'decline' || verdict.action === 'cancel') {
+          recordElicitationDecision(ctx, id, operation, verdict.action);
+          return toolResult(verdict.action === 'cancel' ? { cancelled: true } : { declined: true });
+        }
+        operation = verdict.decision === 'reject' ? 'reject' : 'accept';
 
         const outcome = await service.agentDecide(ctx, id, operation, { reason });
         if (!outcome || outcome.missing) return toolFailure(PROPOSAL_MISSING_TEXT);
@@ -1023,7 +1177,7 @@ export function createMcp({
           ? { approved: true, proposal }
           : { rejected: true, proposal });
       }
-      /* -------- 0.4.19：先问模式再执行（M4 §1 S1–S5、§2 硬规则 1–6） -------- */
+      /* -------- 0.4.19：先问模式再执行；0.4.20：单条不问模式（M4-0.4.20 §1 S1–S3） -------- */
       case 'decide_proposals': {
         const actionRaw = requireString(args, 'action', { max: 16 });
         if (actionRaw !== 'approve' && actionRaw !== 'reject') throw rpcError(-32602, '参数取值错误：action');
@@ -1068,7 +1222,62 @@ export function createMcp({
         const deleteCount = rows.filter((row) => row && row.action === 'delete').length;
         const trashMode = deleteModeOf(ctx.credential) === DELETE_MODE_TRASH;
         const retentionDays = trashMode ? await trashRetentionDays() : null;
+        /** 单条确认文案的回收站上下文：回收站模式下写「N 天内可还原」（M4-0.4.20 §2 规则 3）。 */
+        const confirmCtx = { trashMode, retentionDays };
         const prompt = buildModePrompt({ action, pending, deleteCount, trashMode, retentionDays });
+
+        // 0.4.21 §1 S1：没有 elicitation 能力的会话一律拒绝批准/拒绝，`confirmed: true` 也不放行；
+        // 只有 list_proposals 仍可用（§1 S5）。0.4.22 起同时发一次性审批链接，让用户自己在浏览器里确认。
+        if (!elicitModeOf(ctx.session)) {
+          if (pending === 0) {
+            logEvent('proposal-agent-no-proposals', { action: operation, credentialId: ctx.credential.id });
+            return noProposalsResult({ action });
+          }
+          const blockedSingleId = ids && ids.length === 1 ? ids[0] : (pending === 1 ? pendingIds[0] : null);
+          if (blockedSingleId) {
+            const blockedRow = rows.find((entry) => entry && entry.id === blockedSingleId);
+            if (!blockedRow) return toolFailure(PROPOSAL_MISSING_TEXT);
+            notifyApprovalBlocked(ctx, {
+              tool: 'decide_proposals',
+              reason: 'no_elicitation',
+              proposalId: blockedSingleId,
+              total: 1,
+            });
+            return approvalRequiresUiResult({
+              tool: 'decide_proposals',
+              reason: 'no_elicitation',
+              total: 1,
+              proposalId: blockedSingleId,
+              summary: buildConfirmSummary(blockedRow, { decision: operationWord, ...confirmCtx }),
+              ...approvalLinkFor(ctx, {
+                proposalIds: [blockedSingleId],
+                action,
+                mode: 'single',
+                tool: 'decide_proposals',
+              }),
+            });
+          }
+          const blockedIds = ids && ids.length ? ids : pendingIds;
+          if (blockedIds.length > BATCH_MAX_IDS) return invalidTool(`all 模式一次最多 ${BATCH_MAX_IDS} 条`, 'ids');
+          notifyApprovalBlocked(ctx, {
+            tool: 'decide_proposals',
+            reason: 'no_elicitation',
+            total: blockedIds.length,
+            deleteCount,
+          });
+          return approvalRequiresUiResult({
+            tool: 'decide_proposals',
+            reason: 'no_elicitation',
+            total: blockedIds.length,
+            deleteCount,
+            ...approvalLinkFor(ctx, {
+              proposalIds: blockedIds,
+              action,
+              mode: 'all',
+              tool: 'decide_proposals',
+            }),
+          });
+        }
 
         /** 批量执行：循环/上限/部分失败汇总与网页端共用 runProposalBatch（M4 §1 S6）。 */
         const runBatch = async (targetIds, mode, confirmation) => {
@@ -1158,6 +1367,50 @@ export function createMcp({
           return runBatch([id], 'single', confirmation);
         };
 
+        /**
+         * 0.4.20：单条路径绝不再问模式；0.4.21 起只能靠弹窗确认——
+         * 无弹窗会话已在上面拒绝，弹窗写不出去也拒绝（§1 S4），不存在文字确认旁路。
+         */
+        const decideSingle = async (id) => {
+          const row = rows.find((entry) => entry && entry.id === id);
+          if (!row) return toolFailure(PROPOSAL_MISSING_TEXT);
+          const verdict = await requestElicitation(ctx.res, ctx.session, row, operationWord, confirmCtx);
+          if (!verdict) {
+            logEvent('mcp-elicitation-fallback', { proposalId: id, reason: 'stream_unavailable' });
+            notifyApprovalBlocked(ctx, {
+              tool: 'decide_proposals',
+              reason: 'stream_unavailable',
+              proposalId: id,
+              total: 1,
+            });
+            return approvalRequiresUiResult({
+              tool: 'decide_proposals',
+              reason: 'stream_unavailable',
+              total: 1,
+              proposalId: id,
+              summary: buildConfirmSummary(row, { decision: operationWord, ...confirmCtx }),
+              ...approvalLinkFor(ctx, {
+                proposalIds: [id],
+                action,
+                mode: 'single',
+                tool: 'decide_proposals',
+              }),
+            });
+          }
+          return runSingle(id, 'elicitation', verdict);
+        };
+
+        // 0.4.20：没有 scope 时先按待确认条数判定——0 条不问、1 条直接单条确认、≥2 条才进模式闸门。
+        // 点名 1 个 id 也按单条处理（M4 §1 S5），请求单条时一律不问模式。
+        if (!scopeArg) {
+          if (pending === 0) {
+            logEvent('proposal-agent-no-proposals', { action: operation, credentialId: ctx.credential.id });
+            return noProposalsResult({ action });
+          }
+          const singleId = ids && ids.length === 1 ? ids[0] : (pending === 1 ? pendingIds[0] : null);
+          if (singleId) return decideSingle(singleId);
+        }
+
         // 能力优先（硬规则 2）：声明了 elicitation 就弹模式框，AI 传的 scope 不作数。
         if (elicitModeOf(ctx.session)) {
           const targetCount = ids && ids.length ? ids.length : pending;
@@ -1192,14 +1445,22 @@ export function createMcp({
               }
               const row = rows.find((entry) => entry && entry.id === ids[0]);
               if (!row) return toolFailure(PROPOSAL_MISSING_TEXT);
-              const itemVerdict = await requestElicitation(ctx.res, ctx.session, row, operationWord);
+              const itemVerdict = await requestElicitation(ctx.res, ctx.session, row, operationWord, confirmCtx);
               if (!itemVerdict) {
-                // 单条弹窗写不出去：降级文字确认，不执行（M4 §2.9 同一口径）。
+                // 0.4.21 §1 S4：弹窗写不出去不再降级文字确认，直接拒绝、零执行。
                 logEvent('mcp-elicitation-fallback', { proposalId: ids[0], reason: 'stream_unavailable' });
-                return confirmationRequiredResult({
+                notifyApprovalBlocked(ctx, {
+                  tool: 'decide_proposals',
+                  reason: 'stream_unavailable',
                   proposalId: ids[0],
-                  summary: buildConfirmSummary(row, { decision: operationWord }),
-                  prompt: buildConfirmPrompt(row, operationWord),
+                  total: 1,
+                });
+                return approvalRequiresUiResult({
+                  tool: 'decide_proposals',
+                  reason: 'stream_unavailable',
+                  total: 1,
+                  proposalId: ids[0],
+                  summary: buildConfirmSummary(row, { decision: operationWord, ...confirmCtx }),
                 });
               }
               return runSingle(ids[0], 'elicitation', itemVerdict);
@@ -1213,77 +1474,55 @@ export function createMcp({
             }
             return runBatch(targetIds, 'all', 'elicitation');
           }
-          // 模式弹窗写不出去 → 降级文字路径（不报 500，也不执行）。
+          // 0.4.21 §1 S4：模式弹窗写不出去 → 不再降级文字确认，拒绝并零执行。
           logEvent('mcp-elicitation-fallback', { tool: 'decide_proposals', reason: 'stream_unavailable' });
         }
 
-        // 无弹窗能力：不带 scope 一律 mode_required，不执行任何一条（硬规则 1）。
-        if (!scopeArg) {
-          logEvent('proposal-agent-mode-required', {
-            action: operation,
-            pending,
-            deleteCount,
-            credentialId: ctx.credential.id,
-          });
-          return modeRequiredResult({ action, pending, deleteCount, prompt });
-        }
-
-        if (scopeArg === 'single') {
-          if (!ids || ids.length !== 1) return invalidTool('scope:"single" 时 ids 必须正好 1 条', 'ids');
-          const row = rows.find((entry) => entry && entry.id === ids[0]);
-          if (!row) return toolFailure(PROPOSAL_MISSING_TEXT);
-          if (args.confirmed !== true) {
-            logEvent('proposal-agent-confirm-required', {
-              proposalId: ids[0],
-              credentialId: ctx.credential.id,
-              action: operation,
-              proposalAction: row.action || null,
-              calendarId: row.calendarId || null,
+        // 0.4.21：走到这里只可能是「声明了 elicitation 但弹窗写不出去」，统一拒绝、零执行。
+        const fallbackIds = ids && ids.length ? ids : pendingIds;
+        if (fallbackIds.length > BATCH_MAX_IDS) return invalidTool(`all 模式一次最多 ${BATCH_MAX_IDS} 条`, 'ids');
+        if (fallbackIds.length === 1) {
+          const fallbackRow = rows.find((entry) => entry && entry.id === fallbackIds[0]);
+          if (fallbackRow) {
+            notifyApprovalBlocked(ctx, {
+              tool: 'decide_proposals',
+              reason: 'stream_unavailable',
+              proposalId: fallbackIds[0],
+              total: 1,
             });
-            return confirmationRequiredResult({
-              proposalId: ids[0],
-              summary: buildConfirmSummary(row, { decision: operationWord }),
-              prompt: buildConfirmPrompt(row, operationWord),
+            return approvalRequiresUiResult({
+              tool: 'decide_proposals',
+              reason: 'stream_unavailable',
+              total: 1,
+              proposalId: fallbackIds[0],
+              summary: buildConfirmSummary(fallbackRow, { decision: operationWord, ...confirmCtx }),
+              ...approvalLinkFor(ctx, {
+                proposalIds: [fallbackIds[0]],
+                action,
+                mode: 'single',
+                tool: 'decide_proposals',
+              }),
             });
           }
-          return runBatch(ids, 'single', 'text');
         }
-
-        // scope === 'all'：先确认再执行；未确认不改数据，只回现成问句（硬规则 1/5）。
-        const targetIds = ids && ids.length ? ids : pendingIds;
-        if (targetIds.length === 0) {
-          return toolResult({ action, mode: 'all', total: 0, ok: 0, failed: 0, results: [] });
-        }
-        if (targetIds.length > BATCH_MAX_IDS) return invalidTool(`all 模式一次最多 ${BATCH_MAX_IDS} 条`, 'ids');
-        if (args.confirmed !== true) {
-          logEvent('proposal-agent-confirm-required', {
-            action: operation,
-            mode: 'all',
-            credentialId: ctx.credential.id,
-            total: targetIds.length,
-            deleteCount,
-          });
-          const data = {
-            code: 'confirmation_required',
+        notifyApprovalBlocked(ctx, {
+          tool: 'decide_proposals',
+          reason: 'stream_unavailable',
+          total: fallbackIds.length,
+          deleteCount,
+        });
+        return approvalRequiresUiResult({
+          tool: 'decide_proposals',
+          reason: 'stream_unavailable',
+          total: fallbackIds.length,
+          deleteCount,
+          ...approvalLinkFor(ctx, {
+            proposalIds: fallbackIds,
             action,
             mode: 'all',
-            total: targetIds.length,
-            deleteCount,
-            prompt: `${prompt}\n\n同意请回复「全部${operationWord}」。`,
-            options: ['all', 'single'],
-            retry: { scope: 'all', confirmed: true },
-          };
-          return {
-            content: [{
-              type: 'text',
-              text: '未确认，未执行。请把下面这段原样发给用户，得到明确同意后再带 scope:"all" 与 confirmed: true 调用。\n\n' + data.prompt,
-            }],
-            isError: true,
-            structuredContent: data,
-            data,
-          };
-        }
-        return runBatch(targetIds, 'all', 'text');
+            tool: 'decide_proposals',
+          }),
+        });
       }
       default:
         throw rpcError(-32602, `未知工具：${name}`);
@@ -1308,15 +1547,22 @@ export function createMcp({
           instructions: 'FnCal 本地日历（零云）。时间窗口之外、或未授权给你的日历与事件，表现为不存在。'
             + '删除按该凭据的「删除」设置处理：提案模式只生成待确认提案；回收站模式立即删除并可在保留期内恢复。'
             + '凭据打开「AI 端代办批准」后，可用 list_proposals / approve_proposal / reject_proposal / decide_proposals 处理自己的提案。'
-            + '处理多条提案的顺序写死：先调 list_proposals，再用 decide_proposals 问用户「全部批准 / 逐条审批」'
-            + '（不带 scope 时服务端会回 mode_required 与现成问句），用户明确选择后才带 scope 与 confirmed: true 重调。'
-            + '禁止跳过询问、禁止静默批量；客户端声明 elicitation 时以用户点击的模式选择框为准。'
-            + '单条批准 / 拒绝必须分两步：先 list_proposals，把每条的服务端 summary 原样贴给用户，明确问批准还是拒绝；'
-            + '用户明确同意后，才带 confirmed: true 重调 approve_proposal 或 reject_proposal。'
-            + '未带 confirmed: true 的调用不改动任何数据，只返回 confirmation_required 与现成摘要。'
-            + '客户端声明了 elicitation 弹窗能力时，服务端会直接弹出确认框，此时 confirmed: true 会被忽略。'
-            + '服务端只校验参数，不验证用户是否点过同意——不要夸大安全性，也不要跳过询问。'
-            + '一次只处理一条（scope:"single" 或 approve_proposal / reject_proposal）：每条都要单独征得同意。',
+            + '批准与拒绝只能由用户在确认弹窗里点：客户端必须声明 elicitation，服务端才会弹「批准 / 拒绝 / 取消」，用户不点就不执行。'
+            + 'confirmed 参数由模型填写，不能证明用户同意，服务端一律忽略。'
+            + '客户端没有声明 elicitation 弹窗能力时，approve_proposal、reject_proposal、decide_proposals 一律返回 approval_requires_ui、零执行：'
+            + '不要尝试批准或拒绝，不要让用户「回复批准」后带 confirmed: true 重试（同样会被拒绝）。'
+            + '这类客户端会同时拿到一次性审批链接 approvalUrl（10 分钟内有效，绑本凭据与本次提案）：'
+            + '把摘要和链接原样给用户，请用户自己在浏览器打开链接确认；需要 PIN 时由用户自己输入，绝不要索取、转述或记录 PIN。'
+            + '写操作（create_event / update_event / delete_event）在提案模式下也会直接返回 approvalUrl：'
+            + '有链接就直接把摘要与链接给用户，不必再调 approve_proposal 或 decide_proposals 换链接；'
+            + '链接过期或失效后，再调 approve_proposal / decide_proposals 会重新签发一条新链接。'
+            + '用户没在链接里点批准/拒绝之前，任何提案都不会执行。list_proposals 是只读的，两类客户端都可用。'
+            + '有弹窗能力时：先调 list_proposals 看条数。只有 1 条时不要问模式，直接带 ids:[该条] 调 decide_proposals 弹单条确认；'
+            + '0 条时 decide_proposals 返回 no_proposals；≥2 条且用户没有明确选择处理方式时，先不带 scope 调 decide_proposals 弹模式选择框，'
+            + '以用户点击为准，用户选了之后才带对应参数重调。'
+            + '不得替用户选择模式：不得默认 all、不得因为「看起来都该批」就自行批量、不得把用户上一句泛泛同意当成模式选择。'
+            + '一次只处理一条（scope:"single" 或 approve_proposal / reject_proposal）：每条都要单独弹确认。'
+            + '提示：若希望 AI 只生成提案、不直接写库，请在 FnCal 凭据里把「新建、修改」设为「提案」；设为「直接通过」时 create_event / update_event 会直接写入日历，不产生提案。',
         };
       }
       case 'ping':
@@ -1342,6 +1588,8 @@ export function createMcp({
 
   async function handle(req, res, options = {}) {
     const remoteAddress = options.remoteAddress || (req.socket && req.socket.remoteAddress) || null;
+    // 0.4.22（M4 §S2）：审批链接要绝对地址；origin 由 server 层按可信协议 + Host 计算。
+    const origin = String(options.origin || '');
     let credential = options.credential || null;
     let userId = options.userId || null;
 
@@ -1494,7 +1742,7 @@ export function createMcp({
     }
 
     // 0.4.18 M4 §2.7：还带会话头但会话已过期/未知 → 404，让客户端重新 initialize；
-    // 不带头的旧客户端按「无能力」继续走 0.4.17 的文字确认。
+    // 不带头的旧客户端按「无能力」处理：只能读提案，批准被拒。
     const declaredSessionId = String((req.headers && req.headers[SESSION_HEADER]) || '').trim();
     if (!session && declaredSessionId && message.method !== 'initialize') {
       return finish(404, { ok: false, code: 'session_not_found', message: '会话不存在或已过期，请重新 initialize' });
@@ -1518,6 +1766,7 @@ export function createMcp({
       nowMs: now(),
       source: 'ai-mcp',
       remoteAddress,
+      origin,
       session,
       res,
     };

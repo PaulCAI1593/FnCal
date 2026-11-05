@@ -95,6 +95,58 @@
     return out;
   }
 
+  /**
+   * 0.4.28（S1）：悬停/按下朝**远离文字色**的方向走。
+   * 文字是深墨时按钮变亮，文字是白色时按钮变暗 —— 压暗深墨文字底会掉对比度
+   * （橙 #c26a1f 悬停只有 3.85:1），朝远离 ink 走则对比度单调上升。
+   */
+  function awayFrom(hex, inkHex, amount) {
+    return inkHex === INK_DARK ? lighten(hex, amount) : darken(hex, amount);
+  }
+
+  /**
+   * 0.4.28（S1）：远离 ink 的一步；纯白/纯黑已经在该方向边界上（#ffffff 再提亮
+   * 仍是 #ffffff），此时反向走一步，否则悬停态与常态完全相同、看不出反馈。
+   */
+  function stepAway(hex, inkHex, amount) {
+    var next = awayFrom(hex, inkHex, amount);
+    if (next === hex) next = inkHex === INK_DARK ? darken(hex, amount) : lighten(hex, amount);
+    return next;
+  }
+
+  /**
+   * 0.4.28（S1）：先按 0.12 / 0.2 步长派生，再做两级兜底：
+   *   1) contrast(ink, state) < 4.5 → 沿远离 ink 方向每步 0.04，最多 8 步；
+   *   2) 可见差不足（对比度差 < 0.35 且相对亮度差 < 0.05）→ 同样继续走，
+   *      避免「悬停看不出来」。远离 ink 时对比度单调上升，两级不会互相拆台。
+   */
+  function stateColor(accent, ink, amount) {
+    var out = stepAway(accent, ink, amount);
+    for (var i = 0; i < 8 && contrast(ink, out) < 4.5; i += 1) {
+      out = stepAway(out, ink, 0.04);
+    }
+    for (var j = 0; j < 8; j += 1) {
+      var contrastGap = Math.abs(contrast(ink, out) - contrast(ink, accent));
+      var lightGap = Math.abs(luminance(out) - luminance(accent));
+      if (contrastGap >= 0.35 || lightGap >= 0.05) break;
+      var next = stepAway(out, ink, 0.04);
+      if (contrast(ink, next) < contrast(ink, out)) break;
+      out = next;
+    }
+    return out;
+  }
+
+  /**
+   * 0.4.28（S2）：正文里的主色文字（.linkified:hover）专用。
+   * 悬停按钮往远离 ink 走之后不能再被当文字色用：这里按所在表面单独取色并
+   * 过 ensureContrast（浅色表面 ≥4.5:1 vs #ffffff，深色表面 ≥4.5:1 vs DARK_BG）。
+   */
+  function linkHoverFor(accent, isDark) {
+    return isDark
+      ? ensureContrast(lighten(accent, 0.12), DARK_BG, 4.5)
+      : ensureContrast(darken(accent, 0.12), '#ffffff', 4.5);
+  }
+
   function palette(hex, mode) {
     var base = normalize(hex);
     var isDark = mode === 'dark';
@@ -108,8 +160,9 @@
       ink: ink,
       vars: {
         '--accent': accent,
-        '--accent-hover': darken(accent, 0.12),
-        '--accent-active': darken(accent, 0.2),
+        '--accent-hover': stateColor(accent, ink, 0.12),
+        '--accent-active': stateColor(accent, ink, 0.2),
+        '--accent-link-hover': linkHoverFor(accent, isDark),
         '--accent-soft': isDark
           ? blend(accent, DARK_SOFT_BASE, 0.18)
           : blend(accent, LIGHT_SOFT_BASE, 0.1),

@@ -57,34 +57,38 @@ tools/call delete_event { "uid": "…", "note": "会议已取消" }
 - `list_calendars` 少了一个日历 → 不要问「是不是还有别的日历」，也不要猜名字；按你能看到的回答。
 - 问的是一个你确定存在、却返回 not found 的事件 → 很可能是时间窗之外（默认只给过去 7 天、未来 90 天）。可以说：「这超出了这个 AI 凭据能看的时间范围。」
 
-## 6 代办批准：先确认再调
-## 7 「把待批的提案处理一下」——先问模式
+## 6 代办批准：弹窗点击，或审批链接（列表页）
 
-用户：把待批的提案处理一下。
-
-助手（不先问就批量是错的）：调 `decide_proposals { "action": "approve" }`。
-- 支持弹窗的客户端：FnCal 直接弹「全部批准（5 条 / 含 1 条删除）」/「逐条审批」/「取消」，用户点了才继续。
-- 不支持弹窗：返回 `mode_required`、`pending: 5`、`deleteCount: 1` 与那句 `prompt`。助手照这句问：「待批 5 条，其中 1 条是删除日程，批准后无法恢复。全部批准，还是逐条审批？」
-
-用户：全部批准。
-
-助手：调 `decide_proposals { "action": "approve", "scope": "all", "confirmed": true }`，回话：「已批准 4 条，1 条失败（已过期）；其中那 1 条删除已生效，无法恢复。」
-
-用户：逐条来。
-
-助手：调 `decide_proposals { "action": "approve", "scope": "single", "ids": ["<id>"], "confirmed": true }`，每条单独确认，一次一条。
+FnCal 0.4.22 起有两条确认路径：支持 elicitation 的客户端在调用中弹 FnCal 自己的确认框；没有弹窗的客户端返回**审批链接**（`approvalUrl`，10 分钟内有效，绑定的每条提案只能处理一次）。页面就是提案列表的样子：顶部「刷新」、剩余 2 条以上才有「全部批准 / 全部拒绝」，每条卡片自带「批准 / 拒绝」。凭据设了 4 位 PIN 时，页面先要求输 PIN（四个格子）——**永远不要向用户索取 PIN**。服务端不把对话里的「同意」当授权，也不认 `confirmed`（已废弃）。
 
 ```json
-tools/call list_proposals {}
-// → { "proposals": [ { "id": "…", "action": "create", "summary": "批准后会新建「周会」，11-05 周四 10:00–11:00，日历：我的工作" } ] }
+tools/call approve_proposal { "id": "…" }
+// 客户端没有 elicitation 弹窗能力 → isError
+{ "code": "approval_requires_ui", "tool": "approve_proposal", "reason": "no_elicitation",
+  "total": 1, "proposalId": "…",
+  "message": "请在浏览器打开上面的链接确认；未确认前未执行。",
+  "approvalUrl": "http://<host>/a/<token>", "pinRequired": false, "expiresIn": 600,
+  "ui": { "panel": "proposals" } }
 ```
 
-1. 把 `summary` 原样念给用户，问一句「批准还是拒绝？」；
-2. 用户明确同意后再调，并带确认参数：
+1. 无弹窗客户端（如 Claude Desktop 目前）：不要重试、不要带 `confirmed`、不要索取 PIN，把 `message` 与 `approvalUrl` 原样给用户，请他在浏览器打开链接确认（有 PIN 他自己输）。
+2. 有弹窗的客户端：调用中 FnCal 弹「批准 / 拒绝 / 取消」，用户点了才继续；`{declined:true}` 与 `{cancelled:true}` 都不改数据。
+3. 永远不要自己替用户点「同意」，也不要把「他说批准了」当成弹窗结果。
 
-```json
-tools/call approve_proposal { "id": "…", "confirmed": true }
-```
+## 7 「把待批的提案处理一下」
 
-3. 如果第一次没带 `confirmed`，工具会回 `confirmation_required` 和同一段 `summary`——不要自己改写摘要，也不要重复追问，按第 1 步做一次即可。
-4. 如果客户端支持弹窗（MCP elicitation），FnCal 会在调用中弹出「批准 / 拒绝 / 取消」，等结果即可：`{declined:true}` 或 `{cancelled:true}` 都不改数据，如实告诉用户。
+用户：把待批的提案处理一下。（2 条以上）
+
+助手：调 `decide_proposals { "action": "approve" }`，不要自己批量。
+- 有弹窗：FnCal 弹「全部批准（5 条 / 含 1 条删除）」/「逐条审批」/「取消」，用户点了才继续；选全部后回话「已批准 4 条，1 条失败（已过期）；那 1 条删除已生效，无法恢复」。
+- 无弹窗：回 `approval_requires_ui`（`total`、`deleteCount`、`message`、`approvalUrl`、`ui.panel="proposals"`），一条都不执行。把 `message` 与链接给用户：链接页列出这一批，可以逐条点，也可以「全部批准 / 全部拒绝」，删除类会写明能否恢复。不要问「全部还是逐条」，这边执行不了。
+
+## 8 只有一条待批时：不问模式
+
+用户：把待批的提案处理一下。（只有 1 条）
+
+助手：调 `decide_proposals { "action": "approve" }`——不要问「全部批准还是逐条审批」。
+- 有弹窗：FnCal 直接弹「批准（修改）「周会」」/「拒绝」/「取消」，用户点了才继续。
+- 无弹窗：回 `approval_requires_ui`、`total: 1`、`proposalId`、`message` 与 `approvalUrl`；把链接给用户（页面只有这一条，有 PIN 他自己输），不要重试、不要带 `confirmed`、不要索取 PIN。
+
+助手回话（有弹窗且用户点了批准）：「已批准 1 条，日历已更新。」——不要说成「全部批准」，也不要替用户决定。

@@ -27,10 +27,14 @@
   --gray-800: #23262f;
   --gray-900: #14161c;
 
-  /* Brand / accent —— FnCal 深蓝（与 fnOS 原生控制语言对齐） */
+  /* Brand / accent —— FnCal 深蓝（与 fnOS 原生控制语言对齐）
+     0.4.28（S1）：hover/active 朝远离 --text-on-accent 的方向派生（默认蓝是
+     白字，所以变暗）；--accent-link-hover 是正文主色文字专用，单独保证白底
+     ≥4.5:1。与 web/public/accent-prepaint.js 的 palette() 默认产出保持一致。 */
   --accent: #2f5e9e;
-  --accent-hover: #3c6fb4;
-  --accent-active: #26507f;
+  --accent-hover: #29538b;
+  --accent-active: #264b7e;
+  --accent-link-hover: #29538b;
   --accent-soft: #e8eff8;
   --accent-contrast: #ffffff;
 
@@ -53,8 +57,10 @@
   --text-3: var(--gray-500);
   --text-inverse: var(--gray-0);
   --text-on-accent: #ffffff;
-  /* Accent-colored text sitting on --accent-soft (the active mobile tab). */
-  --accent-ink-on-soft: var(--accent);
+  /* Accent-colored text sitting on --accent-soft (the active mobile tab).
+     0.4.28（S2）：从 var(--accent-hover) 解耦成字面值 —— hover 的语义已改为
+     「按钮态」，不再兼任文字色。 */
+  --accent-ink-on-soft: #2f5e9e;
 
   /* Lines */
   --border: var(--gray-150);
@@ -148,15 +154,18 @@
   --gray-800: #e2e5ec;
   --gray-900: #f4f6fa;
 
-  --accent: #7da4d8;
-  --accent-hover: #9dbbe0;
-  --accent-active: #6a93cc;
+  /* 0.4.28（S1）：深色默认 accent 与服务端同算法（与 accent-prepaint.js 的
+     palette('#2f5e9e','dark') 逐字段一致）；文字是深墨，hover/active 变亮。 */
+  --accent: #5c82b3;
+  --accent-hover: #7091bc;
+  --accent-active: #7d9bc2;
+  --accent-link-hover: #7091bc;
   --accent-soft: #1b2a40;
-  --accent-contrast: #0e0f13;
+  --accent-contrast: #101216;
   /* 深色下浅蓝 accent 用于文字/描边；其上的文字用深色墨水保证对比度。 */
   --text-on-accent: var(--accent-contrast);
   /* 深色 accent-soft 上的 accent 文字用 hover 亮阶，保证小字号可读。 */
-  --accent-ink-on-soft: var(--accent-hover);
+  --accent-ink-on-soft: #7091bc;
 
   --bg: var(--gray-25);
   --surface: var(--gray-0);
@@ -201,13 +210,15 @@
     --gray-800: #e2e5ec;
     --gray-900: #f4f6fa;
 
-    --accent: #7da4d8;
-    --accent-hover: #9dbbe0;
-    --accent-active: #6a93cc;
+    /* 0.4.28（S1）：与服务端同算法的深色默认值（见上方 [data-theme='dark']）。 */
+    --accent: #5c82b3;
+    --accent-hover: #7091bc;
+    --accent-active: #7d9bc2;
+    --accent-link-hover: #7091bc;
     --accent-soft: #1b2a40;
-    --accent-contrast: #0e0f13;
+    --accent-contrast: #101216;
     --text-on-accent: var(--accent-contrast);
-    --accent-ink-on-soft: var(--accent-hover);
+    --accent-ink-on-soft: #7091bc;
 
     --bg: var(--gray-25);
     --surface: var(--gray-0);

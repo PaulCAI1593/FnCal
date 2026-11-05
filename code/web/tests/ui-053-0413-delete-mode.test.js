@@ -197,12 +197,16 @@ describe('0.4.13 · 凭据编辑器「操作方式」两组（M21 §2 第 2 版�
     await flush();
   };
 
+  const blockByTitle = (root, text) => [...root.querySelectorAll('.ai-editor .ai-block')]
+    .find((node) => (node.querySelector('.ai-block__title') || {}).textContent === text);
+
   it('两组都在编辑器的「操作方式」块里，顺序固定、默认都提案', async () => {
     const { root } = await mountSettings({ credentials: [credential()] });
     await openEditor(root);
-    const block = root.querySelector('.ai-editor .ai-operation');
+    // 0.4.23（S12）：编辑器区块改为「标题 + 说明」结构，操作方式块用 .ai-block__title。
+    const block = blockByTitle(root, t('settings.ai.editor.block.operation'));
     expect(block).not.toBeNull();
-    expect(block.querySelector('.settings__label').textContent).toBe(t('settings.ai.operation'));
+    expect(block.querySelector('.ai-block__title').textContent).toBe(t('settings.ai.operation'));
     const rows = [...block.querySelectorAll('.ai-mode-row')];
     expect(rows.map((row) => row.getAttribute('data-mode'))).toEqual(['writeMode', 'deleteMode']);
     expect(rowSegs(rows[0]).map((b) => b.textContent.trim()))
@@ -212,12 +216,14 @@ describe('0.4.13 · 凭据编辑器「操作方式」两组（M21 §2 第 2 版�
     // 默认都「提案」。
     expect(checkedValue(rows[0])).toBe(t('settings.ai.writeMode.proposal'));
     expect(checkedValue(rows[1])).toBe(t('settings.ai.deleteMode.proposal'));
-    // 位置固定：日历权限矩阵之后、时间窗之前。
+    // 位置：日历权限矩阵之后、时间窗之后（0.4.23 S12 区块顺序：时间窗在操作方式之前）。
     const matrix = root.querySelector('.ai-editor .ai-matrix');
     const windowBlock = [...root.querySelectorAll('.ai-editor .ai-block')]
       .find((node) => node.textContent.includes(t('settings.ai.editor.timeWindow')));
     expect(matrix.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(block.compareDocumentPosition(windowBlock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(windowBlock.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const approvalBlock = blockByTitle(root, t('settings.ai.editor.block.approval'));
+    expect(block.compareDocumentPosition(approvalBlock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('切「直接通过」弹确认；取消回滚、不发请求、草稿仍是提案', async () => {
@@ -385,10 +391,14 @@ describe('0.4.14 · 回收站子块（M21 第 3 版 §2.4）', () => {
     expect(select.value).toBe('7');
     expect(block.querySelector('.ai-trash__clear').disabled).toBe(false);
     // 位置：操作方式块之后、代办批准块之前（M21 第 3 版 §2.1）。
-    const editor = root.querySelector('.ai-editor');
+    // 0.4.23（S12）：各区块统一放进 .ai-editor__body，子块仍紧跟操作方式块。
+    const editor = root.querySelector('.ai-editor__body');
     const children = [...editor.children];
-    const operationIndex = children.indexOf(root.querySelector('.ai-editor .ai-operation'));
+    const operationBlock = children.find((node) => (node.querySelector('.ai-block__title') || {}).textContent
+      === t('settings.ai.editor.block.operation'));
+    const operationIndex = children.indexOf(operationBlock);
     const blockIndex = children.indexOf(block);
+    
     expect(blockIndex).toBe(operationIndex + 1);
     const agentIndex = children.findIndex((node) => node.textContent.includes(t('settings.ai.agentApproval.label')));
     expect(agentIndex).toBeGreaterThan(blockIndex);

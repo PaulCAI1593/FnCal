@@ -585,6 +585,12 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     deleteMode: 'proposal',
     // 0.4.13（M4 §4）：AI 端批准开关，默认关。旧凭据没有该字段时按 false 处理。
     agentApproval: false,
+    // 0.4.22（M4-0.4.22 S1）：审批页 PIN。pin 只是草稿值，pinSet 来自服务端，不回显哈希。
+    pin: '',
+    pinSet: false,
+    clearPin: false,
+    // 0.4.23（S12 ⑦）：令牌前缀掩码；新建时为空。
+    tokenHint: '',
   });
 
   function draftFromCredential(credential) {
@@ -616,6 +622,12 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       // 0.4.13：旧凭据没有 deleteMode 时按 proposal 处理（后端也会补默认）。
       deleteMode: credential && credential.deleteMode === 'trash' ? 'trash' : 'proposal',
       agentApproval: Boolean(credential && credential.agentApproval === true),
+      // 0.4.22（S1）：只拿到「是否已设置」，PIN 哈希与明文都不会下发。
+      pin: '',
+      pinSet: Boolean(credential && credential.pinSet === true),
+      clearPin: false,
+      // 0.4.23（S12 ⑦）：令牌区块只显示前缀掩码，完整令牌永远不回显。
+      tokenHint: (credential && credential.tokenHint) || '',
     };
   }
 
@@ -834,10 +846,17 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       },
     });
 
-    const nameRow = el('div', { class: 'settings__row' }, [
-      el('span', { class: 'settings__label', text: t('settings.ai.editor.name') }),
-      el('div', { class: 'settings__control' }, [nameInput]),
+    /**
+     * 0.4.23（M4 §S12）：凭据编辑器按区块分组。
+     * 每个区块 = 标题 + 一行说明 + 内容；顺序固定，见下方 editorEl。
+     */
+    const block = (titleKey, hintKey, children) => el('section', { class: 'ai-block' }, [
+      el('h4', { class: 'ai-block__title', text: t(titleKey) }),
+      hintKey ? el('p', { class: 'ai-block__hint', text: t(hintKey) }) : null,
+      ...children,
     ]);
+
+    const nameBlock = block('settings.ai.editor.block.name', 'settings.ai.editor.block.nameHint', [nameInput]);
 
     /* 权限矩阵（规范 §3） */
     const matrixRows = new Map();
@@ -887,10 +906,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       ]));
     }
     const matrix = el('div', { class: 'ai-matrix' }, [setAll, matrixRowsEl, hint]);
-    const matrixBlock = el('div', { class: 'ai-block' }, [
-      el('span', { class: 'settings__label', text: t('settings.ai.editor.matrix') }),
-      matrix,
-    ]);
+    const matrixBlock = block('settings.ai.editor.block.matrix', 'settings.ai.editor.block.matrixHint', [matrix]);
 
     /* 操作方式（M21 §2 第 2 版）：两组对称模式，都按凭据存、默认都「提案」。
        行一「新建、修改」= writeMode（沿用既有字段，不改名）；行二「删除」= deleteMode（0.4.13 新增）。
@@ -942,6 +958,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
               draft.writeMode = 'direct';
               writeGroup.setValue('direct');
               paintWriteHint('direct');
+              syncApprovalBlocks();
             },
             onCancel: () => writeGroup.setValue(draft.writeMode),
           });
@@ -950,6 +967,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         draft.writeMode = 'proposal';
         writeGroup.setValue('proposal');
         paintWriteHint('proposal');
+        syncApprovalBlocks();
       },
     });
 
@@ -974,6 +992,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
               draft.deleteMode = 'trash';
               deleteGroup.setValue('trash');
               paintDeleteHint('trash');
+              syncApprovalBlocks();
               syncTrashBlock();
             },
             onCancel: () => deleteGroup.setValue(draft.deleteMode),
@@ -983,6 +1002,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         draft.deleteMode = 'proposal';
         deleteGroup.setValue('proposal');
         paintDeleteHint('proposal');
+        syncApprovalBlocks();
         syncTrashBlock();
       },
     });
@@ -1017,8 +1037,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     paintDeleteHint(draft.deleteMode);
     refreshModeAvailability();
 
-    const operationBlock = el('div', { class: 'ai-block ai-operation' }, [
-      el('span', { class: 'settings__label', text: t('settings.ai.operation') }),
+    const operationBlock = block('settings.ai.editor.block.operation', 'settings.ai.editor.block.operationHint', [
       writeRow,
       deleteRow,
       modeNotes,
@@ -1031,6 +1050,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       onChange: (next) => {
         if (!next) {
           draft.agentApproval = false;
+          syncApprovalBlocks();
           return;
         }
         confirmAction({
@@ -1039,12 +1059,12 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
           confirmLabel: t('settings.ai.agentApproval.confirmLabel'),
           cancelLabel: t('settings.ai.cancel'),
           danger: true,
-          onConfirm: () => { draft.agentApproval = true; },
+          onConfirm: () => { draft.agentApproval = true; syncApprovalBlocks(); },
           onCancel: () => { agentSwitch.input.checked = draft.agentApproval === true; },
         });
       },
     });
-    const agentBlock = el('div', { class: 'ai-block' }, [
+    const agentBlock = el('div', { class: 'ai-approval__switch' }, [
       el('div', { class: 'settings__row' }, [
         el('span', { class: 'settings__label', text: t('settings.ai.agentApproval.label') }),
         el('div', { class: 'settings__control' }, [agentSwitch.node]),
@@ -1053,6 +1073,96 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       /* 0.4.18 M4 §5：有的客户端会弹确认框，行为与文字确认一致，用户要知道差别。 */
       el('p', { class: 'ai-hint', text: t('settings.ai.agentApproval.clientHint') }),
     ]);
+
+    /* 0.4.22（M4-0.4.22 S1）：审批页 4 位 PIN。服务端只存 bcrypt 哈希，编辑时只显示「已设置」。 */
+    const pinInput = el('input', {
+      class: 'input ai-pin__input',
+      type: 'password',
+      inputmode: 'numeric',
+      maxlength: '4',
+      autocomplete: 'one-time-code',
+      value: draft.pin || '',
+      placeholder: t('settings.ai.credential.pin.placeholder'),
+      'aria-label': t('settings.ai.credential.pin.label'),
+      on: {
+        input: () => {
+          const digits = String(pinInput.value || '').replace(/\D+/g, '').slice(0, 4);
+          if (digits !== pinInput.value) pinInput.value = digits;
+          draft.pin = digits;
+          if (digits) draft.clearPin = false;
+          paintPin();
+        },
+      },
+    });
+    const pinState = el('span', { class: 'ai-pin__state', text: '' });
+    const pinClearBtn = el('button', {
+      class: 'btn btn--ghost ai-pin__clear',
+      type: 'button',
+      text: t('settings.ai.credential.pin.clear'),
+      on: {
+        click: () => {
+          confirmAction({
+            title: t('settings.ai.credential.pin.clearConfirmTitle'),
+            text: t('settings.ai.credential.pin.clearConfirmText'),
+            confirmLabel: t('settings.ai.credential.pin.clearConfirmLabel'),
+            cancelLabel: t('settings.ai.cancel'),
+            danger: true,
+            onConfirm: () => {
+              draft.clearPin = true;
+              draft.pin = '';
+              draft.pinSet = false;
+              pinInput.value = '';
+              paintPin();
+            },
+          });
+        },
+      },
+    });
+    function paintPin() {
+      const hasDraft = Boolean(draft.pin);
+      pinInput.placeholder = t(draft.pinSet && !hasDraft
+        ? 'settings.ai.credential.pin.setPlaceholder'
+        : 'settings.ai.credential.pin.placeholder');
+      pinClearBtn.hidden = !draft.pinSet || draft.clearPin || hasDraft;
+      /* 0.4.24（M4-0.4.24 §S17）：已设置时输入框占位已写「已设置（留空不改）」，不再重复显示
+         「已设置」状态字（它也挤掉输入框宽度：375 宽下占位只剩约 132px，而需要 144px）。
+         只保留「保存后清除」这一条非重复的草稿态提示；有草稿时不显示状态字。 */
+      pinState.textContent = hasDraft
+        ? ''
+        : (draft.clearPin ? t('settings.ai.credential.pin.willClear') : '');
+      pinState.hidden = !pinState.textContent;
+      pinClearBtn.disabled = Boolean(editor.saving);
+    }
+    paintPin();
+    /* 0.4.24（M4-0.4.24 §S14）：PIN 行固定「标签 + 输入 + 清除」一行；≤520 标签独占一行，
+       控件行（输入 + 清除）仍单行且按钮靠右。 */
+    const pinBlock = el('div', { class: 'ai-pin' }, [
+      el('div', { class: 'settings__row ai-row--inline ai-pin__row' }, [
+        el('span', { class: 'settings__label', text: t('settings.ai.credential.pin.label') }),
+        el('div', { class: 'settings__control' }, [pinInput, pinState, pinClearBtn]),
+      ]),
+      el('p', { class: 'ai-hint', text: t('settings.ai.credential.pin.hint') }),
+    ]);
+
+    /* 0.4.23（M4 §S11/S13）：代办批准只在至少一项操作方式为「提案」时出现；
+       打开开关后才显示 PIN 区块。两者都不是提案时，草稿也归一化为关闭并清 PIN。 */
+    const approvalAllowed = () => draft.writeMode === 'proposal' || draft.deleteMode === 'proposal';
+    const approvalBlock = block('settings.ai.editor.block.approval', null, [agentBlock, pinBlock]);
+    function syncApprovalBlocks() {
+      const allowed = approvalAllowed();
+      if (!allowed) {
+        draft.agentApproval = false;
+        draft.pin = '';
+        draft.pinSet = false;
+        draft.clearPin = false;
+        agentSwitch.input.checked = false;
+        pinInput.value = '';
+        paintPin();
+      }
+      approvalBlock.hidden = !allowed;
+      pinBlock.hidden = !allowed || draft.agentApproval !== true;
+    }
+    syncApprovalBlocks();
 
     /* 时间窗（规范 §2.3；0.3.3 用户：「过去日期和未来日期可以无限制」） */
     const buildWindowSide = ({ key, labelKey, limits, ariaKey }) => {
@@ -1106,13 +1216,11 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         ]),
       ]);
     };
-    const windowBlock = el('div', { class: 'ai-block' }, [
-      el('span', { class: 'settings__label', text: t('settings.ai.editor.timeWindow') }),
+    const windowBlock = block('settings.ai.editor.block.window', 'settings.ai.editor.block.windowHint', [
       el('div', { class: 'ai-window' }, [
         buildWindowSide({ key: 'pastDays', labelKey: 'settings.ai.editor.pastDays', limits: PAST_DAYS_LIMITS, ariaKey: 'settings.ai.editor.pastDays' }),
         buildWindowSide({ key: 'futureDays', labelKey: 'settings.ai.editor.futureDays', limits: FUTURE_DAYS_LIMITS, ariaKey: 'settings.ai.editor.futureDays' }),
       ]),
-      el('p', { class: 'ai-hint', text: t('settings.ai.editor.windowHint') }),
     ]);
 
     /* 字段开关（规范 §2.3） */
@@ -1126,11 +1234,34 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         }).node,
       ]),
     ]));
-    const fieldsBlock = el('div', { class: 'ai-block' }, [
-      el('span', { class: 'settings__label', text: t('settings.ai.editor.fields') }),
-      ...fieldRows,
-      el('p', { class: 'ai-hint', text: t('settings.ai.editor.fieldsHint') }),
+    const fieldsBlock = block('settings.ai.editor.block.fields', 'settings.ai.editor.block.fieldsHint', fieldRows);
+
+    /* 0.4.23（M4 §S12 ⑦）：令牌区块只显示前缀掩码；完整令牌永远不回显。
+       「重置」沿用既有 REST：用同一份配置新建凭据，再删除旧凭据（不新增接口）。 */
+    const tokenMask = el('span', { class: 'ai-token__mask', text: draft.tokenHint ? `${draft.tokenHint}••••••••` : '—' });
+    const resetTokenBtn = el('button', {
+      class: 'btn btn--ghost ai-token__reset',
+      type: 'button',
+      text: t('settings.ai.editor.block.tokenReset'),
+      disabled: editor.mode !== 'edit' || Boolean(editor.saving),
+      on: { click: () => requestResetToken() },
+    });
+    const tokenBlock = block('settings.ai.editor.block.token', 'settings.ai.editor.block.tokenHint', [
+      /* 0.4.24（M4-0.4.24 §S14）：令牌行同样固定在「标签 + 掩码 + 重置令牌」一行。 */
+      el('div', { class: 'settings__row ai-row--inline ai-token__row' }, [
+        el('span', { class: 'settings__label', text: t('settings.ai.editor.block.token') }),
+        el('div', { class: 'settings__control' }, [tokenMask, resetTokenBtn]),
+      ]),
     ]);
+
+    /* 0.4.23（M4 §S12 ⑧）：删除凭据置底、危险色。 */
+    const deleteCredBtn = el('button', {
+      class: 'btn btn--danger ai-editor__delete',
+      type: 'button',
+      text: t('settings.ai.editor.block.deleteBtn'),
+      on: { click: () => requestEditorDelete() },
+    });
+    const deleteBlock = block('settings.ai.editor.block.delete', 'settings.ai.editor.block.deleteHint', [deleteCredBtn]);
 
     const errorLine = el('p', { class: 'ai-editor__error', role: 'alert', text: editor.error || '' });
     const canSave = () => Boolean(draft.label && draft.label.trim());
@@ -1142,16 +1273,28 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       on: { click: () => saveEditor() },
     });
 
-    const editorEl = el('div', { class: 'ai-editor' }, [
-      el('div', { class: 'ai-editor__head' }, [backBtn, title]),
-      nameRow,
+    const cancelBtn = el('button', {
+      class: 'btn ai-editor__cancel',
+      type: 'button',
+      text: t('settings.ai.cancel'),
+      on: { click: () => closeEditor() },
+    });
+
+    const bodyEl = el('div', { class: 'ai-editor__body' }, [
+      nameBlock,
       matrixBlock,
-      operationBlock,
-      agentBlock,
       windowBlock,
       fieldsBlock,
+      operationBlock,
+      approvalBlock,
+      tokenBlock,
+      deleteBlock,
       errorLine,
-      el('div', { class: 'ai-editor__actions' }, [saveBtn]),
+    ]);
+    const editorEl = el('div', { class: 'ai-editor' }, [
+      el('div', { class: 'ai-editor__head' }, [backBtn, title]),
+      bodyEl,
+      el('div', { class: 'ai-editor__actions ai-editor__footer' }, [saveBtn, cancelBtn]),
     ]);
     credsSection.append(editorEl);
     editorReady = true;
@@ -1173,10 +1316,98 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       }
       if (!trashBlock) {
         trashBlock = el('div', { class: 'ai-block ai-block--trash' });
-        editorEl.insertBefore(trashBlock, agentBlock);
+        bodyEl.insertBefore(trashBlock, approvalBlock);
       }
       renderTrashBlock();
       if (!state.trash.loaded && !state.trash.loading) loadTrash();
+    }
+
+    function buildPayload() {
+      const effectiveApproval = approvalAllowed() && draft.agentApproval === true;
+      const payload = {
+        label: draft.label.trim(),
+        grants: { ...draft.grants },
+        timeWindow: { ...draft.timeWindow },
+        fieldMask: { ...draft.fieldMask },
+        writeMode: draft.writeMode,
+        deleteMode: draft.deleteMode,
+        agentApproval: effectiveApproval,
+      };
+      if (effectiveApproval && draft.pin) payload.pin = draft.pin;
+      else if (editor.mode === 'edit' && (draft.clearPin || !effectiveApproval)) payload.clearPin = true;
+      return payload;
+    }
+
+    /**
+     * 0.4.23（S12 ⑦）：重置令牌 = 用同一份配置新建凭据再删除旧凭据（不改后端接口）。
+     * 新令牌只在响应里出现一次；失败时回滚新建的凭据，旧凭据不受影响。
+     */
+    function requestResetToken() {
+      const current = state.editor;
+      if (!current || current.mode !== 'edit' || current.saving) return;
+      if (draft.pinSet && !draft.pin) {
+        current.error = t('settings.ai.editor.block.tokenResetPin');
+        renderCreds();
+        return;
+      }
+      confirmAction({
+        title: t('settings.ai.editor.block.tokenResetTitle'),
+        text: t('settings.ai.editor.block.tokenResetText'),
+        confirmLabel: t('settings.ai.editor.block.tokenResetLabel'),
+        cancelLabel: t('settings.ai.cancel'),
+        danger: true,
+        onConfirm: async () => {
+          current.saving = true;
+          renderCreds();
+          let fresh = null;
+          try {
+            const created = await createAiCredential(buildPayload());
+            fresh = created && created.credential;
+            if (!fresh) throw new Error(t('settings.ai.editor.block.tokenResetFailed'));
+            await deleteAiCredential(current.id);
+            state.credentials = [fresh, ...state.credentials.filter((item) => item.id !== current.id)];
+            state.editor = null;
+            state.token = { value: (created && created.token) || '', credential: fresh };
+            toast(t('settings.ai.toast.saved'), { variant: 'success' });
+            renderCreds();
+          } catch {
+            if (fresh) {
+              try { await deleteAiCredential(fresh.id); } catch { /* 保留旧凭据即可 */ }
+            }
+            current.saving = false;
+            current.error = t('settings.ai.editor.block.tokenResetFailed');
+            renderCreds();
+          }
+        },
+      });
+    }
+
+    /** 0.4.23（S12 ⑧）：编辑器内删除凭据，删完回列表。 */
+    function requestEditorDelete() {
+      const current = state.editor;
+      if (!current || current.mode !== 'edit' || current.saving) return;
+      confirmAction({
+        title: t('settings.ai.editor.block.deleteTitle'),
+        text: t('settings.ai.editor.block.deleteText', { label: draft.label || draft.tokenHint || '' }),
+        confirmLabel: t('settings.ai.editor.block.deleteLabel'),
+        cancelLabel: t('settings.ai.cancel'),
+        danger: true,
+        onConfirm: async () => {
+          current.saving = true;
+          renderCreds();
+          try {
+            await deleteAiCredential(current.id);
+            state.credentials = state.credentials.filter((item) => item.id !== current.id);
+            state.editor = null;
+            toast(t('settings.ai.toast.deleted'), { variant: 'success' });
+            renderCreds();
+          } catch (err) {
+            current.saving = false;
+            current.error = (err && err.message) || t('settings.ai.loadFailed');
+            renderCreds();
+          }
+        },
+      });
     }
 
     syncTrashBlock();
@@ -1186,6 +1417,16 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     const editor = state.editor;
     if (!editor) return;
     const draft = editor.draft;
+    // 0.4.23（M4 §S11/S13）：代办批准只在至少一项操作方式为「提案」时生效；
+    // 保存时归一化，避免把「直接通过 + 回收站」的开关或 PIN 留在凭据上。
+    const effectiveApproval = (draft.writeMode === 'proposal' || draft.deleteMode === 'proposal')
+      && draft.agentApproval === true;
+    // 0.4.22（S1）：PIN 要么留空（不修改），要么正好 4 位数字。
+    if (effectiveApproval && draft.pin && !/^\d{4}$/.test(draft.pin)) {
+      editor.error = t('settings.ai.credential.pin.invalid');
+      renderCreds();
+      return;
+    }
     const payload = {
       label: draft.label.trim(),
       grants: { ...draft.grants },
@@ -1194,8 +1435,11 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       writeMode: draft.writeMode,
       // 0.4.13：两组操作方式都按凭据存，脏判定与保存都必须带上删除方式。
       deleteMode: draft.deleteMode,
-      agentApproval: draft.agentApproval === true,
+      agentApproval: effectiveApproval,
     };
+    // 0.4.22：只在有值时带 pin；编辑态点过「清除」或代办批准不生效时清 PIN。
+    if (effectiveApproval && draft.pin) payload.pin = draft.pin;
+    else if (editor.mode === 'edit' && (draft.clearPin || !effectiveApproval)) payload.clearPin = true;
     editor.saving = true;
     editor.error = '';
     renderCreds();

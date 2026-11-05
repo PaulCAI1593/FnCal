@@ -130,6 +130,18 @@ const tick = async () => {
   await Promise.resolve();
 };
 
+/** 0.4.23（S11）：PIN 区块只在「允许代办批准」打开后出现；打开要先过一次确认。 */
+async function enableAgentApproval(editor) {
+  const box = editor.querySelector('.ai-approval__switch input[type="checkbox"]');
+  box.checked = true;
+  box.dispatchEvent(new Event('change', { bubbles: true }));
+  await tick();
+  const confirm = document.querySelector('.settings-confirm');
+  const okBtn = [...confirm.querySelectorAll('.btn')].find((b) => b.textContent.trim() === '允许');
+  okBtn.click();
+  await tick();
+}
+
 describe('0.3.0 P4 · 设置 →「AI」页签', () => {
   let opened = null;
 
@@ -369,6 +381,269 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     expect(page.textContent).toContain('Claude');
     expect(page.innerHTML).not.toContain(TOKEN);
     expect(dialog.querySelector('input.ai-token__value')).toBe(null);
+  });
+
+  it('0.4.23 PIN：掩码 4 位数字、提示不要告诉 AI；有值才进提交体', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('#settings-page-ai .ai-new-cred').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    await enableAgentApproval(editor);
+    const input = editor.querySelector('.ai-pin .ai-pin__input');
+    expect(input).not.toBe(null);
+    expect(input.type).toBe('password');
+    expect(input.getAttribute('inputmode')).toBe('numeric');
+    expect(input.getAttribute('maxlength')).toBe('4');
+    expect(editor.querySelector('.ai-pin').textContent).toContain('不要告诉 AI 助手');
+
+    const name = editor.querySelector('.ai-editor__name');
+    name.value = 'Claude';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
+    // 只保留数字，且最多 4 位
+    input.value = 'a1b2c3d4e5';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+    expect(input.value).toBe('1234');
+
+    editor.querySelector('.ai-editor__save').click();
+    await tick();
+    const payload = mocks.createAiCredential.mock.calls[0][0];
+    expect(payload.pin).toBe('1234');
+  });
+
+  it('0.4.23 PIN：不足 4 位不提交，编辑器给错误文案', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('#settings-page-ai .ai-new-cred').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    await enableAgentApproval(editor);
+    const name = editor.querySelector('.ai-editor__name');
+    name.value = 'Claude';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    const input = editor.querySelector('.ai-pin .ai-pin__input');
+    input.value = '12';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+    editor.querySelector('.ai-editor__save').click();
+    await tick();
+    expect(mocks.createAiCredential).not.toHaveBeenCalled();
+    expect(dialog.querySelector('.ai-editor__error').textContent).toContain('PIN 必须是 4 位数字');
+  });
+
+  it('0.4.23 PIN：已设置时不回显、只靠占位与「清除」表达，清除要二次确认（0.4.24 S17 去掉重复「已设置」）', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    mocks.listAiCredentials.mockResolvedValue({
+      ok: true,
+      credentials: [credential({ agentApproval: true, pinSet: true })],
+    });
+    mocks.updateAiCredential.mockResolvedValue({ ok: true, credential: credential({ pinSet: false }) });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('.ai-cred-row .ai-cred-edit').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    await enableAgentApproval(editor);
+    const input = editor.querySelector('.ai-pin .ai-pin__input');
+    expect(input.value).toBe('');
+    expect(input.placeholder).toContain('已设置');
+    const state = editor.querySelector('.ai-pin__state');
+    // 0.4.24 S17：占位已写「已设置（留空不改）」，状态字不再重复「已设置」。
+    //   旧断言（0.4.23）：expect(state.textContent).toBe('已设置')；
+    //   改动原因：用户真机截图指出同一行出现两处「已设置」，S17 要求去掉该分支，
+    //   已设置且未点清除时状态元素保持空并 hidden，只保留占位与右侧「清除」。
+    expect(state.textContent).toBe('');
+    expect(state.hidden).toBe(true);
+    const clearBtn = editor.querySelector('.ai-pin__clear');
+    expect(clearBtn.hidden).toBe(false);
+
+    clearBtn.click();
+    await tick();
+    const confirm = document.querySelector('.settings-confirm');
+    expect(confirm).not.toBe(null);
+    expect(confirm.textContent).toContain('任何拿到审批链接的人都能直接批准');
+    const okBtn = [...confirm.querySelectorAll('.btn')].find((b) => b.textContent.trim() === '清除');
+    okBtn.click();
+    await tick();
+    expect(editor.querySelector('.ai-pin__state').textContent).toBe('保存后清除');
+    expect(editor.querySelector('.ai-pin__clear').hidden).toBe(true);
+
+    editor.querySelector('.ai-editor__save').click();
+    await tick();
+    expect(mocks.updateAiCredential).toHaveBeenCalledTimes(1);
+    const payload = mocks.updateAiCredential.mock.calls[0][1];
+    expect(payload.clearPin).toBe(true);
+    expect('pin' in payload).toBe(false);
+  });
+
+  /* 0.4.24（M4-0.4.24 §S14/S15）：用户真机截图反馈「清除 / 重置令牌」折到输入框下一行。
+     前端 DOM 测试环境没有真实布局，所以这里锁两件事：
+       1. 结构——行容器带 `ai-row--inline`，按钮在控件容器最后一个（=最右），不再独占一行；
+       2. 规则——容器与控件行 `flex-wrap: nowrap`、输入可压缩、按钮不压缩靠右且 ≥44px。
+     真实几何（320/375/430 的同行、按钮 44、占位宽度）由无头浏览器实测，
+     数字写进 `design/impeccable-0.4.24-结论.md` 与 `code/M5-0.4.24-凭据行单行-记录.md`。 */
+  it('0.4.24 S14/S15：PIN 与令牌行固定单行（结构顺序 + 不换行规则）', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    mocks.listAiCredentials.mockResolvedValue({
+      ok: true,
+      credentials: [credential({ agentApproval: true, pinSet: true, tokenHint: 'fncal_ai_ab' })],
+    });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('.ai-cred-row .ai-cred-edit').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    await enableAgentApproval(editor);
+
+    const pinRow = editor.querySelector('.ai-pin .settings__row');
+    expect(pinRow.classList.contains('ai-row--inline')).toBe(true);
+    expect([...pinRow.children].map((n) => n.classList[0])).toEqual(['settings__label', 'settings__control']);
+    const pinCtl = pinRow.querySelector('.settings__control');
+    // 顺序即视觉顺序：输入 → 状态字 → 「清除」放最后（靠右），所以按钮不会掉到下一行。
+    expect([...pinCtl.children].map((n) => n.classList[0])).toEqual(['input', 'ai-pin__state', 'btn']);
+    expect(pinCtl.lastElementChild.classList.contains('ai-pin__clear')).toBe(true);
+    // S17：已设置、无草稿时状态字为空并隐藏（占位已写「已设置（留空不改）」，不再重复）。
+    expect(pinCtl.querySelector('.ai-pin__state').hidden).toBe(true);
+
+    const tokenRow = editor.querySelector('.ai-token__row');
+    expect(tokenRow.classList.contains('ai-row--inline')).toBe(true);
+    const tokenCtl = tokenRow.querySelector('.settings__control');
+    expect([...tokenCtl.children].map((n) => n.classList[0])).toEqual(['ai-token__mask', 'btn']);
+    expect(tokenCtl.lastElementChild.classList.contains('ai-token__reset')).toBe(true);
+
+    const css = readSrc('../src/styles/calendar.css');
+    const rule = (selector) => {
+      const at = css.indexOf(selector + ' {');
+      expect(at).toBeGreaterThan(0);
+      return css.slice(at, css.indexOf('}', at) + 1);
+    };
+    const row = rule('.ai-editor .settings__row.ai-row--inline');
+    expect(row).toContain('display: flex');
+    expect(row).toContain('flex-wrap: nowrap');
+    expect(row).toContain('align-items: center');
+    const ctl = rule('.ai-editor .ai-row--inline > .settings__control');
+    expect(ctl).toContain('flex-direction: row');
+    expect(ctl).toContain('flex-wrap: nowrap');
+    expect(ctl).toContain('min-width: 0');
+    const pinInputRule = rule('.ai-editor .ai-row--inline .ai-pin__input');
+    expect(pinInputRule).toContain('flex: 1 1 auto');
+    expect(pinInputRule).toContain('min-width: 0');
+    const btnAt = css.indexOf('.ai-editor .ai-row--inline .ai-pin__clear');
+    expect(btnAt).toBeGreaterThan(0);
+    const btnRule = css.slice(btnAt, css.indexOf('}', btnAt) + 1);
+    expect(btnRule).toContain('flex: 0 0 auto');
+    expect(btnRule).toContain('margin-left: auto');
+    expect(btnRule).toContain('min-height: 44px');
+    // ≤520：标签可独占一行，控件行仍是 row（否则又出现「按钮折到输入下面」）
+    const narrow = css.match(/@media \(max-width: 520px\) \{\s*\.ai-editor \.settings__row\.ai-row--inline \{([^}]*)\}/);
+    expect(narrow).not.toBe(null);
+    expect(narrow[1]).toContain('flex-direction: column');
+    expect(narrow[1]).not.toContain('.settings__control');
+    // S15：占位态去掉 0.3em 字距，375 才能完整显示「已设置（留空不改）」
+    const placeholderRule = rule('.ai-pin__input:placeholder-shown');
+    expect(placeholderRule).toContain('letter-spacing: 0');
+    expect(editor.querySelector('.ai-pin .ai-pin__input').placeholder).toContain('已设置（留空不改）');
+  });
+
+  it('0.4.23 PIN：未设置的凭据不显示「清除」，输入新 PIN 时提交 pin', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    mocks.listAiCredentials.mockResolvedValue({ ok: true, credentials: [credential({ agentApproval: true })] });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('.ai-cred-row .ai-cred-edit').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    expect(editor.querySelector('.ai-pin__clear').hidden).toBe(true);
+    expect(editor.querySelector('.ai-pin__state').hidden).toBe(true);
+    const input = editor.querySelector('.ai-pin .ai-pin__input');
+    input.value = '9753';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+    editor.querySelector('.ai-editor__save').click();
+    await tick();
+    const payload = mocks.updateAiCredential.mock.calls[0][1];
+    expect(payload.pin).toBe('9753');
+    expect('clearPin' in payload).toBe(false);
+  });
+
+  it('0.4.23 S13：两档都不是提案时隐藏代办批准与 PIN，保存归一化为关闭并清 PIN', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    mocks.listAiCredentials.mockResolvedValue({
+      ok: true,
+      credentials: [credential({ writeMode: 'direct', deleteMode: 'trash' })],
+    });
+    mocks.updateAiCredential.mockResolvedValue({
+      ok: true,
+      credential: credential({ writeMode: 'direct', deleteMode: 'trash' }),
+    });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('.ai-cred-row .ai-cred-edit').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    expect(editor.querySelector('.ai-approval__switch').closest('.ai-block').hidden).toBe(true);
+    expect(editor.querySelector('.ai-pin').hidden).toBe(true);
+
+    editor.querySelector('.ai-editor__save').click();
+    await tick();
+    const payload = mocks.updateAiCredential.mock.calls[0][1];
+    expect(payload.agentApproval).toBe(false);
+    expect(payload.clearPin).toBe(true);
+    expect('pin' in payload).toBe(false);
+  });
+
+  it('0.4.23 S13：切回提案模式后开关出现且默认关闭，打开后显示 PIN 区块', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    mocks.listAiCredentials.mockResolvedValue({
+      ok: true,
+      credentials: [credential({ writeMode: 'direct', deleteMode: 'trash' })],
+    });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('.ai-cred-row .ai-cred-edit').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    expect(editor.querySelector('.ai-approval__switch').closest('.ai-block').hidden).toBe(true);
+
+    editor.querySelector('[role="radio"][data-value="proposal"]').click();
+    await tick();
+    const approvalBlock = editor.querySelector('.ai-approval__switch').closest('.ai-block');
+    expect(approvalBlock.hidden).toBe(false);
+    const box = editor.querySelector('.ai-approval__switch input[type="checkbox"]');
+    expect(box.checked).toBe(false);
+    expect(editor.querySelector('.ai-pin').hidden).toBe(true);
+
+    await enableAgentApproval(editor);
+    expect(box.checked).toBe(true);
+    expect(editor.querySelector('.ai-pin').hidden).toBe(false);
+    expect(editor.querySelector('.ai-pin .settings__label').textContent).toBe('审批 PIN（可选）');
+  });
+
+  it('0.4.23 S12：凭据编辑器区块顺序与底部操作条', async () => {
+    mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+    const dialog = open();
+    await openAiTab(dialog);
+    dialog.querySelector('#settings-page-ai .ai-new-cred').click();
+    await tick();
+    const editor = dialog.querySelector('.ai-editor');
+    const titles = [...editor.querySelectorAll('.ai-block__title')].map((node) => node.textContent.trim());
+    expect(titles).toEqual([
+      '名称',
+      '日历授权',
+      '可读时间窗',
+      '字段开关',
+      '操作方式',
+      '对话内代办批准',
+      '令牌',
+      '删除凭据',
+    ]);
+    expect(editor.querySelector('.ai-editor__footer .ai-editor__save')).not.toBe(null);
+    expect(editor.querySelector('.ai-editor__footer .ai-editor__cancel')).not.toBe(null);
   });
 
   it('凭据列表：旧版已吊销的记录显示「已失效」、不能改权限，但可以删除', async () => {

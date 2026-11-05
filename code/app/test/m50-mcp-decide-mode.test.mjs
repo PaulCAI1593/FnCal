@@ -1,20 +1,23 @@
-/* 0.4.19 / M4-0.4.19：MCP `decide_proposals` —— 先问模式再执行。
+/* 0.4.21 / M4-0.4.21：批量与模式选择只能走服务端弹窗（方案 A）。
  *
- * 覆盖（M4 §5）：
- *   A 无 scope 且无 elicitation → mode_required，不执行任何一条
- *   B all 未确认 → confirmation_required，不改数据
- *   C all 已确认 → 逐条执行、汇总、审计 via:'mcp' + mode:'all'
- *   D single：多 id 报 invalid；未确认回 confirmation_required；确认后只动那一条
- *   E all 部分失败 → {total, ok, failed, results[]}，失败文案中文
- *   F 不含删除类 → 提示里不出现删除字样
- *   G 回收站模式 → 提示写「删除后 N 天内可还原」，N 跟随 settings.trashRetentionDays
- *   H 弹窗：模式选择框、断流不执行 + 重连降级文字、decline 不执行、single 走逐条确认
+ * 0.4.21 起无 elicitation 能力的会话禁止 MCP 批准，所以 0.4.19/0.4.20 的「文字确认 + scope」
+ * 路径全部作废。本文件保留 decide_proposals 在**有弹窗能力**时的批量语义，以及无能力时的一律拒绝：
+ *   0 tools/list 与 instructions 口径
+ *   A 无弹窗 decide（≥2 条，无 scope）→ approval_requires_ui，带 total / deleteCount，零执行
+ *   B 有弹窗 decide（≥2 条，无 scope）→ 模式弹窗（message 带删除计数）→ 选 all → 全部执行 + 汇总审计
+ *   C 有弹窗 decide（0 条）→ no_proposals（普通 JSON，不建 SSE、不弹窗）
+ *   D 无弹窗 decide（1 条）→ 单条拒绝 + 摘要（绝不 mode_required）
+ *   E 有弹窗 decide（2 条）→ 模式弹窗选 single 且不点名 → 只回提示、零执行
+ *   F 有弹窗 decide（点名 1 条）→ 直接弹单条确认（0.4.20 起不问模式）→ 只执行 1 条
+ *   G 部分失败：模式弹窗选 all、ids 里含不存在 id → ok 1 / failed 1 / code not_found
+ *   H 回收站模式（2 条删除提案 + 保留期 14 天）→ 模式弹窗 message 写「删除后 14 天内可还原」
+ *   I 模式弹窗 decline → declined、零执行
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 
-const TMP = path.join(process.cwd(), 'build-tmp', `tmp-0419-mcp-mode-${process.pid}`);
+const TMP = path.join(process.cwd(), 'build-tmp', `tmp-0421-mcp-mode-${process.pid}`);
 if (!/code[\\/]build-tmp$/.test(path.dirname(TMP))) {
   throw new Error(`临时目录必须在 code/build-tmp 下，实际=${TMP}｜请从 code 目录运行本测试`);
 }
@@ -73,8 +76,9 @@ async function mcpPost(token, body, extraHeaders = {}) {
   return { status: res.status, text, body: parsed, result: parsed && parsed.result ? parsed.result : null };
 }
 
-async function callTool(token, name, args = {}) {
-  const out = await mcpPost(token, rpc(9, 'tools/call', { name, arguments: args }));
+async function callTool(token, name, args = {}, sessionId = '') {
+  const extra = sessionId ? { 'mcp-session-id': sessionId } : {};
+  const out = await mcpPost(token, rpc(9, 'tools/call', { name, arguments: args }), extra);
   const toolText = out.result && out.result.content && out.result.content[0] ? out.result.content[0].text : '';
   return { ...out, toolText };
 }
@@ -129,7 +133,6 @@ function sseStream(res) {
 }
 
 async function openCall(token, sessionId, name, args) {
-  const controller = new AbortController();
   const res = await fetch(`${BASE}/mcp`, {
     method: 'POST',
     headers: {
@@ -139,9 +142,8 @@ async function openCall(token, sessionId, name, args) {
       accept: 'text/event-stream, application/json',
     },
     body: JSON.stringify(rpc(9, 'tools/call', { name, arguments: args })),
-    signal: controller.signal,
   });
-  return { res, stream: sseStream(res), controller };
+  return { res, stream: sseStream(res) };
 }
 
 async function postElicitResult(token, sessionId, elicitId, result) {
@@ -221,7 +223,29 @@ async function pendingIds(admin) {
   return (res.body.proposals || []).map((item) => item.id);
 }
 
-/** 造一个「删除这条日程」的待确认提案，返回提案 id（凭据为提案模式时）。 */
+/** 网页端批量决策（用户自己在提案面板点），用于清理与造前置状态。 */
+async function restBatch(admin, action, ids) {
+  const res = await raw('/api/v1/ai/proposals/batch', {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { action, ids },
+  });
+  if (res.status !== 200) throw new Error(`批量决策失败 status=${res.status} ${res.text}`);
+  return res.body;
+}
+
+async function patchCredential(admin, id, body) {
+  const res = await raw(`/api/v1/ai/credentials/${id}`, {
+    method: 'PATCH', cookie: admin.cookie, csrf: admin.csrf, body,
+  });
+  if (res.status !== 200) throw new Error(`更新凭据失败 status=${res.status} ${res.text}`);
+  return res.body;
+}
+
+async function setSettings(admin, body) {
+  const res = await raw('/api/v1/ai/settings', { method: 'PUT', cookie: admin.cookie, csrf: admin.csrf, body });
+  if (res.status !== 200) throw new Error(`更新设置失败 status=${res.status} ${res.text}`);
+  return res.body;
+}
+
 async function makeDeleteProposal(token, admin, { uid, summary }) {
   writeObject(admin.body.uid, 'default', uid, icsEvent({ uid, summary, start: START, end: START + HOUR }));
   const del = await callTool(token, 'delete_event', { uid });
@@ -233,7 +257,6 @@ async function makeDeleteProposal(token, admin, { uid, summary }) {
   return row.id;
 }
 
-/** 造一个「修改这条日程」的待确认提案（非删除类），返回提案 id。 */
 async function makeUpdateProposal(token, admin, { uid, summary }) {
   writeObject(admin.body.uid, 'default', uid, icsEvent({ uid, summary, start: START, end: START + HOUR }));
   const upd = await callTool(token, 'update_event', { uid, title: `${summary}（改）` });
@@ -245,256 +268,221 @@ async function makeUpdateProposal(token, admin, { uid, summary }) {
   return row.id;
 }
 
-const sc = (toolResult) => (toolResult && toolResult.structuredContent) || {};
+const sc = (toolResult) => (toolResult && (toolResult.structuredContent || toolResult.data)) || {};
 const toolJson = (event) => {
   const text = event && event.result && event.result.content && event.result.content[0] ? event.result.content[0].text : '';
   try { return JSON.parse(text); } catch { return null; }
 };
-const eventOf = (out) => (out && out.result) || {};
+
+/** 断言一个 approval_requires_ui 拒绝结果。 */
+function blocked(name, result, { tool, reason, total, proposalId = undefined, hasSummary = false }) {
+  const payload = sc(result);
+  eq(`${name} → isError`, true, result && result.isError === true);
+  eq(`${name} → code`, 'approval_requires_ui', payload.code);
+  eq(`${name} → tool`, tool, payload.tool);
+  eq(`${name} → reason`, reason, payload.reason);
+  eq(`${name} → ui.panel`, 'proposals', payload.ui && payload.ui.panel);
+  ok(`${name} → message 指向审批链接`, String(payload.message || '').includes('打开上面的链接'));
+  ok(`${name} → 带 approvalUrl`, /^http:\/\/127\.0\.0\.1:\d+\/a\/[A-Za-z0-9_-]{20,}$/.test(String(payload.approvalUrl || '')));
+  eq(`${name} → expiresIn`, 600, payload.expiresIn);
+  if (total !== undefined) eq(`${name} → total`, total, payload.total);
+  if (proposalId !== undefined) eq(`${name} → proposalId`, proposalId, payload.proposalId);
+  if (hasSummary) {
+    ok(`${name} → 带服务端摘要`, typeof payload.summary === 'string' && payload.summary.includes('｜时间：'));
+  } else {
+    eq(`${name} → 不带摘要`, undefined, payload.summary);
+  }
+  return payload;
+}
 
 try {
   const admin = await login('admin', 'admin-pass-123');
   const userId = admin.body.uid;
   await raw('/api/v1/ai/settings', { method: 'PUT', cookie: admin.cookie, csrf: admin.csrf, body: { enabled: true } });
   const agent = await mintCredential(admin, {
-    label: '模式选择凭据',
+    label: '弹窗模式凭据',
     grants: { default: 'write' },
     agentApproval: true,
     timeWindow: { pastDays: 30, futureDays: 400 },
   });
   const token = agent.token;
+  const credentialId = agent.credential
+    ? agent.credential.id
+    : (Array.isArray(agent.credentials) && agent.credentials[0] ? agent.credentials[0].id : agent.id);
 
-  /* ============================================================ 0 工具与指令 */
+  const noCap = await initSession(token, {});
+  const withCap = await initSession(token, { elicitation: {} });
+  ok('0 无弹窗会话拿到 Mcp-Session-Id', /^[0-9a-f]{32}$/.test(noCap.sessionId));
+  ok('0 有弹窗会话拿到 Mcp-Session-Id', /^[0-9a-f]{32}$/.test(withCap.sessionId));
 
-  const s0 = await initSession(token, {});
-  eq('initialize 状态', 200, s0.status);
-  ok('instructions 提到 decide_proposals', s0.instructions.includes('decide_proposals'), s0.instructions);
-  ok('instructions 写死先问模式', s0.instructions.includes('先调 list_proposals') && s0.instructions.includes('mode_required'), s0.instructions);
-  ok('instructions 写 scope', s0.instructions.includes('scope'), s0.instructions);
-  const tools = await mcpPost(token, rpc(2, 'tools/list', {}));
-  const names = ((tools.result && tools.result.tools) || []).map((entry) => entry.name);
-  ok('tool list 含 decide_proposals', names.includes('decide_proposals'), names.join(','));
-  const decideDef = ((tools.result && tools.result.tools) || []).find((entry) => entry.name === 'decide_proposals') || {};
-  ok('decide_proposals 描述写明先问模式', String(decideDef.description).includes('全部批准'), String(decideDef.description));
-  eq('decide_proposals 只有 action 必填', JSON.stringify((decideDef.inputSchema || {}).required), JSON.stringify(['action']));
+  const toolsRes = await mcpPost(token, rpc(2, 'tools/list', {}));
+  const tools = (toolsRes.result && toolsRes.result.tools) || [];
+  const decideTool = tools.find((tool) => tool.name === 'decide_proposals');
+  ok('0 tools/list 含 decide_proposals', Boolean(decideTool));
+  ok('0 decide 描述提到 approval_requires_ui', String((decideTool && decideTool.description) || '').includes('approval_requires_ui'));
+  ok('0 decide 描述不再承诺 mode_required 文字路径', !String((decideTool && decideTool.description) || '').includes('mode_required'));
 
-  /* ============================================================ A mode_required */
+  /* -------- 造 3 条提案：2 删除 + 1 修改 -------- */
+  const delA = await makeDeleteProposal(token, admin, { uid: 'mode-del-a', summary: '模式删除A' });
+  const delB = await makeDeleteProposal(token, admin, { uid: 'mode-del-b', summary: '模式删除B' });
+  const updC = await makeUpdateProposal(token, admin, { uid: 'mode-upd-c', summary: '模式修改C' });
+  eq('0 待确认 3 条', 3, (await pendingIds(admin)).length);
 
-  const d1 = await makeDeleteProposal(token, admin, { uid: 'mode-a1', summary: '季度评审' });
-  const d2 = await makeDeleteProposal(token, admin, { uid: 'mode-a2', summary: '周会' });
-  const u3 = await makeUpdateProposal(token, admin, { uid: 'mode-a3', summary: '产品同步' });
-  eq('A 起步待确认 3 条', 3, (await pendingIds(admin)).length);
+  /* -------- A 无弹窗 ≥2 条 → 一律拒绝，带 total / deleteCount -------- */
+  const aBlocked = await callTool(token, 'decide_proposals', { action: 'approve' }, noCap.sessionId);
+  blocked('A 无弹窗 decide', aBlocked.result, { tool: 'decide_proposals', reason: 'no_elicitation', total: 3 });
+  eq('A → deleteCount 2', 2, sc(aBlocked.result).deleteCount);
+  eq('A → 零执行（3 条仍 pending）', 3, (await pendingIds(admin)).length);
+  const aLog = await waitLog('app.log', 'proposal-agent-approval-blocked');
+  ok('A 记 proposal-agent-approval-blocked', aLog.includes('proposal-agent-approval-blocked'));
 
-  const gateA = await callTool(token, 'decide_proposals', { action: 'approve' });
-  eq('A 无 scope → 200', 200, gateA.status);
-  eq('A 无 scope → isError', true, gateA.result.isError);
-  eq('A 无 scope → code', 'mode_required', sc(gateA.result).code);
-  eq('A 待处理条数', 3, sc(gateA.result).pending);
-  eq('A 删除条数', 2, sc(gateA.result).deleteCount);
-  ok('A 提示带删除不可恢复', String(sc(gateA.result).prompt).includes('2 条是删除日程，批准后无法恢复'), String(sc(gateA.result).prompt));
-  ok('A 提示带选择问句', String(sc(gateA.result).prompt).includes('全部批准，还是逐条审批？'));
-  eq('A 选项只有 all/single', JSON.stringify(sc(gateA.result).options), JSON.stringify(['all', 'single']));
-  eq('A 不执行（仍 3 条 pending）', 3, (await pendingIds(admin)).length);
-  ok('A 记 proposal-agent-mode-required', (await waitLog('app.log', 'proposal-agent-mode-required')).includes('proposal-agent-mode-required'));
-  const auditNoDecision = readLogNow('audit.log');
-  ok('A 不写 proposal-decision', !auditNoDecision.includes('"event":"proposal-decision"'));
+  /* -------- B 有弹窗 ≥2 条无 scope → 模式弹窗 → 选 all 全部执行 -------- */
+  const callB = await openCall(token, withCap.sessionId, 'decide_proposals', { action: 'approve' });
+  const evB = await callB.stream.nextEvent();
+  eq('B 第一条是模式弹窗', 'elicitation/create', evB && evB.method);
+  const msgB = String((evB && evB.params && evB.params.message) || '');
+  ok('B 模式弹窗带删除计数（其中 2 条为删除日程）', msgB.includes('其中 2 条为删除日程'));
+  ok('B 模式弹窗带不可恢复提示', msgB.includes('批准后无法恢复'));
+  ok('B 模式弹窗带模式问句', msgB.includes('逐条审批'));
+  const schemaB = (evB && evB.params && evB.params.requestedSchema) || {};
+  eq('B 模式 schema 只有 mode', ['mode'].join(','), Object.keys(schemaB.properties || {}).join(','));
+  eq('B 模式 enum', 'all,single', ((schemaB.properties && schemaB.properties.mode && schemaB.properties.mode.enum) || []).join(','));
+  eq('B 模式 enumNames', `全部批准（3 条）,逐条审批`,
+    ((schemaB.properties && schemaB.properties.mode && schemaB.properties.mode.enumNames) || []).join(','));
+  eq('B 模式弹窗不含敏感内容', false, /BEGIN:VCALENDAR|token|password/i.test(msgB));
+  eq('B 回 accept mode=all → 202', 202,
+    await postElicitResult(token, withCap.sessionId, evB.id, { action: 'accept', content: { mode: 'all' } }));
+  const doneB = await callB.stream.nextEvent();
+  await callB.stream.close();
+  const jsonB = toolJson(doneB);
+  eq('B 批量结果 action', 'approve', jsonB && jsonB.action);
+  eq('B 批量结果 mode', 'all', jsonB && jsonB.mode);
+  eq('B 批量结果 total', 3, jsonB && jsonB.total);
+  eq('B 批量结果 ok', 3, jsonB && jsonB.ok);
+  eq('B 批量结果 failed', 0, jsonB && jsonB.failed);
+  eq('B results 条数', 3, jsonB && Array.isArray(jsonB.results) ? jsonB.results.length : 0);
+  eq('B 执行后 pending 0', 0, (await pendingIds(admin)).length);
+  ok('B 删除类日程已真删', !objectExists(userId, 'default', 'mode-del-a') && !objectExists(userId, 'default', 'mode-del-b'));
+  const auditB = await waitLog('audit.log', '"event":"proposal-batch-decision"');
+  ok('B 汇总审计 via=mcp', auditB.includes('"via":"mcp"'));
+  ok('B 汇总审计 mode=all', auditB.includes('"mode":"all"'));
+  ok('B 汇总审计 ok=3', auditB.includes('"ok":3'));
+  const decisionAuditB = await waitLog('audit.log', '"confirmation":"elicitation"');
+  ok('B 逐条审计 confirmation=elicitation', decisionAuditB.includes('"confirmation":"elicitation"'));
 
-  /* ============================================================ B all 未确认 */
+  /* -------- C 0 条 → no_proposals（不问模式、不弹窗；未切 SSE，普通 JSON 回包） -------- */
+  const callC = await callTool(token, 'decide_proposals', { action: 'approve' }, withCap.sessionId);
+  eq('C 0 条 → code no_proposals', 'no_proposals', sc(callC.result).code);
+  eq('C 0 条 → total 0', 0, sc(callC.result).total);
+  eq('C 0 条 → 不是错误', false, callC.result && callC.result.isError === true);
 
-  const gateB = await callTool(token, 'decide_proposals', { action: 'approve', scope: 'all' });
-  eq('B 未确认 → isError', true, gateB.result.isError);
-  eq('B 未确认 → code', 'confirmation_required', sc(gateB.result).code);
-  eq('B 未确认 → mode', 'all', sc(gateB.result).mode);
-  eq('B 未确认 → total', 3, sc(gateB.result).total);
-  eq('B 未确认 → deleteCount', 2, sc(gateB.result).deleteCount);
-  ok('B 未确认 → 问句带全部批准', String(sc(gateB.result).prompt).includes('同意请回复「全部批准」'));
-  eq('B 未确认不改数据', 3, (await pendingIds(admin)).length);
-
-  /* ============================================================ C all 已确认 */
-
-  const runC = await callTool(token, 'decide_proposals', { action: 'approve', scope: 'all', confirmed: true });
-  eq('C 全部批准 → 200', 200, runC.status);
-  const cJson = JSON.parse(runC.toolText);
-  eq('C action', 'approve', cJson.action);
-  eq('C mode', 'all', cJson.mode);
-  eq('C total', 3, cJson.total);
-  eq('C ok', 3, cJson.ok);
-  eq('C failed', 0, cJson.failed);
-  eq('C results 条数', 3, (cJson.results || []).length);
-  ok('C results 全部 ok', (cJson.results || []).every((entry) => entry.ok === true));
-  eq('C 执行后 0 条 pending', 0, (await pendingIds(admin)).length);
-  eq('C 删除类日程真的删了', false, objectExists(userId, 'default', 'mode-a1'));
-  const auditC = await waitLog('audit.log', 'proposal-batch-decision');
-  ok('C 汇总审计 via:mcp', auditC.includes('"event":"proposal-batch-decision"') && auditC.includes('"via":"mcp"'));
-  ok('C 汇总审计 mode:all', auditC.includes('"mode":"all"') && auditC.includes('"ok":3'));
-  ok('C 逐条审计带 mode', auditC.includes('"event":"proposal-decision"') && auditC.includes('"confirmation":"text"'));
-
-  /* ============================================================ D single */
-
-  const d4 = await makeDeleteProposal(token, admin, { uid: 'mode-d4', summary: '单条一' });
-  const d5 = await makeDeleteProposal(token, admin, { uid: 'mode-d5', summary: '单条二' });
-  eq('D 起步待确认 2 条', 2, (await pendingIds(admin)).length);
-
-  const dMulti = await callTool(token, 'decide_proposals', { action: 'approve', scope: 'single', ids: [d4, d5], confirmed: true });
-  eq('D single 多 id → isError', true, dMulti.result.isError);
-  eq('D single 多 id → code', 'invalid', sc(dMulti.result).code);
-  eq('D single 多 id → field', 'ids', sc(dMulti.result).field);
-  eq('D single 多 id 不改数据', 2, (await pendingIds(admin)).length);
-
-  const dSingleGate = await callTool(token, 'decide_proposals', { action: 'approve', scope: 'single', ids: [d4] });
-  eq('D single 未确认 → code', 'confirmation_required', sc(dSingleGate.result).code);
-  ok('D single 摘要带「批准（删除）」', String(sc(dSingleGate.result).summary).includes('批准（删除）'), String(sc(dSingleGate.result).summary));
-  eq('D single 未确认不改数据', 2, (await pendingIds(admin)).length);
-
-  const dSingleRun = await callTool(token, 'decide_proposals', { action: 'approve', scope: 'single', ids: [d4], confirmed: true });
-  const dSingleJson = JSON.parse(dSingleRun.toolText);
-  eq('D single → mode', 'single', dSingleJson.mode);
-  eq('D single → total', 1, dSingleJson.total);
-  eq('D single → ok', 1, dSingleJson.ok);
-  eq('D single 只动那一条', false, (await pendingIds(admin)).includes(d4));
-  eq('D single 留下另一条', true, (await pendingIds(admin)).includes(d5));
-
-  /* ============================================================ E 部分失败汇总 */
-
-  const partE = await callTool(token, 'decide_proposals', {
-    action: 'approve',
-    scope: 'all',
-    ids: [d5, 'no-such-proposal-id'],
-    confirmed: true,
+  /* -------- D 无弹窗 1 条 → 单条拒绝 + 摘要（绝不 mode_required） -------- */
+  const delD = await makeDeleteProposal(token, admin, { uid: 'mode-del-d', summary: '模式删除D' });
+  const dBlocked = await callTool(token, 'decide_proposals', { action: 'approve' }, noCap.sessionId);
+  blocked('D 无弹窗单条', dBlocked.result, {
+    tool: 'decide_proposals', reason: 'no_elicitation', total: 1, proposalId: delD, hasSummary: true,
   });
-  const eJson = JSON.parse(partE.toolText);
-  eq('E total', 2, eJson.total);
-  eq('E ok', 1, eJson.ok);
-  eq('E failed', 1, eJson.failed);
-  eq('E 失败条数 results', 2, (eJson.results || []).length);
-  const eFailed = (eJson.results || []).find((entry) => entry.id === 'no-such-proposal-id') || {};
-  eq('E 失败码', 'not_found', eFailed.code);
-  ok('E 失败文案中文', String(eFailed.message).includes('提案不存在'), String(eFailed.message));
-  eq('E 执行后 0 条 pending', 0, (await pendingIds(admin)).length);
+  ok('D 摘要含「批准（删除）」', String(sc(dBlocked.result).summary || '').includes('批准（删除）'));
+  ok('D 不出现 mode_required', !String(dBlocked.toolText || '').includes('mode_required'));
+  await restBatch(admin, 'reject', [delD]);
 
-  /* ============================================================ F 不含删除类 */
+  /* -------- E 有弹窗 2 条，模式弹窗选 single 但不点名 → 只回提示、零执行 -------- */
+  const delE1 = await makeDeleteProposal(token, admin, { uid: 'mode-del-e1', summary: '模式删除E1' });
+  const delE2 = await makeUpdateProposal(token, admin, { uid: 'mode-upd-e2', summary: '模式修改E2' });
+  const callE = await openCall(token, withCap.sessionId, 'decide_proposals', { action: 'reject' });
+  const evE = await callE.stream.nextEvent();
+  eq('E 第一条是模式弹窗', 'elicitation/create', evE && evE.method);
+  eq('E 拒绝模式弹窗不写删除影响', false, String((evE && evE.params && evE.params.message) || '').includes('无法恢复'));
+  eq('E 回 accept mode=single → 202', 202,
+    await postElicitResult(token, withCap.sessionId, evE.id, { action: 'accept', content: { mode: 'single' } }));
+  const evE2 = await callE.stream.nextEvent();
+  await callE.stream.close();
+  const jsonE = toolJson(evE2);
+  eq('E single 未点名 → mode', 'single', jsonE && jsonE.mode);
+  eq('E single 未点名 → pending', 2, jsonE && jsonE.pending);
+  eq('E single 未点名 → 零执行', 2, (await pendingIds(admin)).length);
 
-  const u6 = await makeUpdateProposal(token, admin, { uid: 'mode-f6', summary: '只有修改' });
-  const gateF = await callTool(token, 'decide_proposals', { action: 'approve' });
-  eq('F 不含删除类 → deleteCount 0', 0, sc(gateF.result).deleteCount);
-  eq('F 不含删除类 → pending 1', 1, sc(gateF.result).pending);
-  ok('F 提示不出现删除字样', !String(sc(gateF.result).prompt).includes('删除'), String(sc(gateF.result).prompt));
-  const runF = await callTool(token, 'decide_proposals', { action: 'approve', scope: 'all', ids: [u6], confirmed: true });
-  eq('F 只处理点名那条', 1, JSON.parse(runF.toolText).ok);
+  /* -------- F 有弹窗点名 1 条 → 直接弹单条确认（0.4.20 起不问模式）→ 只执行 1 条 -------- */
+  const callF = await openCall(token, withCap.sessionId, 'decide_proposals', { action: 'approve', ids: [delE1] });
+  const evF1 = await callF.stream.nextEvent();
+  eq('F 点名 1 条第一条就是单条确认弹窗', 'elicitation/create', evF1 && evF1.method);
+  const msgF = String((evF1 && evF1.params && evF1.params.message) || '');
+  ok('F 单条确认带标题', msgF.includes('模式删除E1'));
+  eq('F 单条确认不是模式弹窗（无「全部批准」）', false, msgF.includes('全部批准'));
+  eq('F 单条确认 schema 只有 decision', ['decision'].join(','),
+    Object.keys((evF1 && evF1.params && evF1.params.requestedSchema && evF1.params.requestedSchema.properties) || {}).join(','));
+  eq('F 单条确认回 accept approve → 202', 202,
+    await postElicitResult(token, withCap.sessionId, evF1.id, { action: 'accept', content: { decision: 'approve' } }));
+  const evF3 = await callF.stream.nextEvent();
+  await callF.stream.close();
+  const jsonF = toolJson(evF3);
+  eq('F 单条结果 mode', 'single', jsonF && jsonF.mode);
+  eq('F 单条结果 total 1', 1, jsonF && jsonF.total);
+  eq('F 单条结果 ok 1', 1, jsonF && jsonF.ok);
+  eq('F 只执行 1 条（剩 1 条）', 1, (await pendingIds(admin)).length);
+  ok('F 点名的删除已真删', !objectExists(userId, 'default', 'mode-del-e1'));
+  ok('F 未点名的修改提案仍原样', objectExists(userId, 'default', 'mode-upd-e2'));
 
-  /* ============================================================ G 回收站模式文案 */
-
-  const d7 = await makeDeleteProposal(token, admin, { uid: 'mode-g7', summary: '回收站文案' });
-  const patchCred = await raw(`/api/v1/ai/credentials/${agent.credential.id}`, {
-    method: 'PATCH', cookie: admin.cookie, csrf: admin.csrf, body: { deleteMode: 'trash' },
+  /* -------- G 部分失败：ids 里含不存在 id → ok 1 / failed 1 / code not_found -------- */
+  // 先补一条提案到 2 条待确认，确保进模式弹窗（点名 1 条会被单条闸门直接接走）。
+  const updG = await makeUpdateProposal(token, admin, { uid: 'mode-upd-g', summary: '模式修改G' });
+  eq('G 前置待确认 2 条', 2, (await pendingIds(admin)).length);
+  const callG = await openCall(token, withCap.sessionId, 'decide_proposals', {
+    action: 'reject', ids: [delE2, 'no-such-proposal-id'],
   });
-  eq('G 切凭据到回收站模式', 200, patchCred.status);
-  const setRetention = await raw('/api/v1/ai/settings', {
-    method: 'PUT', cookie: admin.cookie, csrf: admin.csrf, body: { trashRetentionDays: 14 },
-  });
-  eq('G 保留期改 14 天', 200, setRetention.status);
-  const gateG = await callTool(token, 'decide_proposals', { action: 'approve' });
-  ok('G 回收站文案带 14 天', String(sc(gateG.result).prompt).includes('删除后 14 天内可还原'), String(sc(gateG.result).prompt));
-  eq('G 仍报删除条数 1', 1, sc(gateG.result).deleteCount);
-  // 收尾：改回提案模式并把这条批掉，避免影响后面的计数。
-  await raw(`/api/v1/ai/credentials/${agent.credential.id}`, {
-    method: 'PATCH', cookie: admin.cookie, csrf: admin.csrf, body: { deleteMode: 'proposal' },
-  });
-  await raw('/api/v1/ai/settings', { method: 'PUT', cookie: admin.cookie, csrf: admin.csrf, body: { trashRetentionDays: 7 } });
-  const cleanupG = await callTool(token, 'decide_proposals', { action: 'approve', scope: 'all', ids: [d7], confirmed: true });
-  eq('G 收尾批掉 1 条', 1, JSON.parse(cleanupG.toolText).ok);
+  const evG1 = await callG.stream.nextEvent();
+  eq('G 第一条是模式弹窗', 'elicitation/create', evG1 && evG1.method);
+  eq('G 回 accept mode=all → 202', 202,
+    await postElicitResult(token, withCap.sessionId, evG1.id, { action: 'accept', content: { mode: 'all' } }));
+  const evG2 = await callG.stream.nextEvent();
+  await callG.stream.close();
+  const jsonG = toolJson(evG2);
+  eq('G total', 2, jsonG && jsonG.total);
+  eq('G ok', 1, jsonG && jsonG.ok);
+  eq('G failed', 1, jsonG && jsonG.failed);
+  const failedG = jsonG && Array.isArray(jsonG.results) ? jsonG.results.filter((item) => !item.ok) : [];
+  eq('G 失败条目 code', 'not_found', failedG[0] && failedG[0].code);
+  eq('G 失败条目 message', '提案不存在', failedG[0] && failedG[0].message);
+  eq('G 执行后剩 1 条', 1, (await pendingIds(admin)).length);
+  await restBatch(admin, 'reject', [updG]);
+  eq('G 收尾后 pending 0', 0, (await pendingIds(admin)).length);
 
-  /* ============================================================ H 弹窗 */
+  /* -------- H 回收站模式：模式弹窗写「删除后 14 天内可还原」 -------- */
+  const delH1 = await makeDeleteProposal(token, admin, { uid: 'mode-del-h1', summary: '模式回收站H1' });
+  const delH2 = await makeDeleteProposal(token, admin, { uid: 'mode-del-h2', summary: '模式回收站H2' });
+  await patchCredential(admin, credentialId, { deleteMode: 'trash' });
+  await setSettings(admin, { trashRetentionDays: 14 });
+  try {
+    const callH = await openCall(token, withCap.sessionId, 'decide_proposals', { action: 'approve' });
+    const evH = await callH.stream.nextEvent();
+    eq('H 第一条是模式弹窗', 'elicitation/create', evH && evH.method);
+    const msgH = String((evH && evH.params && evH.params.message) || '');
+    ok('H 弹窗写「其中 2 条为删除日程」', msgH.includes('其中 2 条为删除日程'));
+    ok('H 弹窗写「删除后 14 天内可还原」', msgH.includes('删除后 14 天内可还原'));
+    ok('H 弹窗不写「无法恢复」', !msgH.includes('无法恢复'));
 
-  const sE = await initSession(token, { elicitation: { form: {} } });
-  ok('H 会话头 32 hex', /^[0-9a-f]{32}$/.test(sE.sessionId), sE.sessionId);
-  const h1 = await makeDeleteProposal(token, admin, { uid: 'mode-h1', summary: '弹窗一' });
-  const h2 = await makeDeleteProposal(token, admin, { uid: 'mode-h2', summary: '弹窗二' });
-  eq('H 起步待确认 2 条', 2, (await pendingIds(admin)).length);
+    /* -------- I 模式弹窗 decline → declined、零执行 -------- */
+    eq('I 回 decline → 202', 202, await postElicitResult(token, withCap.sessionId, evH.id, { action: 'decline' }));
+    const evI = await callH.stream.nextEvent();
+    await callH.stream.close();
+    const jsonI = toolJson(evI);
+    eq('I decline → declined', true, jsonI && jsonI.declined);
+    eq('I decline 后仍 pending 2', 2, (await pendingIds(admin)).length);
+    ok('I decline 后日程仍在', objectExists(userId, 'default', 'mode-del-h1'));
+  } finally {
+    await patchCredential(admin, credentialId, { deleteMode: 'proposal' });
+    await setSettings(admin, { trashRetentionDays: 7 });
+  }
+  await restBatch(admin, 'reject', [delH1, delH2]);
+  eq('I 收尾后 pending 0', 0, (await pendingIds(admin)).length);
 
-  // H1 模式弹窗内容（A4 文案）
-  const callH1 = await openCall(token, sE.sessionId, 'decide_proposals', { action: 'approve' });
-  const evH1 = await callH1.stream.nextEvent();
-  ok('H1 先收到模式弹窗', Boolean(evH1 && evH1.method === 'elicitation/create'), JSON.stringify(evH1));
-  const h1Params = (evH1 && evH1.params) || {};
-  ok('H1 弹窗标题带「其中 2 条为删除日程」', String(h1Params.message).includes('其中 2 条为删除日程，批准后无法恢复'), String(h1Params.message));
-  const h1Schema = (h1Params.requestedSchema || {});
-  eq('H1 schema 只有一个字段', JSON.stringify(Object.keys(h1Schema.properties || {})), JSON.stringify(['mode']));
-  eq('H1 schema 枚举', JSON.stringify((h1Schema.properties || {}).mode.enum), JSON.stringify(['all', 'single']));
-  ok('H1 enumNames 带条数', JSON.stringify((h1Schema.properties || {}).mode.enumNames).includes('全部批准（2 条）'));
-  ok('H1 弹窗不含 ICS', !String(h1Params.message).includes('BEGIN:VCALENDAR'));
-
-  // H2 断流：弹窗中途断开 → 不执行；重连后降级文字
-  callH1.controller.abort();
-  await sleep(600);
-  eq('H2 断流不执行（仍 2 条 pending）', 2, (await pendingIds(admin)).length);
-  ok('H2 断流后对象仍在', objectExists(userId, 'default', 'mode-h1'));
-  const abortLog = await waitLog('app.log', 'proposal-batch-elicitation', 40);
-  ok('H2 断流记 batch-elicitation cancel', abortLog.includes('"elicitationAction":"cancel"'));
-  const reconnect = await callTool(token, 'decide_proposals', { action: 'approve' });
-  eq('H2 重连降级文字 mode_required', 'mode_required', sc(reconnect.result).code);
-  eq('H2 重连后仍不执行', 2, (await pendingIds(admin)).length);
-
-  // H3 弹窗选「全部批准」→ 执行
-  const callH3 = await openCall(token, sE.sessionId, 'decide_proposals', { action: 'approve' });
-  const evH3 = await callH3.stream.nextEvent();
-  eq('H3 弹窗 elicit id 形如 elicit-N', true, /^elicit-\d+$/.test(String((evH3 || {}).id)), String((evH3 || {}).id));
-  eq('H3 回 accept all → 202', 202, await postElicitResult(token, sE.sessionId, evH3.id, { action: 'accept', content: { mode: 'all' } }));
-  const evH3Result = await callH3.stream.nextEvent();
-  const h3Json = toolJson(evH3Result);
-  eq('H3 mode all', 'all', h3Json && h3Json.mode);
-  eq('H3 total 2', 2, h3Json && h3Json.total);
-  eq('H3 ok 2', 2, h3Json && h3Json.ok);
-  eq('H3 执行后 0 条 pending', 0, (await pendingIds(admin)).length);
-  const auditH = await waitLog('audit.log', '"confirmation":"elicitation"');
-  ok('H3 审计 confirmation:elicitation', auditH.includes('"confirmation":"elicitation"'));
-  ok('H3 审计带 via:mcp 与 mode:all', auditH.includes('"via":"mcp"') && auditH.includes('"mode":"all"'));
-  await callH3.stream.close();
-
-  // H4 弹窗选「逐条审批」但没有点名 → 只回提示；点名后走单条确认
-  const h4 = await makeDeleteProposal(token, admin, { uid: 'mode-h4', summary: '逐条一' });
-  const h5 = await makeDeleteProposal(token, admin, { uid: 'mode-h5', summary: '逐条二' });
-  const callH4 = await openCall(token, sE.sessionId, 'decide_proposals', { action: 'approve' });
-  const evH4 = await callH4.stream.nextEvent();
-  eq('H4 回 accept single → 202', 202, await postElicitResult(token, sE.sessionId, evH4.id, { action: 'accept', content: { mode: 'single' } }));
-  const evH4Result = await callH4.stream.nextEvent();
-  const h4Json = toolJson(evH4Result);
-  eq('H4 single 未点名 → mode single', 'single', h4Json && h4Json.mode);
-  ok('H4 single 未点名 → 提示逐条', String(h4Json && h4Json.prompt).includes('逐条审批'));
-  eq('H4 single 未点名不执行', 2, (await pendingIds(admin)).length);
-  await callH4.stream.close();
-
-  const callH5 = await openCall(token, sE.sessionId, 'decide_proposals', { action: 'approve', ids: [h4] });
-  const evH5 = await callH5.stream.nextEvent();
-  eq('H5 回 accept single → 202', 202, await postElicitResult(token, sE.sessionId, evH5.id, { action: 'accept', content: { mode: 'single' } }));
-  const evH5Item = await callH5.stream.nextEvent();
-  ok('H5 随后弹单条确认', Boolean(evH5Item && evH5Item.method === 'elicitation/create'), JSON.stringify(evH5Item));
-  ok('H5 单条确认问「批准（删除）」', String(((evH5Item || {}).params || {}).message).includes('批准（删除）'), String(((evH5Item || {}).params || {}).message));
-  eq('H5 回 accept approve → 202', 202, await postElicitResult(token, sE.sessionId, evH5Item.id, { action: 'accept', content: { decision: 'approve' } }));
-  const evH5Result = await callH5.stream.nextEvent();
-  const h5Json = toolJson(evH5Result);
-  eq('H5 只处理 1 条', 1, h5Json && h5Json.total);
-  eq('H5 ok 1', 1, h5Json && h5Json.ok);
-  eq('H5 另一条仍 pending', true, (await pendingIds(admin)).includes(h5));
-  await callH5.stream.close();
-
-  // H6 弹窗点 decline → 不执行
-  const callH6 = await openCall(token, sE.sessionId, 'decide_proposals', { action: 'approve' });
-  const evH6 = await callH6.stream.nextEvent();
-  eq('H6 回 decline → 202', 202, await postElicitResult(token, sE.sessionId, evH6.id, { action: 'decline' }));
-  const evH6Result = await callH6.stream.nextEvent();
-  eq('H6 decline → 工具结果 declined', true, toolJson(evH6Result) && toolJson(evH6Result).declined);
-  eq('H6 decline 不改数据', true, (await pendingIds(admin)).includes(h5));
-  await callH6.stream.close();
-
-  /* ============================================================ 收尾 */
+  console.log(`\nSUMMARY: pass=${results.filter((item) => item.pass).length} fail=${failures} checks=${results.length}`);
 } catch (err) {
   failures += 1;
   console.log(`[FATAL] ${err && err.stack ? err.stack : err}`);
+  console.log(`\nSUMMARY: pass=${results.filter((item) => item.pass).length} fail=${failures} checks=${results.length}`);
 } finally {
-  try { await new Promise((resolve) => server.close(resolve)); } catch { /* 忽略 */ }
-  const passed = results.filter((item) => item.pass).length;
-  const failed = results.filter((item) => !item.pass).length;
-  console.log(`\nSUMMARY: pass=${passed} fail=${failed} checks=${results.length}`);
-  process.exit(failed === 0 && failures === 0 ? 0 : 1);
+  await new Promise((resolve) => server.close(resolve));
+  fs.rmSync(TMP, { recursive: true, force: true });
 }
+if (failures > 0) process.exitCode = 1;

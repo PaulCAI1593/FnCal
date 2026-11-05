@@ -14,6 +14,8 @@
  *   F AI 端批准：开关默认关、关闭时「未知工具」也不允许绕过、
  *     打开后 list/approve/reject、只列本凭据、删除类可批、只读凭据批不了、
  *     改权限后越权被拒、审计 decidedBy=agent + 日志事件。
+ *     （0.4.21 起 approve/reject 只认 elicitation 弹窗点击，本段改为开会话并在弹窗里点；
+ *      无弹窗一律拒绝的契约由 m52 覆盖。）
  */
 
 import fs from 'node:fs';
@@ -80,10 +82,14 @@ async function ai(p, { method = 'GET', token = '', body = undefined } = {}) {
 
 const rpc = (id, method, params) => ({ jsonrpc: '2.0', id, method, params });
 
-async function callTool(token, name, args = {}) {
+async function callTool(token, name, args = {}, sessionId = '') {
   const res = await fetch(`${BASE}/mcp`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+      ...(sessionId ? { 'mcp-session-id': sessionId } : {}),
+    },
     body: JSON.stringify(rpc(9, 'tools/call', { name, arguments: args })),
   });
   const text = await res.text();
@@ -92,6 +98,84 @@ async function callTool(token, name, args = {}) {
   const result = parsed && parsed.result ? parsed.result : null;
   const toolText = result && result.content && result.content[0] ? result.content[0].text : '';
   return { status: res.status, text, body: parsed, result, toolText };
+}
+
+/* 0.4.21：无 elicitation 能力的会话不能批准/拒绝，批准链路必须走弹窗。
+ * 下面四个助手只为本文件 F 段（0.4.13 的 AI 端批准链路）服务，弹窗契约细节由 m49/m52 覆盖。 */
+async function initSession(token, capabilities) {
+  const res = await fetch(`${BASE}/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(rpc(1, 'initialize', { protocolVersion: '2025-06-18', capabilities })),
+  });
+  await res.json();
+  return { sessionId: res.headers.get('mcp-session-id') || '' };
+}
+
+function sseStream(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let ended = false;
+  return {
+    async nextEvent(timeoutMs = 8000) {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        const idx = buffer.indexOf('\n\n');
+        if (idx >= 0) {
+          const block = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const data = block.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+          if (data) {
+            try { return JSON.parse(data); } catch { return { raw: data }; }
+          }
+          continue;
+        }
+        if (ended) return null;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return null;
+        const chunk = await Promise.race([
+          reader.read(),
+          new Promise((resolve) => setTimeout(() => resolve({ __timeout: true }), remaining)),
+        ]);
+        if (chunk.__timeout) return null;
+        if (chunk.done) { ended = true; continue; }
+        buffer += decoder.decode(chunk.value, { stream: true });
+      }
+    },
+    async close() { try { await reader.cancel(); } catch { /* 已断 */ } },
+  };
+}
+
+/** 弹窗里点「批准 / 拒绝」后拿工具结果；返回解析后的 JSON（不是 toolText）。 */
+async function decideWithDialog(token, sessionId, name, args, decision) {
+  const res = await fetch(`${BASE}/mcp`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${token}`,
+      'mcp-session-id': sessionId,
+      accept: 'text/event-stream, application/json',
+    },
+    body: JSON.stringify(rpc(9, 'tools/call', { name, arguments: args })),
+  });
+  const stream = sseStream(res);
+  const elicit = await stream.nextEvent();
+  if (!elicit || elicit.method !== 'elicitation/create') {
+    await stream.close();
+    return { dialog: false, event: elicit };
+  }
+  await fetch(`${BASE}/mcp`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'mcp-session-id': sessionId },
+    body: JSON.stringify({ jsonrpc: '2.0', id: elicit.id, result: { action: 'accept', content: { decision } } }),
+  }).then((item) => item.text());
+  const done = await stream.nextEvent();
+  await stream.close();
+  const text = done && done.result && done.result.content && done.result.content[0] ? done.result.content[0].text : '';
+  let payload = null;
+  try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
+  return { dialog: true, payload };
 }
 
 async function toolsOf(token) {
@@ -389,10 +473,12 @@ try {
   ok('列表含时间/地点字段', 'start' in agentList[0] && 'end' in agentList[0] && 'location' in agentList[0] && agentList[0].allDay === false);
   ok('列表不带 ICS', !agentProposals.toolText.includes('BEGIN:VCALENDAR'));
 
-  // 0.4.17 起 approve/reject 必须先带 confirmed: true（文字确认闸门）；本用例只验证批准链路，
-  // 因此直接带确认位，未确认分支由 m48-mcp-confirmed 覆盖。
-  const approve = await callTool(agent.token, 'approve_proposal', { id: agentList[0].id, confirmed: true });
-  eq('AI 端批准删除类 → 成功', true, JSON.parse(approve.toolText).approved);
+  // 0.4.21：approve/reject 只认 elicitation 弹窗点击；`confirmed` 已废弃，无弹窗会话一律拒绝。
+  // 本用例验证批准链路本身，因此先开会话、在弹窗里点批准；拒绝/确认细则由 m48/m49/m51/m52 覆盖。
+  const agentSession = await initSession(agent.token, { elicitation: { form: {} } });
+  const approve = await decideWithDialog(agent.token, agentSession.sessionId, 'approve_proposal', { id: agentList[0].id }, 'approve');
+  eq('AI 端批准走确认弹窗', true, approve.dialog);
+  eq('AI 端批准删除类 → 成功', true, approve.payload && approve.payload.approved);
   ok('批准后对象被删除', !objectExists(userId, 'default', 'trash-b'));
   const accepted = await raw('/api/v1/ai/proposals?status=accepted', { cookie: admin.cookie });
   const acceptedRow = accepted.body.proposals.find((item) => item.id === agentList[0].id);
@@ -406,12 +492,13 @@ try {
   await callTool(createByAgent.token, 'delete_event', { uid: 'trash-a' });
   const ownList = JSON.parse((await callTool(createByAgent.token, 'list_proposals')).toolText).proposals;
   eq('自建提案 1 条', 1, ownList.length);
-  const wrongOwner = await callTool(agent.token, 'approve_proposal', { id: ownList[0].id, confirmed: true });
+  const wrongOwner = await callTool(agent.token, 'approve_proposal', { id: ownList[0].id }, agentSession.sessionId);
   eq('批准别家凭据的提案 → isError', true, wrongOwner.result.isError);
 
   // 改权限后二次校验：先自建提案，再把 grants 收紧，批准必须失败。
   seed('shrink-a');
   const shrink = await mintCredential(admin, { label: 'AI 批准收紧', grants: { default: 'write' }, agentApproval: true });
+  const shrinkSession = await initSession(shrink.token, { elicitation: { form: {} } });
   await callTool(shrink.token, 'delete_event', { uid: 'shrink-a' });
   const shrinkDeleteRes = await callTool(shrink.token, 'delete_event', { uid: 'writefail-a' });
   const shrinkListRes = await callTool(shrink.token, 'list_proposals');
@@ -424,15 +511,19 @@ try {
     method: 'PATCH', cookie: admin.cookie, csrf: admin.csrf, body: { grants: {} },
   });
   eq('收紧授权 → 200', 200, patch.status);
-  const afterShrink = await callTool(shrink.token, 'approve_proposal', { id: shrinkList[0].id, confirmed: true });
-  eq('改权限后批准被拒', true, afterShrink.result.isError);
+  const afterShrink = await callTool(shrink.token, 'approve_proposal', { id: shrinkList[0].id }, shrinkSession.sessionId);
+  // 收紧 grants 后该提案已不在凭据可见范围：服务端在弹窗之前就按「不属于你的凭据」拒绝（不弹窗、不执行）。
+  ok('改权限后批准被拒（提案不属于该凭据）',
+    afterShrink.result.isError === true && afterShrink.toolText.includes('不属于你的凭据'));
 
   // 拒绝：权限恢复后再次开会话。
   const rejectCred = await mintCredential(admin, { label: 'AI 拒绝', grants: { default: 'write' }, agentApproval: true });
+  const rejectSession = await initSession(rejectCred.token, { elicitation: { form: {} } });
   await callTool(rejectCred.token, 'delete_event', { uid: 'trash-a' });
   const rejectList = JSON.parse((await callTool(rejectCred.token, 'list_proposals')).toolText).proposals;
-  const rejected = await callTool(rejectCred.token, 'reject_proposal', { id: rejectList[0].id, reason: '不需要了', confirmed: true });
-  eq('AI 端拒绝 → 成功', true, JSON.parse(rejected.toolText).rejected);
+  const rejected = await decideWithDialog(rejectCred.token, rejectSession.sessionId, 'reject_proposal', { id: rejectList[0].id, reason: '不需要了' }, 'reject');
+  eq('AI 端拒绝走确认弹窗', true, rejected.dialog);
+  eq('AI 端拒绝 → 成功', true, rejected.payload && rejected.payload.rejected);
   ok('拒绝后对象还在', objectExists(userId, 'default', 'trash-a'));
 
   // 审计与日志：异步 appendFile，轮询最多 3 秒。

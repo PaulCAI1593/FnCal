@@ -10,8 +10,8 @@
  *     客户端回 accept/approve 后执行，审计 confirmation:'elicitation'、日志 confirmedBy:'elicitation'。
  *   D 能力优先：有 elicitation 能力的客户端带 confirmed:true 也**照样弹窗**；decline 不改数据。
  *   E cancel / timeout：都不执行、数据零变化、审计 elicitationAction 对应值。
- *   F 无能力：继续走 0.4.17 的文字确认路径（JSON + confirmation_required）。
- *   G 降级与断流：弹窗写不出去 → 降级文字（不 500）；客户端断流 → 按 cancel 收尾。
+ *   F 无能力：0.4.21 起一律 approval_requires_ui（不再走文字确认），confirmed:true 也拒绝。
+ *   G 降级与断流：弹窗写不出去 → approval_requires_ui（不 500、零执行）；客户端断流 → 按 cancel 收尾。
  *   H 拒绝弹窗：accept + decision:reject 按拒绝处理。
  *   I 会话隔离：别的会话回弹窗结果被丢弃并记日志，原会话仍能正常确认。
  */
@@ -268,7 +268,7 @@ try {
   eq('initialize 状态', 200, s1.status);
   ok('initialize 回 Mcp-Session-Id（32 hex）', /^[0-9a-f]{32}$/.test(s1.sessionId), s1.sessionId);
   ok('instructions 提到 elicitation 弹窗', s1.instructions.includes('elicitation'), s1.instructions);
-  ok('instructions 说明会忽略 confirmed: true', s1.instructions.includes('confirmed: true 会被忽略'));
+  ok('instructions 说明会忽略 confirmed', s1.instructions.includes('服务端一律忽略'));
 
   const withSession = await mcpPost(token, rpc(10, 'tools/list', {}), { 'mcp-session-id': s1.sessionId });
   eq('带会话头 tools/list', 200, withSession.status);
@@ -356,7 +356,10 @@ try {
   const paramsA = (evA && evA.params) || {};
   eq('弹窗 mode=form', 'form', paramsA.mode);
   ok('弹窗正文用服务端摘要（批准+标题）', String(paramsA.message).includes('批准（删除）「弹窗评审」'), String(paramsA.message));
-  ok('弹窗正文含时间', String(paramsA.message).includes('时间：12-03 周四 01:00–02:00'), String(paramsA.message));
+  // 0.4.27（S2）：摘要时间改为与审批页同一套服务端时区（默认 Asia/Shanghai）。
+  // 本事件 DTSTART=2026-12-03T01:00Z，换算后是 09:00–10:00；旧断言按 ICS 字面墙钟
+  // 写 01:00–02:00，正是 S2 要修的显示错误，因此按新口径改（不是放宽断言）。
+  ok('弹窗正文含时间', String(paramsA.message).includes('时间：12-03 周四 09:00–10:00'), String(paramsA.message));
   const schemaA = paramsA.requestedSchema || {};
   eq('requestedSchema 只有一个字段', 'decision', Object.keys(schemaA.properties || {}).join(','));
   eq('decision 枚举 approve/reject', 'approve,reject', String((schemaA.properties || {}).decision.enum));
@@ -431,27 +434,33 @@ try {
   delete process.env.FNCAL_MCP_ELICITATION_TIMEOUT_MS;
   await callD.stream.close();
 
-  /* ============================================================ F 无能力 → 文字确认 */
+  /* ============================================================ F 无能力 → 拒绝批准（0.4.21） */
 
   const s6 = await initSession(token, {});
-  const idE = await makeDeleteProposal(token, admin, { uid: 'elicit-e', summary: '文字确认' });
+  const idE = await makeDeleteProposal(token, admin, { uid: 'elicit-e', summary: '无弹窗拒绝' });
   const textGate = await mcpPost(token, rpc(9, 'tools/call', { name: 'approve_proposal', arguments: { id: idE } }), { 'mcp-session-id': s6.sessionId });
   ok('无能力 → 正常 JSON（不是 SSE）', String(textGate.status) === '200' && String((textGate.result && textGate.result.isError)) === 'true');
-  eq('无能力 → confirmation_required', 'confirmation_required', sc(textGate.result).code);
+  // 0.4.21 §1 S1：无 elicitation 能力的会话禁止批准，`confirmed` 也不再是授权（旧断言改成等强拒绝断言）。
+  eq('无能力 → approval_requires_ui', 'approval_requires_ui', sc(textGate.result).code);
+  eq('无能力 → reason=no_elicitation', 'no_elicitation', sc(textGate.result).reason);
   ok('无能力 → 不弹窗', !textGate.text.includes('elicitation/create'));
   const textOk = await mcpPost(token, rpc(9, 'tools/call', { name: 'approve_proposal', arguments: { id: idE, confirmed: true } }), { 'mcp-session-id': s6.sessionId });
-  const textOkJson = toolJson({ result: textOk.result });
-  eq('无能力 + confirmed → 执行', true, textOkJson && textOkJson.approved);
-  const auditText = await waitLog('audit.log', '"confirmation":"text"');
-  ok('审计 confirmation=text', auditText.includes('"confirmation":"text"'));
+  eq('无能力 + confirmed:true → 同样被拒', 'approval_requires_ui', sc(textOk.result).code);
+  eq('无能力 + confirmed:true → 零执行（仍 pending）', true, (await pendingIds(admin)).includes(idE));
+  ok('无能力 + confirmed:true → 对象仍在', objectExists(userId, 'default', 'elicit-e'));
+  ok('无能力 → 记 proposal-agent-approval-blocked', (await waitLog('app.log', 'proposal-agent-approval-blocked')).includes('proposal-agent-approval-blocked'));
+  ok('审计不再出现 confirmation=text', !readLogNow('audit.log').includes('"confirmation":"text"'));
 
   /* ============================================================ G 降级 / 断流 */
 
   process.env.FNCAL_MCP_ELICITATION_DISABLE = '1';
   const idF = await makeDeleteProposal(token, admin, { uid: 'elicit-f', summary: '降级文字' });
   const fallback = await mcpPost(token, rpc(9, 'tools/call', { name: 'approve_proposal', arguments: { id: idF } }), { 'mcp-session-id': s4.sessionId });
-  eq('弹窗写不出去 → 降级 200', 200, fallback.status);
-  eq('降级 → confirmation_required（不是 500）', 'confirmation_required', sc(fallback.result).code);
+  eq('弹窗写不出去 → 拒绝 200', 200, fallback.status);
+  // 0.4.21 §1 S4：弹窗写不出去不再降级文字确认，一律 approval_requires_ui、零执行。
+  eq('降级 → approval_requires_ui（不是 500）', 'approval_requires_ui', sc(fallback.result).code);
+  eq('降级 → reason=stream_unavailable', 'stream_unavailable', sc(fallback.result).reason);
+  eq('降级 → 零执行（仍 pending）', true, (await pendingIds(admin)).includes(idF));
   const fallbackLog = await waitLog('app.log', 'mcp-elicitation-fallback');
   ok('降级 → 记 mcp-elicitation-fallback', fallbackLog.includes('mcp-elicitation-fallback'));
   delete process.env.FNCAL_MCP_ELICITATION_DISABLE;

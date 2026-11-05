@@ -3061,6 +3061,146 @@ label,
   min-width: 0;
 }
 
+/* 审批页 PIN（0.4.22 / M4-0.4.22 S1）：4 位数字、掩码；已设置只靠占位与「清除」表达。 */
+.ai-pin__input {
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+/* 0.4.24（M4-0.4.24 §S15）：占位态去掉 0.3em 字距——带字距的「已设置（留空不改）」在 375 宽下
+   仍会溢出被截（实测需要约 182px，输入框内容区 181px），去字距后只需约 144px，可完整显示。
+   输入新 PIN 时恢复字距（掩码 4 位仍按 PIN 风格等距）。 */
+.ai-pin__input:placeholder-shown {
+  letter-spacing: 0;
+}
+.ai-pin__state {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+/* 0.4.24（M4-0.4.24 §S14/S15）：PIN 与令牌行固定单行——左标签、中间输入/掩码、右侧按钮。
+   容器不得换行；输入 `flex:1 1 auto; min-width:0`，按钮不压缩、靠右、触控 ≥44px。
+   ≤520 时标签独占一行（设置页既有单列模式），控件行仍单行，按钮不再折到输入下方。 */
+.ai-editor .settings__row.ai-row--inline {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.ai-editor .ai-row--inline > .settings__label {
+  flex: 0 0 112px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ai-editor .ai-row--inline > .settings__control {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ai-editor .ai-row--inline .ai-pin__input {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.ai-editor .ai-row--inline .ai-pin__state,
+.ai-editor .ai-row--inline .ai-token__mask {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-editor .ai-row--inline .ai-pin__clear,
+.ai-editor .ai-row--inline .ai-token__reset {
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-height: 44px;
+}
+@media (max-width: 520px) {
+  .ai-editor .settings__row.ai-row--inline {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .ai-editor .ai-row--inline > .settings__label {
+    flex: 0 0 auto;
+  }
+}
+
+/* 0.4.23（M4 §S12）：凭据编辑器按区块分组——单列、区块 24px、字段 12px、底部固定操作条。 */
+.ai-editor {
+  max-width: 560px;
+}
+.ai-editor__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+  min-width: 0;
+}
+.ai-editor .ai-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.ai-block__title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+}
+.ai-block__hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.ai-editor .settings__row {
+  gap: var(--sp-3);
+}
+.ai-editor__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding-top: var(--sp-3);
+  padding-bottom: var(--sp-2);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.ai-editor__footer .btn {
+  min-height: 44px;
+}
+.ai-editor__footer .ai-editor__save {
+  flex: 1 1 auto;
+}
+.ai-editor .ai-approval__switch,
+.ai-editor .ai-pin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.ai-token__mask {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-2);
+  word-break: break-all;
+}
+.ai-token__reset,
+.ai-editor__delete {
+  min-height: 44px;
+}
+@media (max-width: 520px) {
+  .ai-editor__footer .btn {
+    flex: 1 1 100%;
+  }
+}
+
 /* 最近删除（M21 §5）：与提案清单 1px 分隔；行两行式，不复用卡片类。 */
 .ai-trash {
   margin-top: var(--sp-3);

@@ -35,6 +35,9 @@ import { createCalendarsApi } from './api/calendars.mjs';
 import { createAiApi } from './api/ai.mjs';
 import { createAiRest } from './api/ai-rest.mjs';
 import { createMcp } from './api/mcp.mjs';
+import { createApprovalPage, APPROVAL_PAGE_PREFIX } from './api/approval-page.mjs';
+import { DEFAULT_ACCENT } from './lib/accent.mjs';
+import { createApprovalLinks } from './lib/approval-link.mjs';
 import { createAiService } from './lib/ai-service.mjs';
 import { createAiTrash } from './lib/ai-trash.mjs';
 import { createAiRateLimiter } from './lib/ai-rate-limit.mjs';
@@ -72,7 +75,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 开关对比度、迷你月历点线、年视图换行断开、「四日」）——同样是纯前端。
 // 0.2.18：C 批七条（年视图圆几何、迷你点线一整条、四视图拼接条与箭头方向、
 // 搜索面板加宽、编辑弹窗农历日期选择、搜索胶囊圆头等高）——同样是纯前端。
-export const VERSION = '0.4.19';
+export const VERSION = '0.4.28';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -459,6 +462,35 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   const aiService = createAiService({ aiStore, health: healthState, trash: aiTrash });
   const aiRateLimiter = createAiRateLimiter();
   const aiRest = createAiRest({ aiStore, aiService, audit, logger, health: healthState, limiter: aiRateLimiter });
+  // 0.4.22（M4 §S2–S3）：无弹窗客户端的一次性审批链接；MCP 生成、审批页消费，同一个内存表。
+  // 0.4.25（S4）：审批链接落盘到账号数据目录，重启后未过期链接仍可用（只存哈希）。
+  const approvalLinks = createApprovalLinks({
+    file: path.join(config.varDir, '.data', 'ai-approval-links.json'),
+  });
+  // 0.4.26（S13–S15）：审批页只读用户的主题色与明暗两个字段，用来给服务端
+  // 渲染的 HTML 注入同一套 accent 变量与 data-theme。读失败/无设置一律回落
+  // 默认色 + 跟随系统，不阻塞页面（S15）。
+  const readAccent = async (userId) => {
+    try {
+      const settings = await runWithContext({ userId }, () => store.readUserData('settings'));
+      const accentColor = settings && typeof settings.accentColor === 'string' ? settings.accentColor : DEFAULT_ACCENT;
+      const theme = settings && (settings.theme === 'dark' || settings.theme === 'light') ? settings.theme : 'system';
+      return { accentColor, theme };
+    } catch (err) {
+      logger.warn('审批页读取主题设置失败，回落默认主题', { error: String(err && err.message ? err.message : err) });
+      return { accentColor: DEFAULT_ACCENT, theme: 'system' };
+    }
+  };
+  const approvalPage = createApprovalPage({
+    aiStore,
+    aiService,
+    approvalLinks,
+    audit,
+    logger,
+    // 页面按来源 IP 限速 60 次/分钟（规则 ⑥）；与凭据限流分开，避免互相挤占。
+    rateLimiter: createAiRateLimiter(),
+    readAccent,
+  });
   const mcpApi = createMcp({
     aiStore,
     aiService,
@@ -467,6 +499,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     health: healthState,
     version: VERSION,
     limiter: aiRateLimiter,
+    approvalLinks,
   });
   const apiHandler = createApiHandler({
     version: config.version,
@@ -517,6 +550,26 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     () => davHandler(req, res),
   );
 
+  /**
+   * 0.4.25（S3）：审批链接的绝对地址。反向代理会加 X-Forwarded-Proto /
+   * X-Forwarded-Host；存在且合法时优先，否则回退到本地解析结果。proto 非法
+   * （如 ftp）时整组转发头都不可信，直接回退，避免拼出怪链接。
+   */
+  function requestOrigin(req, source) {
+    const first = (name) => {
+      const raw = req.headers ? req.headers[name] : undefined;
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      return typeof value === 'string' ? value.split(',')[0].trim() : '';
+    };
+    const fallback = `${source.proto || 'http'}://${String(req.headers.host || '').trim() || 'localhost'}`;
+    const protoRaw = first('x-forwarded-proto').toLowerCase();
+    if (protoRaw && protoRaw !== 'http' && protoRaw !== 'https') return fallback;
+    const host = first('x-forwarded-host').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    const proto = protoRaw || (host ? (source.proto || 'http') : '');
+    if (host) return `${proto}://${host}`;
+    if (protoRaw) return `${protoRaw}://${String(req.headers.host || '').trim() || 'localhost'}`;
+    return fallback;
+  }
   /**
    * 单请求处理。TCP listener 走完整路由（DAV + API + 静态）；统一网关的 Unix
    * socket listener 只处理 API 与静态（DAV 客户端用 Basic，不能走 NAS 会话网关），
@@ -709,8 +762,36 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
         });
       });
       return guarded(
-        () => runWithContext({ userId: null }, () => mcpApi.handle(req, res, { remoteAddress: source.ip || null })),
+        () => runWithContext({ userId: null }, () => mcpApi.handle(req, res, {
+          remoteAddress: source.ip || null,
+          // 0.4.22（M4 §S2）：审批链接要绝对地址；协议取可信解析结果，Host 取请求头。
+          origin: requestOrigin(req, source),
+        })),
         'mcp',
+      );
+    }
+
+    // 0.4.22（M4 §S3）：一次性审批网页 `/a/<token>`。必须早于 `/api/` 与 DAV 分支，
+    // 否则 POST 会被判成 CalDAV 请求走 Basic 认证；页面本身不登录、不带 API。
+    if (pathname.startsWith(APPROVAL_PAGE_PREFIX)) {
+      const start = Date.now();
+      res.on('finish', () => {
+        logger.access({
+          method: req.method,
+          path: '/a/[token]',
+          status: res.statusCode,
+          ms: Date.now() - start,
+          ua: req.headers['user-agent'] ?? null,
+          remoteAddress: source.ip || null,
+          gateway: gateway || undefined,
+        });
+      });
+      return guarded(
+        () => runWithContext({ userId: null }, () => approvalPage.handle(req, res, {
+          pathname,
+          remoteAddress: source.ip || null,
+        })),
+        'approval-page',
       );
     }
 

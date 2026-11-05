@@ -19,6 +19,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { hashSecret, randomToken, verifySecretHash } from '../security/tokens.mjs';
+// 0.4.22（M4 §S1）：审批页 PIN，只存 bcrypt 哈希（与登录口令同一套实现）。
+import { hashPin } from './pin.mjs';
 import { runWithContext } from './request-context.mjs';
 import { normalizeRetentionDays } from './ai-trash.mjs';
 import {
@@ -160,6 +162,9 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     deleteMode: credential.deleteMode,
     grants: credential.grants,
   });
+  // 0.4.23（M4 §S13/A11）：存量凭据兼容——没有提案模式时对外按「代办批准关闭、未设 PIN」读。
+  const approvalEffective = credential.agentApproval === true
+    && (writeModeOf(credential) === 'proposal' || deleteModeOf(credential) === 'proposal');
   return {
     id: credential.id,
     label: credential.label,
@@ -171,7 +176,9 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     // 0.4.13（M4 §2 硬规则①）：删除模式按凭据返回；旧凭据补默认 proposal。
     deleteMode: deleteModeOf(credential),
     // 0.4.13（M4 §4）：允许 AI 助手经 MCP 批准该凭据自己产生的提案；默认关。
-    agentApproval: credential.agentApproval === true,
+    agentApproval: approvalEffective,
+    // 0.4.22（M4 §S1）：审批页是否需要 PIN；只回「是否已设置」，绝不回显哈希或 PIN。
+    pinSet: approvalEffective && Boolean(credential.pinHash),
     rateLimit: Number.isFinite(Number(credential.rateLimit)) ? Number(credential.rateLimit) : 60,
     createdAt: credential.createdAt || null,
     lastUsedAt: credential.lastUsedAt || null,
@@ -422,19 +429,28 @@ export function createAiStore({
     const grants = normalizeGrantsInput(input.grants, calendarIds);
     const token = mintToken();
     const createdAt = new Date(now()).toISOString();
+    // 0.4.23（M4 §S13）：代办批准只在至少一项操作方式为「提案」时有意义；否则强制关闭。
+    const approvalAllowed = limits.writeMode === 'proposal' || limits.deleteMode === 'proposal';
+    const agentApproval = input.agentApproval === true && approvalAllowed;
+    // 0.4.22（M4 §S1）：PIN 可选；给了就必须是 4 位数字，存 bcrypt 哈希，明文不落盘。
+    // 0.4.23（M4 §S11/S13）：代办批准关闭时忽略 PIN，也不保留任何 PIN 哈希。
+    const pinHash = !agentApproval || input.pin === undefined || input.pin === null || input.pin === ''
+      ? null
+      : await hashPin(input.pin);
     const credential = {
       id: randomUUID(),
       ownerId: userId,
       label,
       tokenHash: hashSecret(token),
       tokenHint: tokenHintOf(token),
+      pinHash,
       grants,
       timeWindow: limits.timeWindow,
       fieldMask: limits.fieldMask,
       writeMode: limits.writeMode,
       // 0.4.13（M4 §2 硬规则①）：删除模式跟凭据走，默认 proposal。
       deleteMode: limits.deleteMode,
-      agentApproval: input.agentApproval === true,
+      agentApproval,
       rateLimit: normalizeRateLimit(input.rateLimit),
       createdAt,
       lastUsedAt: null,
@@ -492,6 +508,23 @@ export function createAiStore({
     // 0.4.13（M4 §4）：AI 端批准开关；只认布尔，其它值当 false（不悄悄打开）。
     if (patch.agentApproval !== undefined) {
       target.agentApproval = patch.agentApproval === true;
+    }
+    // 0.4.23（M4 §S11/S13）：没有提案模式时代办批准无效 → 关闭并清 PIN（改动模式或开关都要归一化）。
+    const approvalAllowed = target.writeMode === 'proposal' || target.deleteMode === 'proposal';
+    if (patch.writeMode !== undefined || patch.deleteMode !== undefined || patch.agentApproval !== undefined
+      || patch.pin !== undefined || patch.clearPin !== undefined) {
+      if (!approvalAllowed || target.agentApproval !== true) {
+        target.agentApproval = false;
+        target.pinHash = null;
+      }
+    }
+    // 0.4.22（M4 §S1）：PIN 可改、可清；空字符串 = 不改，clearPin:true = 清空。
+    if (approvalAllowed && target.agentApproval === true) {
+      if (patch.clearPin === true) {
+        target.pinHash = null;
+      } else if (patch.pin !== undefined && patch.pin !== null && patch.pin !== '') {
+        target.pinHash = await hashPin(patch.pin);
+      }
     }
     await saveCredentials(userId, file);
     logEvent('ai-credential-updated', { userId, id });

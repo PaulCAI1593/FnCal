@@ -1,7 +1,7 @@
 ---
 name: fncal-mcp
-description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user picks all-at-once or one-by-one. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.4.19
+description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
+version: 0.4.28
 user-invocable: true
 license: MIT
 ---
@@ -76,8 +76,17 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 - `deleteMode` governs delete only, and is separate from `writeMode`. `proposal` (default) records a pending delete proposal. `trash` deletes **immediately**: the event disappears from the calendar and goes to FnCal's trash for the retention period (default 7 days), where the user can restore it. The result is `{ "applied": true, "deleted": true, "calendarId": … }`.
 - **You cannot restore or empty the trash.** Only the user can, in FnCal. In trash mode do not say "deletion is irreversible" — say the event was moved to FnCal's trash and can be restored there until the retention period ends.
 - Proposals expire 24 hours after creation; accepting one can fail with an ETag conflict if the event changed in the meantime (another device, CalDAV client, or the web UI).
-- **In-conversation proxy approval** (`agentApproval`, off by default per credential): when the user turns it on, you may list your own pending proposals with `list_proposals` and settle them with `approve_proposal` / `reject_proposal` — but only inside the conversation, as the user's proxy. **Always show the proposal summary (title, time, action, effect) and ask the user to approve or reject first; wait for an explicit yes. Never self-approve, never decide on your own, and never batch silently — one proposal per request.** When the switch is off, those calls fail with `凭据未开启 AI 端代办批准，请到 FnCal 设置里打开，或在日历界面批准` — report that sentence and leave the decision to the human.
-  **Every `approve_proposal` / `reject_proposal` call must carry `confirmed: true`.** Without it the server answers `confirmation_required` together with a server-built `summary`: show that summary to the user (do not rewrite it), ask once, and only retry with `confirmed: true` after an explicit yes. If the client declares MCP elicitation, FnCal sends `elicitation/create` during the call and the user clicks approve / reject / cancel there — do not ask twice in text, just report the outcome. Decline, cancel and timeout never change calendar data.
+- **In-conversation proxy approval** (`agentApproval`, off by default per credential): when the user turns it on, you may list your own pending proposals with `list_proposals` and settle them with `approve_proposal` / `reject_proposal` — but only inside the conversation, as the user's proxy. **The click inside FnCal's own confirmation popup is the only authorization the server accepts.** Show the proposal summary (title, time, action, effect) before you call, but never treat a chat "yes" as that click: without an elicitation popup the call is refused and the reply carries an **approval link** (`approvalUrl`); hand that link to the user — they open it in a browser and settle the proposals there. The page is the same proposal list FnCal shows: a 刷新 button, 全部批准 / 全部拒绝 in the toolbar when 2+ are still pending, and a 批准 / 拒绝 pair on every card. The link lives 10 minutes, and each proposal bound to it can be settled once. If the credential has a 4-digit PIN the page asks for it first (four boxes): never ask the user for the PIN, never repeat it, never guess it. Never self-approve, never decide on your own, never batch silently. When the switch is off, those calls fail with `凭据未开启 AI 端代办批准，请到 FnCal 设置里打开，或在日历界面批准` — report that sentence and leave the decision to the human. **Credential editor:** the agent-approval switch only appears when create/update or delete is set to proposal mode; the PIN field appears only while that switch is on, and turning it off clears the saved PIN.
+  **Approval only happens through the popup.** If the client declares MCP elicitation, FnCal sends `elicitation/create` during the call and the user clicks 批准 / 拒绝 / 取消 there — that click is the authorization; report the outcome and do not ask twice in text. **If the client has no elicitation capability, every approval tool answers `isError: true`, `code: "approval_requires_ui"` and executes nothing**; `confirmed: true` is deprecated and is refused as well, so never retry with it and never say the change was made. Give the user the server's `message` and the `approvalUrl`: the link opens the same proposal list FnCal shows — per-card 批准 / 拒绝, 全部批准 / 全部拒绝 and 刷新 in the toolbar; 10 minutes, each proposal once. `confirmed: true` stays refused. Decline, cancel, timeout, and a dropped popup never change calendar data.
+
+**Proposal → link → user decision → verify (the full loop)**
+1. A proposal-mode write changes nothing: the result is `applied: false` plus the `proposal` (`id`, `action`, `summary`). Say "已提交待确认的改动" and name the shape (新建 / 修改 / 删除). In proposal mode `delete_event` behaves the same — the event is still in the calendar and the pending item is a delete proposal.
+   **0.4.27:** if that write result already carries `approvalUrl`, use it directly — hand the summary and link to the user; no extra `decide_proposals` call is needed to get a link. It is minted only when the credential has agent approval on, a write mode is set to proposal, and the client has no elicitation popup. Delete proposals get one too.
+2. A link also exists on demand: call `decide_proposals` with `action: "approve"` and the id(s) the user should see. Without elicitation that call settles nothing — it answers `approval_requires_ui` with `total`, `deleteCount`, `approvalUrl`, `pinRequired`, `expiresIn`. Use it when the write result had no link, or when the previous link expired. Never invent a link, never reuse an expired one, and never try to settle the proposal yourself first.
+3. Post the link and say what it opens: this batch's cards (新建 / 修改 / 删除), whether a PIN is needed, 10 minutes, each proposal settled once. If any card is a delete, say it is permanent (`永久删除，无法恢复`).
+4. The user settles it in the browser. You never open the link, never ask for, repeat or guess the PIN, and never claim the change was made. A chat "OK, approved" is not a decision.
+5. When the user reports back, verify instead of assuming: `list_proposals` must no longer contain those ids, and a read (`get_event` / `list_events`) must show the change applied or the event gone. Report only what those reads show.
+6. Rejected, expired or unsettled proposals leave the calendar untouched. If the link expired while the proposal is still pending, mint a fresh one with `decide_proposals` — the ids stay pending and nothing is lost.
 
 **Rate limit** 60 requests/minute per credential, shared with the plain REST API. Over the limit: HTTP `429` with `Retry-After` seconds. Back off by that many seconds; do not hammer.
 
@@ -95,16 +104,19 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 | `update_event` | write | `uid` (`ifMatch` optional, for ETag safety) |
 | `delete_event` | write | `uid` (proposal or trash — see §2) |
 | `list_proposals` | read (needs agent approval) | — |
-| `approve_proposal` | decide (needs agent approval + `confirmed: true`) | `id`, `confirmed` |
-| `reject_proposal` | decide (needs agent approval) | `id` (`reason` optional) |
-| `decide_proposals` | decide (needs agent approval + a mode the user picked) | `action` (`approve`/`reject`), then `scope` (`all`/`single`) + `confirmed: true` (`ids` for single) |
+| `approve_proposal` | decide (needs agent approval; no popup → `approval_requires_ui` + `approvalUrl`) | `id` (`confirmed` deprecated) |
+| `reject_proposal` | decide (needs agent approval; no popup → `approval_requires_ui` + `approvalUrl`) | `id` (`reason` optional; `confirmed` deprecated) |
+| `decide_proposals` | decide (needs agent approval; mode question only when 2+ are pending; no popup → `approval_requires_ui` + `approvalUrl`) | `action` (`approve`/`reject`); `scope` only when 2+ pending; `ids` for one id (`confirmed` deprecated) |
 
-### Ask the mode before settling anything
+### Ask before settling — and never choose for the user
 
-`decide_proposals` is two-step by design. First call it with no `scope`:
+`decide_proposals` behaves by how many proposals are pending:
 
-- A client that supports elicitation gets a **popup from FnCal**: 全部批准（N 条）/ 逐条审批 / 取消. The choice comes back in the same call — do not ask again.
-- A client without elicitation gets `isError: true`, `code: "mode_required"`, plus `pending` and `deleteCount`. Ask the user in words which they want, then call again with `scope` and `confirmed: true`.
+- **Exactly one pending:** do **not** ask all-or-one-by-one. Call it with `action` only (add the id if you have it). A client with elicitation gets one popup — 批准 / 拒绝 / 取消. Without elicitation you get `isError: true`, `code: "approval_requires_ui"` plus the `summary` and an `approvalUrl`; nothing is settled — send the `message`, the summary and the link; the user confirms on that page (typing the credential PIN if one is set — never ask for it).
+- **Nothing pending:** you get `{ code: "no_proposals", total: 0 }`. Say so; ask nothing.
+- **Two or more pending, no `scope`:** the mode question is real. With elicitation FnCal pops 全部批准（N 条）/ 逐条审批 / 取消 and the choice returns in the same call — do not ask again. Without elicitation you get `code: "approval_requires_ui"` with `total`, `deleteCount` and an `approvalUrl`; nothing is settled — hand the user the link (it approves this batch; deletes are spelled out on the page). Do not ask all-or-one-by-one in chat.
+
+**Never choose the mode for the user.** No default `all`, no "they probably want all approved", no treating a vague "ok" as the mode choice. If the user has not chosen, ask — the server refuses anyway.
 
 `single` takes exactly one id. `all` settles up to 100 and returns one result per proposal — report the summary, not the raw JSON. When the pending set contains deletes, state the count and that deletion cannot be undone (trash mode: recoverable for N days) before you proceed.
 
@@ -120,7 +132,7 @@ Result shape is uniformly `{ content: [{ type: "text", text: "<JSON>" }] }`; a t
 4. **Create with a clear title** (what/who, not "会议"), put the useful context in `description` only if the credential may read/write it — if the field is masked, do not claim you wrote it.
 5. **Report the truncated picture honestly.** If you cannot see a calendar or a field, say what you could see; do not invent the rest.
 6. **Never claim a change is done when it is a proposal.** Read `applied` in the result.
-7. **Never settle a queue on your own initiative.** `decide_proposals` starts by asking the mode; skipping that step is a failure, not a shortcut.
+7. **Never settle a queue on your own initiative, and never choose the mode for the user.** With two or more pending and a popup-capable client, the popup asks; with exactly one, go straight to the single popup. Without elicitation nothing can be settled from the conversation — hand it to FnCal's 提案 panel. Treating a chat "yes" as the click is a failure, not a shortcut.
 
 Worked examples (day plan, scheduling a meeting, moving an event, deleting with confirmation, weekly review): [reference/examples.md](reference/examples.md).
 
@@ -137,7 +149,9 @@ Worked examples (day plan, scheduling a meeting, moving an event, deleting with 
 | `202`/`applied:false` | proposal created, waiting for the human | say so, do not retry |
 | tool `isError`, "删除失败：回收站写入失败，日程未删除" | trash mode, but writing the trash entry failed — the event was **not** deleted | tell the user nothing was deleted; retry later or ask them to use proposal mode |
 | tool `isError`, "删除失败：回收站不可用，日程未删除" | trash storage unavailable on this instance — the event was **not** deleted | report; nothing changed |
-| tool `isError`, `code: "mode_required"` | you called `decide_proposals` before the user picked a mode | show `prompt`, ask all-or-one-by-one in words, then retry with `scope` + `confirmed: true` |
+| tool `isError`, `code: "approval_requires_ui"`, `reason: "no_elicitation"` | this client cannot show FnCal's confirmation popup, so the server refuses to approve anything (any pending count) | relay `message` and `approvalUrl`; the user settles it on that page (PIN if set); do not retry, do not pass `confirmed` |
+| tool `isError`, `code: "approval_requires_ui"`, `reason: "stream_unavailable"` | the client declared elicitation but the popup stream could not be written | relay `message` and `approvalUrl`; nothing was settled — the user settles it on that page |
+| `{ code: "no_proposals", total: 0 }` | nothing is waiting for approval | say so; ask nothing, retry nothing |
 | tool `isError`, "凭据未开启 AI 端批准，请到 FnCal 设置里打开，或在日历界面批准" | this credential may not settle proposals from your side | report as-is; the human approves in FnCal or turns the switch on in 设置 → AI |
 | tool `isError`, "未找到该提案：它可能不存在、已被处理，或不属于你的凭据。" | approval tool: wrong id, already settled, or another credential's proposal | stop; re-list with `list_proposals` once at most |
 | HTTP `401` | token wrong, revoked, or expired by rotation | ask the user for a new credential |

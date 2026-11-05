@@ -1086,7 +1086,9 @@
 }
 @media (hover: hover) and (pointer: fine) {
 .linkified:hover {
-  color: var(--accent-hover);
+  /* 0.4.28（S2）：正文文字用 --accent-link-hover；--accent-hover 已改为按钮态
+     （朝远离文字色方向走），直接当文字色会在浅色深墨主题上掉对比度。 */
+  color: var(--accent-link-hover);
 }
 }
 
