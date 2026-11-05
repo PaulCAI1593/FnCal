@@ -6,7 +6,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 装好之后在浏览器里管理日程；也可以把它当 CalDAV 服务器，让手机、电脑上的日历客户端直接读写同一批日程。
 它还内置 MCP 服务器：Claude、ChatGPT、Cursor 这类 AI 客户端可以接入你的日历，而**能看到哪些日历、能不能写、能读哪段时间，全部由你逐项授权**。
 
-当前版本：**0.5.0**
+当前版本：**0.5.2**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -57,7 +57,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 - **检查更新**：头像菜单「立即同步」下方有「检查更新」；弹窗显示当前版本、更新源（国内加速 / GitHub 直连）与结果，发现新版本可直达下载页
 - 按凭据限流（默认 60 次/分钟，可按凭据调整），审计只记工具名与时间，不记令牌与事件正文
 - **待确认提案看顶栏铃铛**：AI 接入关闭时铃铛隐藏；开启后一直显示——没有待确认是普通描边图标，有待确认变为主题色实心，悬停提示与读屏标签会报条数。点铃铛打开提案队列，处理完最后一条后恢复描边。设置里不再有红点
-- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.5.0.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明。技能包可自升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 gh-proxy / jsDelivr / raw 三个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话
+- 附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.5.2.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明。技能包可自升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 gh-proxy / jsDelivr / raw 三个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话
 - 认证用自定义 Bearer 令牌，不使用 OAuth；客户端需要支持「Streamable HTTP + 自定义 Authorization 头」
 
 **中文与移动端**
@@ -92,7 +92,7 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 从本仓库 Release 下载 `FnCal-0.5.0.fpk`；
+1. 从本仓库 Release 下载 `FnCal-0.5.2.fpk`；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -100,8 +100,8 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.5.0.fpk
-# Windows: Get-FileHash .\FnCal-0.5.0.fpk -Algorithm SHA256
+sha256sum FnCal-0.5.2.fpk
+# Windows: Get-FileHash .\FnCal-0.5.2.fpk -Algorithm SHA256
 ```
 
 期望值见 `SHA256SUMS.txt`（正文内也附了一份）。
@@ -159,7 +159,7 @@ sha256sum FnCal-0.5.0.fpk
 | 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500，只服务弹窗与 `GET /mcp`）。不带会话头的客户端照常可用；批准时返回审批链接（`approval_requires_ui` + `approvalUrl`，列表页、10 分钟、每条一次） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用）。批准只认 FnCal 弹窗点击或一次性审批链接：**无 elicitation 的客户端返回 `approval_requires_ui` + `approvalUrl`、零执行**，`confirmed` 已废弃；有弹窗时 1 条待确认不问模式、2 条以上由 FnCal 弹「全部批准 / 逐条审批」，AI 不得替用户选模式 |
 
-细节与排错见技能包 `FnCal-MCP-Skill-0.5.0.zip` 里的 `reference/setup.md`。
+细节与排错见技能包 `FnCal-MCP-Skill-0.5.2.zip` 里的 `reference/setup.md`。
 
 ---
 
@@ -189,6 +189,7 @@ AI 写入 → applied:false + approvalUrl → 你打开链接 → 批准 / 拒�
 
 - 链接是独立页面 `/a/<一次性令牌>`，10 分钟有效，每条提案只能决定一次。
 - 页面就是应用内「提案队列」的样子：顶部待确认条数与「刷新 / 全部批准 / 全部拒绝」，每条卡片「接受 / 拒绝」。
+- 0.5.2 起你点完「批准」或「拒绝」，AI 不必再回读：服务端向该凭据已打开的 MCP 连接推送一条通知（`notifications/fncal/approval-decision`）；AI 也可以调用 `wait_for_approval` 短暂等你点完，拿到结果就继续；你下次让 AI 做任何一次读取，回包里会带一次 `receipts`（同一条只给一次，保留 24 小时）。回执只含提案号、动作、结果与判定时间，不含令牌、PIN、链接。
 - 页面不含 API 地址、API 令牌与内部字段名；过期后让 AI 重新发起即可。
 - 删除类提案在页面里用红字写明「批准后无法恢复」。
 
@@ -205,7 +206,7 @@ AI 写入 → applied:false + approvalUrl → 你打开链接 → 批准 / 拒�
 
 **6. 技能包**
 
-`FnCal-MCP-Skill-0.5.0.zip` 含完整流程、工具说明与排错。装进 AI 客户端后，「立即更新」只更新技能内容，与服务器版本无关。
+`FnCal-MCP-Skill-0.5.2.zip` 含完整流程、工具说明与排错。装进 AI 客户端后，「立即更新」只更新技能内容，与服务器版本无关。
 
 **7. 界面示例**
 
