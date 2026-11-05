@@ -7,7 +7,7 @@
 <meta name="description" content="FnCal 是飞牛 OS 上的本地优先日历应用：自带 CalDAV 服务，手机与桌面客户端直接同步；AI 助手只能在你授权的范围内提案，改动由你确认；零云依赖，MIT 许可。">
 <meta name="theme-color" content="#f6f8fb">
 <meta property="og:title" content="FnCal · 跑在自己 NAS 上的日历">
-<meta property="og:description" content="飞牛OS 应用，自带 CalDAV 服务，AI 提案需你确认，数据只在本机。">
+<meta property="og:description" content="飞牛OS 应用，自带 CalDAV 服务；AI 提案 → 一次性审批链接 → 你批准，数据只在本机。">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%231d73d6'/%3E%3Cstop offset='.52' stop-color='%231094b7'/%3E%3Cstop offset='1' stop-color='%2302b497'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Crect x='15' y='18' width='34' height='30' rx='5' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M24 14v8M40 14v8M15 27h34' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
@@ -31,7 +31,7 @@
     --font: "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, -apple-system, "Segoe UI", sans-serif;
     --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas, monospace;
     --t-xs: 12px;
-      --t-md: 14px;
+    --t-md: 14px;
     --t-base: 15px;
     --t-lg: 17px;
     --r-sm: 8px;
@@ -63,7 +63,8 @@
     outline-offset: 3px;
     border-radius: 4px;
   }
-  img { max-width: 100%; height: auto; display: block; }
+  img, svg { max-width: 100%; }
+  img { height: auto; display: block; }
   code { font-family: var(--mono); font-size: .92em; }
   h1, h2, h3 { line-height: 1.22; letter-spacing: -.01em; margin: 0; font-weight: 650; }
   p { margin: 0; }
@@ -163,7 +164,7 @@
 
   /* 区块 */
   section.sec { padding: 84px 0; border-top: 1px solid var(--line); }
-  .sec__head { max-width: 30em; }
+  .sec__head { max-width: 32em; }
   .sec__head h2 { font-size: clamp(26px, 3.4vw, 36px); }
   .sec__head p { margin-top: 14px; color: var(--ink-2); }
   .kicker { font-family: var(--mono); font-size: var(--t-xs); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
@@ -203,30 +204,50 @@
     color: var(--ink-2); background: var(--surface);
   }
 
-  /* AI 流程 */
-  .flow { margin: 40px 0 0; padding: 0; list-style: none; display: grid; gap: 14px; counter-reset: step; }
-  .flow__item {
-    position: relative;
-    padding: 20px 22px 20px 58px;
-    background: var(--surface);
+  /* AI 步骤图 */
+  .stepfigs {
+    margin: 36px 0 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 26px 22px;
+  }
+  .stepfig { margin: 0; }
+  .stepfig__frame {
+    padding: 10px;
     border: 1px solid var(--line);
-    border-radius: var(--r-md);
+    border-radius: var(--r-lg);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    overflow: hidden;
   }
-  .flow__item::before {
-    counter-increment: step;
-    content: counter(step);
-    position: absolute; left: 20px; top: 20px;
-    width: 26px; height: 26px;
-    display: grid; place-items: center;
-    border-radius: 50%;
+  .stepfig svg { display: block; width: 100%; height: auto; border-radius: 10px; }
+  .stepfig figcaption { display: flex; gap: 10px; margin-top: 12px; }
+  .stepfig figcaption .n2 {
+    flex: 0 0 auto;
+    font-family: var(--mono); font-size: var(--t-xs); color: var(--ink-3);
+    padding-top: 3px;
+  }
+  .stepfig figcaption strong { color: var(--ink); font-weight: 620; }
+  .stepfig figcaption span { color: var(--ink-2); }
+  .stepfig text { font-family: var(--font); }
+  .stepfig .ts { font-size: 14px; font-weight: 650; fill: var(--ink); }
+  .stepfig .tl { font-size: 12px; fill: var(--ink-3); }
+  .stepfig .tv { font-size: 12px; fill: var(--ink); }
+  .stepfig .tm { font-family: var(--mono); font-size: 12px; fill: var(--ink-3); }
+  .stepfig .ta { font-size: 12px; fill: var(--accent); font-weight: 600; }
+  .stepfig .tw { font-size: 12px; fill: #ffffff; font-weight: 600; }
+
+  .rules { list-style: none; margin: 30px 0 0; padding: 0; display: grid; gap: 12px; max-width: 46em; }
+  .rules li { position: relative; padding-left: 20px; color: var(--ink-2); }
+  .rules li::before {
+    content: ""; position: absolute; left: 2px; top: .62em;
+    width: 6px; height: 6px; border-radius: 50%;
     background: linear-gradient(135deg, var(--brand-1), var(--brand-3));
-    color: #fff;
-    font-family: var(--mono); font-size: var(--t-xs);
   }
-  .flow__item h3 { font-size: var(--t-lg); font-weight: 620; }
-  .flow__item p { margin-top: 6px; color: var(--ink-2); font-size: var(--t-md); line-height: 1.7; }
+  .rules strong { color: var(--ink); font-weight: 600; }
+
   .callout {
-    margin-top: 22px;
+    margin-top: 26px;
     padding: 16px 18px;
     border: 1px solid var(--tint-line);
     background: var(--tint);
@@ -234,10 +255,11 @@
     color: var(--ink-2);
     font-size: var(--t-md);
     line-height: 1.7;
+    max-width: 52em;
   }
   .callout strong { color: var(--ink); }
 
-  table.perm { width: 100%; border-collapse: collapse; margin-top: 40px; font-size: var(--t-md); }
+  table.perm { width: 100%; border-collapse: collapse; margin-top: 36px; font-size: var(--t-md); }
   table.perm caption { text-align: left; font-size: var(--t-md); color: var(--ink-3); padding-bottom: 12px; }
   table.perm th, table.perm td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
   table.perm th { font-family: var(--mono); font-size: var(--t-xs); letter-spacing: .06em; color: var(--ink-3); text-transform: uppercase; font-weight: 500; }
@@ -296,7 +318,7 @@
   details.faq summary::after { content: "+"; font-family: var(--mono); color: var(--ink-3); font-weight: 400; }
   details.faq[open] summary::after { content: "−"; }
   details.faq:not([open]) > *:not(summary) { display: none; }
-  details.faq p { padding-left: 0; padding-bottom: 18px; color: var(--ink-2); max-width: 38em; }
+  details.faq p { padding-bottom: 18px; color: var(--ink-2); max-width: 38em; }
 
   footer.foot { padding: 56px 0 64px; border-top: 1px solid var(--line); }
   .foot__in { display: flex; flex-wrap: wrap; gap: 16px 40px; align-items: center; justify-content: space-between; }
@@ -309,6 +331,7 @@
     .two-col { grid-template-columns: 1fr; gap: 32px; }
     .two-col .col-sticky { position: static; }
     .feat { grid-template-columns: 1fr; }
+    .stepfigs { grid-template-columns: 1fr; }
     .spec { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .spec > div:nth-child(3) { border-left: 0; padding-left: 0; }
     .spec > div:nth-child(n+3) { border-top: 1px solid var(--line); }
@@ -323,7 +346,6 @@
     .asset { grid-template-columns: 1fr; }
     .asset .btn { justify-self: start; }
     h1 { letter-spacing: -.02em; }
-    table.perm { font-size: var(--t-md); }
     table.perm thead { display: none; }
     table.perm tr { display: block; padding: 16px 0; border-bottom: 1px solid var(--line); }
     table.perm td { display: block; border: 0; padding: 0; }
@@ -349,9 +371,9 @@
       <span>FnCal</span>
     </a>
     <nav class="top__nav" aria-label="页面导航">
+      <a href="#ai">AI 助手</a>
       <a href="#why">为什么自托管</a>
       <a href="#features">功能</a>
-      <a href="#ai">AI 助手</a>
       <a href="#install">安装</a>
       <a href="#download">下载</a>
     </nav>
@@ -366,10 +388,10 @@
   <section class="hero wrap">
     <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.4.28</p>
     <h1>日历留在自己的 NAS 上</h1>
-    <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手只能在你的授权范围里提案，每一次改动由你确认。运行时不访问任何第三方云。</p>
+    <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
       <a class="btn btn--primary" href="#download">下载 0.4.28</a>
-      <a class="btn" href="#install">安装与配置</a>
+      <a class="btn" href="#ai">看看 AI 怎么接入</a>
     </div>
     <dl class="spec">
       <div><dt>协议</dt><dd>CalDAV · RFC 4791</dd></div>
@@ -383,6 +405,136 @@
       </div>
       <figcaption>年视图。每个日历一种颜色，左侧可单独隐藏；同一批数据在手机、桌面与 CalDAV 客户端里一致。</figcaption>
     </figure>
+  </section>
+
+  <section class="sec" id="ai">
+    <div class="wrap">
+      <div class="sec__head">
+        <p class="kicker">AI assistant · MCP</p>
+        <h2>让 AI 帮你排日程，<br>但决定权留在你手里</h2>
+        <p>通过 MCP 把 FnCal 接进 AI 助手。它读得到的内容、改得动的范围、写完要不要你点头，全部由一个凭据决定。默认状态下 AI 写不进你的日历：它只会留下提案，等你在 FnCal 里点「接受」，或者把一条一次性审批链接发给你。</p>
+      </div>
+
+      <div class="stepfigs">
+        <figure class="stepfig">
+          <div class="stepfig__frame">
+            <svg viewBox="0 0 320 190" role="img" aria-label="第一步：在 FnCal 里新建 AI 凭据，设定日历授权、时间窗与操作方式">
+              <rect width="320" height="190" fill="#ffffff"/>
+              <text class="ts" x="18" y="30">AI 凭据</text>
+              <text class="tl" x="18" y="47">Cherry Studio · 我的测试</text>
+              <line x1="18" y1="58" x2="302" y2="58" stroke="#e2e7ef"/>
+              <text class="tl" x="18" y="78">日历授权</text>
+              <text class="tv" x="302" y="78" text-anchor="end">我的测试 · 可写</text>
+              <line x1="18" y1="90" x2="302" y2="90" stroke="#e2e7ef"/>
+              <text class="tl" x="18" y="110">时间窗</text>
+              <text class="tv" x="302" y="110" text-anchor="end">过去 7 天 · 未来 90 天</text>
+              <line x1="18" y1="122" x2="302" y2="122" stroke="#e2e7ef"/>
+              <text class="tl" x="18" y="142">新建、修改</text>
+              <rect x="240" y="130" width="62" height="18" rx="9" fill="#eef6fa" stroke="#cfe4ef"/>
+              <text class="ta" x="271" y="143" text-anchor="middle">提案</text>
+              <line x1="18" y1="156" x2="302" y2="156" stroke="#e2e7ef"/>
+              <text class="tl" x="18" y="176">删除</text>
+              <text class="tv" x="302" y="176" text-anchor="end">提案 · 24 小时内有效</text>
+            </svg>
+          </div>
+          <figcaption><span class="n2">01</span><span><strong>先定边界</strong>　哪些日历可见、能看多久、哪些字段可读，都在凭据里一次设好。</span></figcaption>
+        </figure>
+
+        <figure class="stepfig">
+          <div class="stepfig__frame">
+            <svg viewBox="0 0 320 190" role="img" aria-label="第二步：AI 在对话里提出改动，返回一条待确认提案">
+              <defs><linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#1d73d6"/><stop offset=".52" stop-color="#1094b7"/><stop offset="1" stop-color="#02b497"/>
+              </linearGradient></defs>
+              <rect width="320" height="190" fill="#ffffff"/>
+              <circle cx="30" cy="34" r="11" fill="url(#ag)"/>
+              <text class="ts" x="50" y="30" font-size="11">AI 助手</text>
+              <text class="tl" x="50" y="46">FnCal MCP · 已连接</text>
+              <rect x="18" y="58" width="284" height="42" rx="10" fill="#f3f6fb"/>
+              <text class="tv" x="32" y="76">把「产品评审」改到周五 15:00，可以吗？</text>
+              <text class="tm" x="32" y="91">applied: false · 等待你确认</text>
+              <rect x="18" y="112" width="284" height="60" rx="10" fill="#ffffff" stroke="#e2e7ef"/>
+              <rect x="18" y="112" width="4" height="60" rx="2" fill="#1094b7"/>
+              <text class="tv" x="34" y="132" font-weight="600">产品评审</text>
+              <text class="tl" x="34" y="148">11-06 周五 15:00–15:30</text>
+              <text class="tl" x="34" y="163">提案 · 修改 · 24 小时内有效</text>
+            </svg>
+          </div>
+          <figcaption><span class="n2">02</span><span><strong>AI 只提案</strong>　新建、修改、删除都先返回待确认提案，附上改什么、改在哪、什么时候。</span></figcaption>
+        </figure>
+
+        <figure class="stepfig">
+          <div class="stepfig__frame">
+            <svg viewBox="0 0 320 205" role="img" aria-label="第三步：拿到一次性审批链接，在浏览器里逐条批准或拒绝">
+              <rect width="320" height="205" fill="#ffffff"/>
+              <rect x="18" y="14" width="284" height="26" rx="13" fill="#f3f6fb" stroke="#e2e7ef"/>
+              <circle cx="33" cy="27" r="4" fill="#c3cdd9"/>
+              <text class="tm" x="46" y="31">caldav.example/a/7Qk2…</text>
+              <text class="tm" x="290" y="31" text-anchor="end">10:00</text>
+              <text class="ts" x="18" y="66" font-size="13">提案队列</text>
+              <text class="tl" x="18" y="84">待确认 1 条 · 10 分钟内有效</text>
+              <rect x="18" y="96" width="284" height="90" rx="10" fill="#ffffff" stroke="#e2e7ef"/>
+              <rect x="18" y="96" width="4" height="90" rx="2" fill="#1094b7"/>
+              <text class="tv" x="34" y="118" font-weight="600">产品评审</text>
+              <text class="tl" x="34" y="138">11-06 周五 15:00–15:30</text>
+              <rect x="188" y="152" width="46" height="22" rx="11" fill="#0e63b8"/>
+              <text class="tw" x="211" y="167" text-anchor="middle">批准</text>
+              <rect x="242" y="152" width="46" height="22" rx="11" fill="#ffffff" stroke="#e2e7ef"/>
+              <text class="tl" x="265" y="167" text-anchor="middle" fill="#c22a2f">拒绝</text>
+              <text class="tm" x="18" y="203">每条只能处理一次 · 页面里没有 API 地址</text>
+            </svg>
+          </div>
+          <figcaption><span class="n2">03</span><span><strong>链接交给你</strong>　AI 把 <code>/a/…</code> 链接发给你；打开就是提案列表，逐条或批量处理。</span></figcaption>
+        </figure>
+
+        <figure class="stepfig">
+          <div class="stepfig__frame">
+            <svg viewBox="0 0 320 200" role="img" aria-label="第四步：批准后立即生效，并写入审计日志">
+              <defs><linearGradient id="okg" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#1d73d6"/><stop offset=".52" stop-color="#1094b7"/><stop offset="1" stop-color="#02b497"/>
+              </linearGradient></defs>
+              <rect width="320" height="200" fill="#ffffff"/>
+              <circle cx="160" cy="52" r="24" fill="url(#okg)"/>
+              <path d="M149 52l7 8 15-16" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              <text x="160" y="96" text-anchor="middle" class="ts" font-size="15">已批准，变更已生效</text>
+              <text x="160" y="116" text-anchor="middle" class="tl">「产品评审」已从 14:00 改到 15:00</text>
+              <line x1="40" y1="134" x2="280" y2="134" stroke="#e2e7ef"/>
+              <text class="tm" x="40" y="154">approval-link-decision · pin ✓</text>
+              <text class="tm" x="40" y="176">ai-change-applied · 11-05 21:15</text>
+            </svg>
+          </div>
+          <figcaption><span class="n2">04</span><span><strong>你点才算数</strong>　批准后立即写入日历，每一次批准、拒绝都留审计记录。</span></figcaption>
+        </figure>
+      </div>
+
+      <ul class="rules">
+        <li><strong>提案 24 小时有效。</strong>过期后让 AI 重新发起，原提案不会自动执行。</li>
+        <li><strong>审批链接 10 分钟有效，每条提案只能处理一次。</strong>全部处理完、到期、或 PIN 连错 5 次，链接失效。</li>
+        <li><strong>PIN 是可选的 4 位数字。</strong>给凭据设了 PIN，打开链接要先输；连续错 5 次这条链接作废。</li>
+        <li><strong>链接不是接口。</strong><code>/a/&lt;一次性令牌&gt;</code> 只返回一张 HTML 提案页，页面与链接里都没有 API 地址；服务端只存令牌哈希。</li>
+        <li><strong>支持弹窗的客户端走弹窗。</strong>能力具备时在对话里弹出「批准 / 拒绝 / 取消」，不签发链接；两条路径都不接受 AI 替你做决定。</li>
+      </ul>
+
+      <div class="callout">
+        <strong>两点要说明。</strong>一，<strong>不要把 PIN 告诉 AI 助手</strong>——PIN 是给你自己用的。二，没设 PIN 的凭据，链接谁拿到谁就能批；要更稳妥就给凭据设 PIN，并且只把链接转发给自己。
+      </div>
+
+      <table class="perm">
+        <caption>每个 AI 凭据单独设置权限，改完立即生效。</caption>
+        <thead>
+          <tr><th scope="col">设置</th><th scope="col">可选值</th><th scope="col">作用</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>日历授权</td><td>不可见 / 只读 / 可写</td><td>不可见的日历对 AI 等同于不存在，连名字也看不到</td></tr>
+          <tr><td>时间窗</td><td>过去 N 天 / 未来 N 天，可不限</td><td>只读范围内的日程，超出范围的查询返回空</td></tr>
+          <tr><td>字段开关</td><td>标题、时间必给；地点、描述、参与者可选</td><td>连地点与参与人都可设为 AI 不可见</td></tr>
+          <tr><td>新建、修改</td><td>提案 / 直接通过</td><td>默认提案；直接通过等于把写入权交给 AI</td></tr>
+          <tr><td>删除</td><td>提案 / 回收站</td><td>回收站模式下删除可恢复，保留期内可取回</td></tr>
+        </tbody>
+      </table>
+
+      <p style="margin-top:26px;font-size:var(--t-md);color:var(--ink-2)">客户端：凡支持自定义 MCP 的都能接，如 Claude Desktop、Cherry Studio。配置与令牌见 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/README.md">README</a>；AI 技能包随 Release 附带，可在客户端里「立即更新」。</p>
+    </div>
   </section>
 
   <section class="sec" id="why">
@@ -463,52 +615,6 @@
           <dd>明暗跟随系统或手动指定，主题色可选预设或自定义；每周开始日、显示周数、时区都可调。设置页页脚显示当前版本号。</dd>
         </div>
       </dl>
-    </div>
-  </section>
-
-  <section class="sec" id="ai">
-    <div class="wrap">
-      <div class="sec__head">
-        <p class="kicker">AI assistant</p>
-        <h2>AI 提案，你批准</h2>
-        <p>通过 MCP 接入 AI 助手（Claude Desktop、Cherry Studio 等支持自定义 MCP 的客户端）。默认状态下 AI 写不进你的日历——它只会留下提案，等你在 FnCal 里点「接受」，或者拿到一条一次性审批链接。</p>
-      </div>
-
-      <div style="margin-top:40px;max-width:780px">
-        <div>
-          <ol class="flow">
-            <li class="flow__item">
-              <h3>AI 提出改动</h3>
-              <p>调用新建或修改工具时，先返回一条待确认提案（<code>applied: false</code>），说明改什么、改在哪本日历、什么时候。提案 24 小时有效。</p>
-            </li>
-            <li class="flow__item">
-              <h3>拿到一次性审批链接</h3>
-              <p>客户端不支持弹窗确认时，服务端同时签发 <code>/a/&lt;一次性令牌&gt;</code>：10 分钟有效、每条提案只能处理一次、页面里没有 API 地址。打开就是提案列表，逐条或批量处理。</p>
-            </li>
-            <li class="flow__item">
-              <h3>由你点「批准 / 拒绝」</h3>
-              <p>每次决策写审计日志；链接过期或已用完会返回「已处理 / 已过期」，不会执行。过期后让 AI 重新签发即可。</p>
-            </li>
-          </ol>
-          <div class="callout">
-            <strong>PIN 是可选项。</strong>给凭据设 4 位 PIN 后，打开审批链接要先输 PIN；没设 PIN 的凭据，链接谁拿到谁能批——所以<strong>不要把 PIN 告诉 AI</strong>，也按需决定要不要设。
-          </div>
-        </div>
-      </div>
-
-      <table class="perm">
-        <caption>每个 AI 凭据单独设置权限，改完立即生效。</caption>
-        <thead>
-          <tr><th scope="col">设置</th><th scope="col">可选值</th><th scope="col">作用</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>日历授权</td><td>不可见 / 只读 / 可写</td><td>不可见的日历对 AI 等同于不存在，连名字也看不到</td></tr>
-          <tr><td>时间窗</td><td>过去 N 天 / 未来 N 天，可不限</td><td>只读范围内的日程，超出范围的查询返回空</td></tr>
-          <tr><td>字段开关</td><td>标题、时间必给；地点、描述、参与者可选</td><td>连地点与参与人都可设为 AI 不可见</td></tr>
-          <tr><td>新建、修改</td><td>提案 / 直接通过</td><td>默认提案；直接通过等于把写入权交给 AI</td></tr>
-          <tr><td>删除</td><td>提案 / 回收站</td><td>回收站模式下删除可恢复，保留期内可取回</td></tr>
-        </tbody>
-      </table>
     </div>
   </section>
 
