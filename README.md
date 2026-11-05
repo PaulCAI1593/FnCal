@@ -12,6 +12,8 @@ FnCal 是给 fnOS 用的日历应用：界面全中文，账号与日程都在�
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
 [![Platform](https://img.shields.io/badge/platform-fnOS%20%C2%B7%20Linux-4D6BFE)](https://www.fnnas.com/)
 
+**项目页面**：<https://paulcai1593.github.io/FnCal/>
+
 ---
 
 ## 功能
