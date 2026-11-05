@@ -24,9 +24,9 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        VERSION: "${FNCAL_VERSION:-0.4.28}"
+        VERSION: "${FNCAL_VERSION:-0.5.0}"
         REVISION: "${FNCAL_REVISION:-unknown}"
-    image: "fncal:${FNCAL_VERSION:-0.4.28}"
+    image: "fncal:${FNCAL_VERSION:-0.5.0}"
     container_name: fncal
     restart: unless-stopped
     # 默认 root 启动：入口脚本先按 PUID/PGID 改 /data 属主，再 su-exec 降权。
