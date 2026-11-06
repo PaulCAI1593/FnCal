@@ -371,6 +371,9 @@
   .shots2 { margin-top: 34px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
   .shots2 .shot { margin: 0; }
   .shot--phone { max-width: 340px; }
+  .shots3 { margin-top: 34px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; align-items: start; }
+  .shots3 .shot { margin: 0; }
+  .shots3 .shot__frame img { aspect-ratio: 820 / 1664; object-fit: cover; object-position: top center; }
 
   /* 小标题 */
   h3.sub { margin-top: 34px; font-size: var(--t-lg); font-weight: 620; }
@@ -378,6 +381,8 @@
   @media (max-width: 860px) {
     .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .shots2 { grid-template-columns: 1fr; }
+    .shots3 { grid-template-columns: 1fr; gap: 26px; }
+    .shots3 .shot { max-width: 340px; }
   }
   @media (max-width: 640px) {
     .cards, .cards--2 { grid-template-columns: 1fr; }
@@ -474,12 +479,26 @@
           <figcaption>在 AI 客户端里添加自定义 MCP：填连接地址与 Bearer 令牌。</figcaption>
         </figure>
       </div>
-      <figure class="shot shot--phone">
-        <div class="shot__frame">
-          <img src="screenshots/ai-chat.jpg" alt="手机端 AI 对话界面：用户问去过多少省市，助手按日历口径列出城市清单" width="820" height="1664">
-        </div>
-        <figcaption>手机端的 AI 对话：它读的是你授权范围内的日程，回答能对上日历里的记录。</figcaption>
-      </figure>
+      <div class="shots3">
+        <figure class="shot">
+          <div class="shot__frame">
+            <img src="screenshots/ai-today-brief.jpg" alt="AI 客户端的当日简报：读取 FnCal 日程后，把当天唯一的约球整理成一条时间线与出行提醒" width="881" height="1792">
+          </div>
+          <figcaption>AI 客户端的当日简报：读 FnCal 里的日程，把当天唯一一场约球整理成时间线与出发提醒。</figcaption>
+        </figure>
+        <figure class="shot">
+          <div class="shot__frame">
+            <img src="screenshots/ai-today-habits.jpg" alt="AI 客户端从历年日程里提炼出的看展兴趣梯队：建筑与城市遗产为第一梯队，并给出每类到访节奏" width="881" height="1792">
+          </div>
+          <figcaption>同一客户端从多年日程里提炼习惯：看展几乎每月一次，重心在建筑与城市遗产。</figcaption>
+        </figure>
+        <figure class="shot">
+          <div class="shot__frame">
+            <img src="screenshots/ai-chat.jpg" alt="手机端 AI 对话界面：用户问去过多少省市，助手按日历口径列出城市清单" width="820" height="1664">
+          </div>
+          <figcaption>手机端的 AI 对话：它读的是你授权范围内的日程，回答能对上日历里的记录。</figcaption>
+        </figure>
+      </div>
     </div>
   </section>
 
