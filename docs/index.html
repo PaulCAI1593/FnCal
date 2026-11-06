@@ -93,7 +93,7 @@
   .brand:hover { color: var(--ink); text-decoration: none; }
   .mark { width: 28px; height: 28px; flex: 0 0 auto; }
   nav.top__nav { display: flex; gap: 8px; margin-left: auto; font-size: var(--t-md); }
-  nav.top__nav a { color: var(--ink-2); padding: 9px 8px; border-radius: 6px; }
+  nav.top__nav a { color: var(--ink-2); padding: 9px 8px; border-radius: 6px; white-space: nowrap; }
   nav.top__nav a:hover { color: var(--ink); background: #eef1f6; text-decoration: none; }
   .top__gh {
     display: inline-flex; align-items: center; gap: 7px;
@@ -202,6 +202,7 @@
   .feat__row dt { font-family: var(--mono); font-size: var(--t-xs); letter-spacing: .04em; color: var(--ink-3); padding-top: 3px; }
   .feat__row dd { margin: 0; color: var(--ink-2); }
   .feat__row dd strong { color: var(--ink); font-weight: 600; }
+  .feat--list { grid-template-columns: 1fr; }
   .views { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
   .views span {
     font-size: var(--t-md); padding: 3px 10px;
@@ -280,6 +281,7 @@
     width: 26px; height: 26px; display: grid; place-items: center;
   }
   .steps strong { font-weight: 600; }
+  .steps > li > div { max-width: 42em; }
   pre.code {
     margin: 18px 0 0;
     padding: 16px 18px;
@@ -293,6 +295,7 @@
     line-height: 1.65;
   }
   pre.code span { color: #8fa3bf; }
+  pre.code.code--wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 
   /* 下载 */
   .assets { margin-top: 36px; display: grid; gap: 12px; }
@@ -331,6 +334,16 @@
   .foot__links { display: flex; flex-wrap: wrap; gap: 6px 24px; font-size: var(--t-md); }
   .foot__links a { display: inline-block; padding: 6px 2px; }
   .foot__note { margin-top: 22px; font-size: var(--t-md); color: var(--ink-3); max-width: 46em; }
+
+  /* 顶栏导航：窄屏收起，中屏收紧 */
+  @media (max-width: 700px) {
+    nav.top__nav { display: none; }
+    .top__gh { margin-left: auto; }
+  }
+  @media (min-width: 701px) and (max-width: 900px) {
+    nav.top__nav { gap: 4px; font-size: 13px; }
+    nav.top__nav a { padding: 8px 6px; }
+  }
 
   @media (max-width: 860px) {
     .two-col { grid-template-columns: 1fr; gap: 32px; }
@@ -409,6 +422,7 @@
       <a href="#ai">四步</a>
       <a href="#features">特色</a>
       <a href="#install">安装</a>
+      <a href="#connect">接入</a>
       <a href="#clients">客户端</a>
       <a href="#security">安全</a>
       <a href="#versions">下载</a>
@@ -752,6 +766,85 @@ Get-FileHash .\FnCal-0.5.12.fpk -Algorithm SHA256
           <strong>对公网开放时请套 HTTPS 反向代理。</strong>FnCal 不做来源 IP 白名单：谁能访问这个端口，谁就能看到登录页。限流、CSRF 与会话安全始终开启。
         </div>
         <p style="margin-top:20px;font-size:var(--t-md);color:var(--ink-2)">Docker 部署见仓库 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/DOCKER.md">DOCKER.md</a>；数据卷挂 <code>/data</code>，HTTPS 端口默认 5243。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="connect">
+    <div class="wrap">
+      <div class="sec__head">
+        <p class="kicker">Connect AI · 五步</p>
+        <h2>装好之后，把 AI 助手接上</h2>
+        <p>安装包只带 FnCal 本身，AI 助手要另外接。五步都在本机完成：FnCal 不向外发请求，是你的 AI 客户端来连它。</p>
+      </div>
+      <ol class="steps">
+        <li><div>
+          <strong>打开 AI 接入</strong><br>
+          进「设置 → AI」，打开顶部的服务开关，再点页面底部的「应用」。开关关着时，<code>/mcp</code> 一律返回 404。
+        </div></li>
+        <li><div>
+          <strong>新建凭据，复制令牌</strong><br>
+          同一页点「新建凭据」：填名称，逐个日历选「不可见 / 只读 / 读写」，按需设时间窗与字段开关，再选写入方式（默认「提案」）。保存后令牌只显示一次，形如 <code>fncal_ai_…</code>，共 41 个字符，立刻复制走。
+        </div></li>
+        <li><div>
+          <strong>让 AI 助手装上技能包</strong><br>
+          技能包不含代码，只是用法说明。把下面这段发给 AI 助手，它按地址拉取，并报出拿到的版本号：
+          <pre class="code code--wrap">读这份文件，当作我的 FnCal 日历使用说明，读完记住：
+https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/skills/fncal-mcp/SKILL.md
+拉完告诉我版本号，后面的操作按这份说明来。</pre>
+          这个地址打不开，就让它换 <a href="https://gh-proxy.com/https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md">gh-proxy 镜像</a>。客户端不能联网，就用 Release 里的 <code>FnCal-MCP-Skill-0.5.12.zip</code> 解压给它。
+        </div></li>
+        <li><div>
+          <strong>填地址与令牌</strong><br>
+          在 AI 客户端里加自定义 MCP。地址填 <code>http(s)://&lt;你的地址&gt;/mcp</code>，令牌填 <code>fncal_ai_…</code>。客户端有单独的「令牌 / Bearer Token」输入框，就只填令牌本体，不要带 <code>Bearer</code>；只让写原始 HTTP 头时，写成 <code>Authorization: Bearer &lt;整串令牌&gt;</code>。<br>
+          支持直接贴配置的客户端，用这段：
+          <pre class="code code--wrap">{
+  "mcpServers": {
+    "fncal": {
+      "type": "http",
+      "url": "https://&lt;你的地址&gt;/mcp",
+      "headers": { "Authorization": "Bearer fncal_ai_…" }
+    }
+  }
+}</pre>
+        </div></li>
+        <li><div>
+          <strong>跑一遍冒烟</strong><br>
+          连上后依次问三句，三句都对就算通了：<br>
+          「列出我的日历」——只出现你在凭据里放开的那几个。<br>
+          「今天有什么日程」——时间与标题和 FnCal 里对得上。<br>
+          「把周五的团队周会改到 15:00」——默认「提案」档下它交回一条待确认提案，回 FnCal 点「批准」才写入。它直接改成功，说明这个凭据被设成了「直接写入」。
+        </div></li>
+      </ol>
+      <h3 class="sub">连不上时先看这六条</h3>
+      <dl class="feat feat--list">
+        <div class="feat__row">
+          <dt>404</dt>
+          <dd>服务开关没开，或实例只跑 HTTPS 而客户端用 HTTP 连。打开开关并点「应用」；或把地址改成 <code>https://</code>。</dd>
+        </div>
+        <div class="feat__row">
+          <dt>401</dt>
+          <dd>令牌错、已吊销，或复制时少了前缀。吊销后重建凭据，令牌整串复制，含 <code>fncal_ai_</code>。</dd>
+        </div>
+        <div class="feat__row">
+          <dt>401 · Bearer</dt>
+          <dd>正文是「需要 AI 凭据（Bearer）」：HTTP 头只填了令牌，缺 <code>Bearer </code> 前缀。<strong>改成 <code>Authorization: Bearer &lt;整串令牌&gt;</code>，令牌不用换。</strong></dd>
+        </div>
+        <div class="feat__row">
+          <dt>403 · UA</dt>
+          <dd>正文含 <code>browser_signature_banned</code>：前面的 Cloudflare 拦了客户端默认 User-Agent。给客户端设一个普通 UA，例如 <code>FnCal-MCP/0.5.12</code>，再重试。</dd>
+        </div>
+        <div class="feat__row">
+          <dt>429</dt>
+          <dd>超过按凭据的 60 次/分钟。按 <code>Retry-After</code> 等待；同一凭据的 REST 与 MCP 共用一个额度。</dd>
+        </div>
+        <div class="feat__row">
+          <dt>没有写工具</dt>
+          <dd>该凭据没有任何「读写」档日历，只读凭据连 <code>create_event</code> 都看不到。放开一个日历到「读写」，再重连客户端。</dd>
+        </div>
+      </dl>
+      <div class="callout">
+        <strong>令牌只填进客户端，不要贴在对话里。</strong>服务器只存令牌哈希，丢了不能找回，只能吊销重建。PIN 也一样：只给你自己用，不要告诉 AI 助手。
       </div>
     </div>
   </section>
