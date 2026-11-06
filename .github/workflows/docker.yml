@@ -2,6 +2,7 @@ name: docker
 
 # 触发策略（与 product/M15-Docker部署完善-范围与验收.md 的 D5 一致）：
 #   - pull_request：只构建 linux/amd64 并跑容器冒烟（不推镜像）；
+#   - push main（限下述路径）：同 pull_request，构建 + 冒烟，提前发现源码/镜像问题；
 #   - workflow_dispatch：同上 + buildx 构建 linux/amd64,linux/arm64；
 #     输入 push=true 时把镜像推到 GHCR，默认 false；
 #   - push tag v*：buildx 构建 linux/amd64,linux/arm64（默认不推，推送由手动触发控制）。
@@ -15,6 +16,15 @@ on:
       - '.github/workflows/docker.yml'
       - 'code/**'
   push:
+    branches:
+      - main
+    paths:
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'entrypoint.sh'
+      - '.dockerignore'
+      - '.github/workflows/docker.yml'
+      - 'code/**'
     tags:
       - 'v*'
   workflow_dispatch:
