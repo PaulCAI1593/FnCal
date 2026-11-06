@@ -25,7 +25,7 @@ import {
   DAY_MS,
 } from '../lib/segment.js';
 // 0.2.12（C11-2）：日格农历（初一显示月名，其余显示日期）；关闭开关时整行不创建。
-import { dayLunarText, lunarEnabled } from '../lib/lunar-view.js';
+import { dayLunarText, dayLunarFullText, lunarEnabled } from '../lib/lunar-view.js';
 import { buildEmptyState } from './empty-state.js';
 import {
   getMonthGrid,
@@ -38,6 +38,7 @@ import {
   isSameMonth,
   isWeekend,
   formatTime,
+  formatTimeShort24,
   formatFullDate,
   weekNumberOf,
   WEEKDAYS_SHORT,
@@ -160,6 +161,41 @@ export function renderMonth(ctx) {
 
     for (const day of row) {
     const inMonth = isSameMonth(day, cursor);
+    // 0.5.10（S3，用户 2026-11-06 修正）：≤520 空白格**短按什么都不做**，长按
+    // （按住 ≥500ms、位移 <8px）才弹两项菜单（新建事件 / 新建任务）。位移更大
+    // 交给滑动/滚动与 swipe-nav；点日号仍进日视图；桌面点格子/右键口径不变。
+    const LONG_PRESS_MS = 500;
+    const LONG_PRESS_SLOP = 8;
+    let pressTimer = 0;
+    let pressPoint = null;
+    // 0.5.12（S1）：长按期间记住按下手指的 pointerId / pointerType，开菜单时随
+    // `source:'touch'` 一起交给 context-menu.js。菜单据此忽略系统补发的
+    // contextmenu / 重放指针事件 / 视口抖动——0.5.11 只靠时间窗兜，真机上仍会
+    // 「菜单弹出来又很快缩回」。
+    let pressPointer = null;
+    const cancelPress = () => {
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = 0;
+      }
+      pressPoint = null;
+      pressPointer = null;
+    };
+    const isBlankTarget = (target) =>
+      !(target.closest && target.closest('.chip, .month__more, .month__daynum'));
+    // 触屏长按与桌面右键共用同一份槽位菜单（0.5.10：全应用只有「新建事件 / 新建任务」
+    // 两项，菜单内容由 app.js 的 slotContextMenu 单点维护，视图层不再自建变体）。
+    // 0.5.12（S1）：这里只来自 ≤520 的长按 / 原生 contextmenu，所以固定标为触屏来源。
+    const openCreateMenu = (x, y, pointer) =>
+      actions.slotContextMenu(
+        { clientX: x, clientY: y, preventDefault() {} },
+        defaultCreateTime(day),
+        {
+          source: 'touch',
+          pointerId: pointer && typeof pointer.pointerId === 'number' ? pointer.pointerId : undefined,
+          pointerType: (pointer && pointer.pointerType) || 'touch',
+        },
+      );
     const cell = el('div', {
       class:
         'month__cell' +
@@ -172,14 +208,64 @@ export function renderMonth(ctx) {
       // the live DOM so a mid-drag re-render (edge auto-paging) is transparent.
       dataset: { day: String(startOfDay(day).getTime()) },
       on: {
+        // 0.5.10（S3）：≤520 短按无操作（不跳日视图、不弹菜单、不 toast）；桌面仍是
+        // 点格子新建事件。点 chip / 「还有 N 个」由它们自己拦，不落到格子。
         click: (e) => {
           if (e.target.closest('.chip') || e.target.closest('.month__more')) return;
-          // On compact screens the cell is a 2-line list, so a tap opens the day.
-          if (isCompactScreen()) actions.gotoDayView(day);
-          else actions.createAt({ start: defaultCreateTime(day), allDay: false });
+          if (isCompactScreen()) return;
+          actions.createAt({ start: defaultCreateTime(day), allDay: false });
         },
+        pointerdown: (e) => {
+          if (!isCompactScreen()) return;
+          if (e.button !== 0 && e.button !== undefined) return;
+          if (!isBlankTarget(e.target)) return;
+          cancelPress();
+          const x = e.clientX;
+          const y = e.clientY;
+          pressPoint = { x, y };
+          pressPointer = { pointerId: e.pointerId, pointerType: e.pointerType };
+          pressTimer = setTimeout(() => {
+            pressTimer = 0;
+            pressPoint = null;
+            const pointer = pressPointer;
+            pressPointer = null;
+            // 长按期间若已切到别的视图/重渲染，不再弹（防焦点跑飞）。
+            if (!cell.isConnected || !isCompactScreen()) return;
+            openCreateMenu(x, y, pointer);
+          }, LONG_PRESS_MS);
+        },
+        pointermove: (e) => {
+          if (!pressPoint) return;
+          const dx = e.clientX - pressPoint.x;
+          const dy = e.clientY - pressPoint.y;
+          if (dx * dx + dy * dy > LONG_PRESS_SLOP * LONG_PRESS_SLOP) cancelPress();
+        },
+        pointerup: cancelPress,
+        pointercancel: cancelPress,
+        pointerleave: cancelPress,
         contextmenu: (e) => {
           if (e.target.closest('.chip')) return;
+          // 0.5.11（S3，真机）：手机长按会由系统补一个原生 `contextmenu`，它和
+          // 500ms 计时器在赛跑。旧实现一律 `cancelPress()` + return，原生事件稍早
+          // 到就先把计时器清掉，菜单再也弹不出来；稍晚到则菜单刚开就被文档级
+          // contextmenu 监听关掉。现在的口径：
+          //   - 手指还按着（计时器未触发）→ 直接把这次长按当触发，开菜单；
+          //   - 菜单已由计时器打开 → 只压住系统菜单，不再 cancel（菜单由外部点
+          //     击 / Esc / 滚动关闭，context-menu.js 对打开后的原生事件有宽限）。
+          // 桌面右键仍是同一份两项（0.5.10 起去掉「新建全天事件」）。
+          if (isCompactScreen()) {
+            e.preventDefault();
+            if (pressTimer) {
+              clearTimeout(pressTimer);
+              pressTimer = 0;
+              pressPoint = null;
+              const pointer = pressPointer;
+              pressPointer = null;
+              if (cell.isConnected && isCompactScreen())
+                openCreateMenu(e.clientX, e.clientY, pointer || { pointerId: e.pointerId, pointerType: e.pointerType || 'touch' });
+            }
+            return;
+          }
           actions.slotContextMenu(e, defaultCreateTime(day));
         },
       },
@@ -218,15 +304,21 @@ export function renderMonth(ctx) {
         },
       },
     });
+    // 0.5.10（S1，用户：「月视图农历日期直接和公历日期一行」）：≤520 的农历/节日名
+    // 移进日号行（左对齐），日号仍靠右；桌面保持原结构（节假日一行 + 日号，农历在
+    // 日号下方整行占位），DOM 与样式都不变（A12 零变化）。
+    const compact = isCompactScreen();
     const dayHead = el('div', { class: 'month__dayhead' });
-    if (cellHoliday) dayHead.append(buildHolidayLabel(cellHoliday, ctx, !inMonth));
+    if (cellHoliday) dayHead.append(buildHolidayLabel(cellHoliday, ctx, !inMonth, compact));
+    else if (compact && lunarEnabled(ctx.settings)) dayHead.append(buildInlineLunar(dayStart, !inMonth));
     dayHead.append(dayNum);
     cell.append(dayHead);
 
     // 0.2.12（C11-2）：日号下方一行农历——初一显示月名（如「八月」），其余显示
     // 日期（如「十五」）。关闭农历时这一行整个不创建，所以日号位置、事件可用
     // 行数、节假日左对齐规则都不受影响（关闭=完全不占位）。
-    if (lunarEnabled(ctx.settings)) {
+    // 0.5.10（S1）：≤520 已把农历并进日号行（上面），这里只在宽屏创建。
+    if (!compact && lunarEnabled(ctx.settings)) {
       // 0.2.21（F6）：农历文字放内层 span——外层只负责整行占位（--month-chip-h）与右对齐，
       // 内层用 12px + transform: scale(var(--lunar-scale)) 缩小，绕开浏览器最小字号限制
       // （10→9→7→6 四轮改 font-size 都没变小，因为 12px 已是下限，6px 被抬回 12px）。
@@ -336,30 +428,14 @@ export function renderMonth(ctx) {
       if (existingMore) existingMore.remove();
     });
 
-    // 0.2.17（B1，手机月视图「看清」）：≤520 不再把事件塌成小圆点，而是每格最多
-    // 2 条单行文字 chip（时间+标题，超出省略），其余收进「+N 更多」。窄屏没有跨格
-    // 条，所以 0.2.15（D1）的端点几何在这档不跑——几何是给填色条算的，文字块不适用。
+    // 0.2.17（B1，手机月视图「看清」）：≤520 的单日事件仍是文字 chip（时间 + 标题，
+    // 超出省略），每格上限 2 条，其余收进「+N 更多」。
+    // 0.5.9（用户 2026-11-06，口径变更）：跨天事件在手机上**恢复连续长条**——不再
+    // 提前 return，D1 的端点几何对四档手机宽度同样执行（几何只认格宽与单日 chip 的
+    // 内缩，与断点无关）；长条永不折叠，放不下时先收单日。见下面折叠段。
     const compact = isCompactScreen();
-    if (compact) {
-      cellData.forEach(({ eventsWrap, rows, day }) => {
-        if (!rows) return;
-        // 泳道占位在窄屏 CSS 里已隐藏，也不参与「2 条」的名额。
-        const entries = [...eventsWrap.children].filter(
-          (n) => !n.classList.contains('month__lane-gap'),
-        );
-        if (entries.length <= 2) return;
-        entries.forEach((n, i) => {
-          n.hidden = i >= 2;
-        });
-        const hiddenEvents = entries
-          .slice(2)
-          .filter((n) => n.classList.contains('chip'))
-          .map((n) => chipEvents.get(n))
-          .filter(Boolean);
-        if (hiddenEvents.length) eventsWrap.append(buildMoreButton(day, hiddenEvents, actions, ctx));
-      });
-      return layoutDirty;
-    }
+    // S1 细则（0.5.10）：先按实测宽度把农历/节日名缩到能放进日号行，再算事件区几何。
+    if (compact) fitCompactDayheads(root);
     // All measures up front, in one layout pass: the grid's 1fr rows size the
     // cells from the container, so visibility of chips can't change these —
     // and reading geometry between the per-cell hides/appends below would
@@ -563,8 +639,13 @@ export function renderMonth(ctx) {
         }
       }
       if (useGap !== baseGap) eventsWrap.style.rowGap = `${useGap}px`;
+      // 0.5.9（S1/S2）：手机档先套「每格 2 条单日文字 chip」上限，再让实测容量决定
+      // 还要不要继续收——上限是口径（0.2.17 B1），不是容量估计。
+      const compactOthersCap = compact ? Math.min(2, otherNodes.length) : otherNodes.length;
+      const compactHiddenOthers = compact ? otherNodes.length - compactOthersCap : 0;
+      const effectiveRows = laneNodes.length + compactOthersCap + (compactHiddenOthers > 0 ? 1 : 0);
       // 放满 R 行 → 全部显示、不出按钮（提前少放或硬塞按钮都算错）。
-      if (totalRows <= capacity) return;
+      if (effectiveRows <= capacity && !compactHiddenOthers) return;
       // 0.2.33（M1）：泳道节点（条 or 占位）与其余条目分开——空间不够时条也要折叠，
       // 并且要为「还有 N 个」留出最后一行，不能再让按钮被格底裁掉。
       // 0.2.35：名额按「泳道行数 + 单日/任务数」算（laneIndexOfBar），泳道占位不再白吃名额。
@@ -578,6 +659,13 @@ export function renderMonth(ctx) {
       // 条按泳道顺序渲染：保留前 visibleBars 条，泳道节点截到「最后一条保留下来的条」
       // 所在位置（含它前面的空泳道），后面的空泳道一起收掉，避免留出无用的空行。
       let visibleLaneNodes = visibleBars > 0 ? laneIndexOfBar[visibleBars - 1] + 1 : 0;
+      // 0.5.9（S1/A5，手机档）：长条在窄屏同样**永不折叠**（0.2.21 F1 口径不变），
+      // 单日/任务按 2 条上限先收；容量再不够就只收单日，把最后一行留给「还有 N 个」。
+      if (compact) {
+        visibleBars = barNodes.length;
+        visibleLaneNodes = laneNodes.length;
+        visibleOthers = compactOthersCap;
+      }
       // 渲染后校验「按钮完整在内容区里」：越界就再让一行出去重排（最多 12 轮收敛）。
       // jsdom/隐藏容器里按钮 offsetTop 恒为 0，量不到就保持算术结果。
       for (let guard = 0; guard < 12; guard++) {
@@ -602,9 +690,10 @@ export function renderMonth(ctx) {
         if (!button || !(button.offsetTop > 0)) return;
         if (button.getBoundingClientRect().bottom <= contentBottom + 0.5) return;
         // 按钮仍然越界：先让单日/任务出去，再让最底下的条出去；都没得让就收手（避免死循环）。
+        // 0.5.9：手机档**不让条**——条必须可见，收完单日就收手。
         if (visibleOthers > 0) {
           visibleOthers -= 1;
-        } else if (visibleBars > 0) {
+        } else if (!compact && visibleBars > 0) {
           visibleBars -= 1;
           visibleLaneNodes = visibleBars > 0 ? laneIndexOfBar[visibleBars - 1] + 1 : 0;
         } else {
@@ -842,6 +931,17 @@ function buildChip(event, day, ctx, cellData, bounds) {
   // 12:30 AM event must read "12 AM" (not the misleading "11:30 PM") on that
   // second day. On the start day this is just event.start, so nothing changes.
   const shownStart = Math.max(event.start, startOfDay(day).getTime());
+  // 0.5.9（F1，用户截图「上午10:0」）：手机档时间改**短格式 24 小时制**（"10:00"）。
+  // 12 小时制在 320 的 30.7px 时间行里放不下，chip 的 overflow:hidden 会直接切掉
+  // 末位数字；短格式 5 个字符四档都完整。完整 12 小时文案仍写进 title 与
+  // aria-label；>520（桌面/平板）走原来的 formatTime，格式与布局零变化。
+  const compactChip = isCompactScreen();
+  const shownStartDate = new Date(shownStart);
+  const timeTextFull = event.allDay
+    ? ''
+    : formatTime(shownStartDate, { hour12: ctx.settings.hour12 });
+  const timeText = compactChip && !event.allDay ? formatTimeShort24(shownStartDate) : timeTextFull;
+  const chipTitle = event.title || t('agenda.event.untitled');
   // 0.2.15（D1）：把「本行内的段范围」带在 DOM 上（spanDay/spanA/spanB），
   // afterMount 量到格子宽度后用 lib/segment.js 的 monthBarBoxes 算每格一段的
   // left/width——首尾端点的唯一实现，月视图不再各写一套负外边距常量。
@@ -867,8 +967,8 @@ function buildChip(event, day, ctx, cellData, bounds) {
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: `ev:${event.id}`, ...spanData },
-    title: event.title || t('agenda.event.untitled'),
-    'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}${event.allDay ? t('agenda.event.allDaySuffix') : '，' + formatTime(new Date(shownStart), { hour12: ctx.settings.hour12 })}`,
+    title: compactChip && !event.allDay ? `${chipTitle}，${timeTextFull}` : chipTitle,
+    'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}${event.allDay ? t('agenda.event.allDaySuffix') : '，' + formatTime(shownStartDate, { hour12: ctx.settings.hour12 })}`,
   });
 
   if (event.ooo && showLabel) chip.append(el('span', { class: 'chip__ooo-icon', html: icon('plane', { size: 'sm' }) }));
@@ -879,7 +979,7 @@ function buildChip(event, day, ctx, cellData, bounds) {
     chip.append(
       el('span', {
         class: 'chip__time',
-        text: formatTime(new Date(shownStart), { hour12: ctx.settings.hour12 }),
+        text: timeText,
       }),
     );
   }
@@ -985,27 +1085,119 @@ function buildOverlayChip(item, ctx) {
 }
 
 /**
+ * 0.5.10（S1，用户）：「节日不需要再有图标和『节』字，节省空间」。
+ * 0.5.10（总监裁决 4）：只有去掉尾部「节」后仍是完整词（至少两个字）才去——
+ * 国庆节→国庆、清明节→清明、劳动节→劳动、端午节→端午、中秋节→中秋；春节、
+ * 元旦这类去掉会剩单字的保留全名，否则会显示成「春」、「元」，反而不像节日名。
+ * title 与 aria-label 仍用全名（见 buildHolidayLabel）。
+ */
+export function holidayDisplayName(name) {
+  const full = String(name || '').trim();
+  return full.length > 2 && full.endsWith('节') ? full.slice(0, -1) : full;
+}
+
+/**
+ * 0.5.10（S1）：≤520 的农历节点——并进 `.month__dayhead`，夹在左侧、日号靠右。
+ * 外层只负责排版（flex:1、省略号），内层沿用桌面 12px + scale(--lunar-scale) 的
+ * 「绕开浏览器最小字号」做法；title 给完整农历名（如「八月十五」）。
+ */
+function buildInlineLunar(dayStart, otherMonth) {
+  return el(
+    'span',
+    {
+      class:
+        'month__lunar month__lunar--inline' + (otherMonth ? ' is-othermonth' : ''),
+      'aria-hidden': 'true',
+      title: dayLunarFullText(dayStart),
+    },
+    [
+      el('span', {
+        class: 'month__lunar-text',
+        text: dayLunarText(dayStart, { short: true }),
+      }),
+    ],
+  );
+}
+
+/**
  * 0.2.10（用户 1-2 / 美工 §20.1）：节假日并入**日号同一行**——小旗 + 名称（10px、
  * `--text-3`、长名省略且 title 给全名），不再占一格事件 chip 行，于是当天的事件
  * 行数与「+N more」都按真实事件重算。点击仍打开只读详情（与旧 overlay chip 一致）。
  * 其它月份的小格里名称跟随 `--gray-400`；≤520px 圆点模式下只留小旗。
+ * 0.5.10（S1）：≤520 改成「只有名字、无旗子、显示名去『节』」，与农历同一位置（左），
+ * 日号靠右；桌面分支（compact=false）完全不变。
  */
-function buildHolidayLabel(item, ctx, otherMonth) {
+/**
+ * 0.5.10（S1 细则，用户：「如果窄，就继续缩小农历的字号」）：≤520 每格按**实测宽度**
+ * 算缩放比，写进内层的 `--lunar-scale` / `--holiday-scale`。transform 不改布局宽度，
+ * 所以 `label.scrollWidth` 就是 12px（农历）/ 10px（节日名）下的自然宽；可用宽 =
+ * 日号行内宽 − 日号宽 − 2px 间隙。农历基准 0.8、节日名基准 1；下限都是 0.5
+ * （农历视觉约 6px），到下限仍放不下才由 CSS 的省略号接手。
+ * 只动 scale，不改字号、不折行；桌面档不会渲染 `.month__lunar--inline`，本函数是空跑。
+ */
+function fitCompactDayheads(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  for (const head of root.querySelectorAll('.month__dayhead')) {
+    const daynum = head.querySelector('.month__daynum');
+    const lunarText = head.querySelector('.month__lunar--inline .month__lunar-text');
+    const label = lunarText || head.querySelector('.month__holiday-name');
+    if (!label) continue;
+    const headW = head.clientWidth;
+    const natural = label.scrollWidth || 0;
+    if (!headW || !natural) continue;
+    const avail = Math.max(0, headW - (daynum ? daynum.offsetWidth : 0) - 2);
+    if (!avail) continue;
+    const base = lunarText ? 0.8 : 1;
+    const raw = avail / natural;
+    // 0.5.11（用户）：「节日名一律不显示省略号」——节日名先按比例缩字号；缩到 0.5
+    // 仍放不下就减到 1 个完整汉字（不出现半个字、不出现「……」，title 仍是全名）。
+    if (!lunarText) {
+      let name = label.textContent || '';
+      let scale = Math.max(0.5, Math.min(base, raw));
+      if (raw < 0.5 && name.length > 1) {
+        label.textContent = name.slice(0, 1);
+        name = label.textContent;
+        const oneChar = label.scrollWidth || 1;
+        scale = Math.min(base, avail / oneChar);
+      }
+      label.style.setProperty('--holiday-scale', scale.toFixed(3));
+      continue;
+    }
+    const scale = Math.max(0.5, Math.min(base, raw));
+    label.style.setProperty('--lunar-scale', scale.toFixed(3));
+    // 到 0.5 下限仍放不下才省略：农历内层给出「可用宽 ÷ 0.5」的布局宽，缩放后正好
+    // 占满可用宽，超出的字由 CSS 的 text-overflow: ellipsis 收掉（title 仍是全名）。
+    if (raw < 0.5) {
+      label.classList.add('is-truncated');
+      label.style.width = `${(avail / 0.5).toFixed(1)}px`;
+    } else {
+      label.classList.remove('is-truncated');
+      label.style.removeProperty('width');
+    }
+  }
+}
+
+function buildHolidayLabel(item, ctx, otherMonth, compact = false) {
   const name = item.title || '';
   const label = el('span', {
-    class: 'month__holiday' + (otherMonth ? ' is-othermonth' : ''),
+    class:
+      'month__holiday' +
+      (otherMonth ? ' is-othermonth' : '') +
+      (compact ? ' month__holiday--inline' : ''),
     role: 'button',
     tabindex: '0',
     title: name,
     'aria-label': `${t('agenda.holiday.kindHoliday')}：${name}`,
-  }, [
-    el('span', {
-      class: 'month__holiday-icon',
-      html: icon('flag', { size: 'sm' }),
-      'aria-hidden': 'true',
-    }),
-    el('span', { class: 'month__holiday-name', text: name }),
-  ]);
+  }, compact
+    ? [el('span', { class: 'month__holiday-name', text: holidayDisplayName(name) })]
+    : [
+        el('span', {
+          class: 'month__holiday-icon',
+          html: icon('flag', { size: 'sm' }),
+          'aria-hidden': 'true',
+        }),
+        el('span', { class: 'month__holiday-name', text: name }),
+      ]);
   const open = (e) => {
     e.stopPropagation();
     e.preventDefault();

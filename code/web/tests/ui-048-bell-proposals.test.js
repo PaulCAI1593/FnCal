@@ -228,11 +228,15 @@ describe('0.4.8 · 提案队列入顶栏铃铛', () => {
       /@media \(max-width: 1023px\) \{[\s\S]*?\.header__tools \.taskbar-toggle \.icon-btn__label \{\s*display: none;/,
     );
 
-    // ≤720 底部工具栏：首项铃铛、末项任务，8 项每项 ≥44px。
+    // ≤720 底部工具栏：首项铃铛、末项任务。
+    // 0.5.4（U6）：原来是 8 项（6 个视图 + 铃 + 任务）；视图收进「视图切换」菜单后
+    // 固定 4 项——铃（提案）/ 视图切换 / 今天 / 任务。断言按新口径改写。
     const tabbar = document.querySelector('.tabbar');
     expect(tabbar.children[0].classList.contains('tabbar__bell')).toBe(true);
+    expect(tabbar.children[1].classList.contains('tabbar__view')).toBe(true);
+    expect(tabbar.children[2].classList.contains('tabbar__today')).toBe(true);
     expect(tabbar.children[tabbar.children.length - 1].classList.contains('tabbar__task')).toBe(true);
-    expect(tabbar.querySelectorAll('.tabbar__btn')).toHaveLength(8);
+    expect(tabbar.querySelectorAll('.tabbar__btn')).toHaveLength(4);
     expect(views).toMatch(/grid-auto-columns: minmax\(44px, 1fr\)/);
     expect(views).toMatch(/\.header__tools \.taskbar-toggle \{\s*display: none;/);
     // 375px：(375 − 8 padding − 7×2 gap) / 8 = 44.1 ≥ 44

@@ -412,7 +412,7 @@ describe('1-5 + 第 21 条 年视图胶囊', () => {
     expect(dayCell(c, '19').querySelector('.year__bar').classList.contains('year__bar--gap-right')).toBe(true);
   });
 
-  it('CSS 几何按 §22（0.2.28 K2）：高 = 单日圆直径、真首末 半圆头（`--year-fill/2`）、-1px 跨格、6px 空隙、窄屏隐藏、无 +N', () => {
+  it('CSS 几何按 §22（0.2.28 K2）：高 = 单日圆直径、真首末 半圆头（`--year-fill/2`）、-1px 跨格、6px 空隙、窄屏保留（仅 .year--compact 隐藏）、无 +N', () => {
     // 0.2.19（D7）：条高与单日圆同读 --year-fill
     expect(viewsCss).toContain('--year-fill: max(56%, 16px)');
     expect(rule(viewsCss, '.year__bar')).toContain('height: var(--year-fill)');
@@ -424,7 +424,8 @@ describe('1-5 + 第 21 条 年视图胶囊', () => {
     // 0.2.19（D2）：断口/相邻间隔端头回到圆边
     expect(rule(viewsCss, '.year__bar--gap-left')).toContain('left: calc(50% - max(28%, 8px))');
     expect(rule(viewsCss, '.year__bar--gap-right')).toContain('right: calc(50% - max(28%, 8px))');
-    expect(viewsCss).toMatch(/@media \(max-width: 720px\) \{[\s\S]{0,120}\.year__bar \{\s*display: none;/);
+    // 0.5.3（S3）：≤720px 保留按天/多日胶囊；窄屏只在格高不足（.year--compact）时隐藏。
+    expect(viewsCss).not.toMatch(/@media \(max-width: 720px\) \{[\s\S]{0,120}\.year__bar \{\s*display: none;/);
     expect(viewsCss).not.toContain('.year__bar-more');
     // 空间不足整条隐藏
     expect(rule(viewsCss, '.year--compact .year__bar')).toContain('display: none');
@@ -596,7 +597,7 @@ describe('1-14 加载更多「到底」判定排除节假日', () => {
     expect(node.querySelector('.agenda__no-more').textContent).toBe('已无更多日程');
   });
 
-  it('节假日行不再出现在日程视图（0.2.15 D4）', async () => {
+  it('节假日不再作为列表行，改挂在当天日期头（0.5.10 S6）', async () => {
     const h = holiday('h', '国庆节', new Date(2026, 7, 20));
     const real = {
       id: 'real',
@@ -611,8 +612,14 @@ describe('1-14 加载更多「到底」判定排除节假日', () => {
     const store = rangeStore([h, real]);
     const { node } = renderAgenda(ctxOf(store));
     document.body.append(node);
-    // 节假日作为只读叠加层不再进入日程列表；真实事件照常显示
-    expect(node.textContent).not.toContain('国庆节');
+    // 0.5.10（S6，总监 m00922）：0.2.15 D4 的「日程不列节假日」仍成立——列表里没有
+    // 节日行；但节日全名改挂在当天的日期头（「周X · M月」下方），同一天只出现一次。
+    // 旧断言「整段文本不含国庆节」是 D4 口径，已被 S6 取代。
+    expect(node.querySelectorAll('.agenda__event--holiday')).toHaveLength(0);
+    const head = node.querySelector('.agenda__date-holiday');
+    expect(head).toBeTruthy();
+    expect(head.textContent).toBe('国庆节');
+    expect(head.getAttribute('title')).toBe('国庆节');
     expect(node.textContent).toContain('真实事件');
   });
 

@@ -819,6 +819,32 @@ body.is-reordering {
     'header header header'
     'sidebar main taskbar';
 }
+
+/* 0.5.5：左侧栏已折叠时再开任务栏，第一列必须保持 0；否则会露出空白侧栏列。
+   只在 901px 以上生效：721–900 的任务栏是浮层（两列栅格），不能加第三列。 */
+@media (min-width: 901px) {
+  .app.app--sidebar-collapsed.has-taskbar {
+    grid-template-columns: 0 minmax(0, 1fr) var(--taskbar-w);
+    grid-template-areas:
+      'header header header'
+      'sidebar main taskbar';
+  }
+}
+@media (min-width: 901px) and (max-width: 1200px) {
+  .app.app--sidebar-collapsed.has-taskbar {
+    grid-template-columns: 0 minmax(0, 1fr) 260px;
+  }
+}
+
+/* 721–900：任务栏是浮层，栅格只有两列；折叠后仍要把第一列压到 0。 */
+@media (min-width: 721px) and (max-width: 900px) {
+  .app.app--sidebar-collapsed.has-taskbar {
+    grid-template-columns: 0 minmax(0, 1fr);
+    grid-template-areas:
+      'header header'
+      'sidebar main';
+  }
+}
 .taskbar {
   grid-area: taskbar;
   display: flex;
@@ -958,6 +984,45 @@ body.is-reordering {
 }
 .taskbar-scrim {
   display: none;
+}
+
+/* ---- 0.5.4（U1）：≤720「任务」视图态（主区内，不是覆盖抽屉） ---- */
+.tasks-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  padding: 12px max(12px, env(safe-area-inset-right, 0px))
+    calc(12px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+  overflow: hidden;
+  /* 纵向可滚；横向手势交给 swipe-nav.js，但任务视图本身不切换周期。 */
+  touch-action: pan-y;
+}
+.tasks-view__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.tasks-view__title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+  color: var(--text);
+  outline: none;
+}
+.tasks-view .taskbar__filters {
+  flex: 0 0 auto;
+}
+.tasks-view .taskbar__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.tasks-view .taskbar__empty {
+  padding: 40px 12px;
 }
 @media (max-width: 1200px) {
   .app.has-taskbar {
@@ -1421,14 +1486,24 @@ label,
     width: 44px;
     height: 44px;
   }
-  .switch {
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
+  /* 0.5.3（S2）：触屏只放大命中区，不改开关外观——原先把 .switch 抬到 min-height:44px，
+     40×24 的轨道被撑成 40×44 的竖椭圆（用户反馈「设置里的按钮形状变形」）。
+     input 是 opacity:0 的真命中层（base.css `.switch input`），四周外扩后命中区 44×44，
+     视觉仍是 40×24 的小胶囊。 */
+  .switch input {
+    inset: -10px -2px;
   }
-  .mini__cell {
-    min-height: 44px;
+  /* 0.5.3（S2 追加，impeccable 检测）：外扩后的命中层下沿会压住「开关正下方紧跟提示文字」
+     的行（命中区看起来盖掉了可读文字）。这类提示让出 10px；没有提示的开关行布局不动，
+     开关仍与行标签垂直居中。 */
+  .settings__control > .switch + .settings__hint {
+    margin-top: 10px;
   }
+  /* 0.5.3（S1）：迷你月历是 7 列 × 6 行的密集日期网格，.mini__cell 带 aspect-ratio:1
+     （layout.css `.mini__cell`）；触屏再抬 min-height:44px 会把格子撑成 44×44，
+     7 列 308px 超出侧栏 207px 可用宽，被 .sidebar{overflow:hidden} 裁掉最右两列
+     （平板实测只看到「周日…周四」）。日期格保持本色即可点：768 约 28.7px、
+     1024 约 32.1px，触控取舍见记录 §3。 */
   .btn--sm {
     min-height: 44px;
   }

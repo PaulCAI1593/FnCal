@@ -491,9 +491,18 @@ describe('0.2.21 F6 农历 12px + transform 缩放（绕开浏览器最小字号
     expect(lunar.getAttribute('aria-hidden')).toBe('true');
   });
 
-  it('≤520px 仍整行隐藏农历（口径未变）', () => {
-    const at520 = viewsCss.slice(viewsCss.indexOf('@media (max-width: 520px)'));
-    expect(at520.slice(0, 2000)).toMatch(/\.month__lunar[^{]*\{[^}]*display: none/);
+  it('≤520px 显示农历紧凑行（0.5.10 S1：农历并进日号行，仍走 12px + scale）', () => {
+    // 0.5.10（用户 2026-11-06）：「月视图农历日期直接和公历日期一行」——0.5.9 的
+    // 「日号下方 12px 紧凑行」改成日号行内左侧（`.month__lunar--inline`），缩放沿用
+    // --lunar-scale 0.8（S1 明确不再单独设 0.85）。views.css 里有多段 520 媒体查询，
+    // 用正则确认这条在某个 520 段内，而不是取最后一段。
+    expect(viewsCss).toMatch(
+      /@media \(max-width: 520px\) \{[\s\S]*?\.month__lunar \{\s*display: flex;/,
+    );
+    const at = viewsCss.search(/\.month__lunar \{\s*display: flex;/);
+    const block = viewsCss.slice(at, at + 700);
+    expect(block).toMatch(/height: auto;/);
+    expect(viewsCss).toMatch(/\.month__lunar-text \{[\s\S]*?scale\(var\(--lunar-scale, 0\.8\)\)/);
   });
 });
 

@@ -497,6 +497,13 @@ export const zhCN = {
   'agenda.loading': '加载中…',
   'agenda.noMore': '已无更多日程',
   'agenda.loadError': '加载失败，请重试',
+  // 0.5.6（C）：列表顶部向过去翻页——「加载更早」按钮 + 下拉手势提示 + 到底静态文字。
+  'agenda.loadEarlier': '加载更早',
+  'agenda.pullEarlierHint': '下拉加载更早的日程',
+  'agenda.pullEarlierRelease': '松开加载更早的日程',
+  'agenda.loadingEarlier': '正在加载更早的日程…',
+  'agenda.noEarlier': '没有更早的了',
+  'agenda.loadEarlierError': '加载更早失败，请重试',
   'agenda.holiday.kindHoliday': '公共假日',
   'agenda.holiday.columnHoliday': '节假日',
   'agenda.task.todo': '不限时间',
@@ -514,7 +521,6 @@ export const zhCN = {
   'app.toast.eventUpdated': '事件已更新',
   'app.action.restoreAccept': '恢复出席',
   'app.error.restoreEvent': '恢复事件失败。',
-  'app.action.newAllDayEvent': '新建全天事件',
   'app.error.updateTask': '更新任务失败。',
   'app.toast.taskRescheduled': '任务已改时间',
   'app.error.undo': '撤销失败，请重试。',
@@ -585,6 +591,10 @@ export const zhCN = {
   // 两档 aria-label/title：空态「AI 提案」；有待审批时带条数。红点已删，
   // 所以不再有 toolbar.settingsWithPending。
   'toolbar.proposals': 'AI 提案',
+  // 0.5.4（U6）：手机底栏第一项的可见文字与读屏名（用户口径：写「提案」，不写「通知」）。
+  'tabbar.proposals': '提案',
+  // 0.5.4（U6）：底栏视图按钮的读屏名要带上「当前视图」，可见文字仍是视图名本身。
+  'toolbar.currentViewAria': '当前视图：{name}，点按切换',
   'toolbar.proposalsWithPending': 'AI 提案（{n} 条待审批）',
   'account.title': '账号与设置',
   'account.section.account': '账号',

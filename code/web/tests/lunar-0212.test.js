@@ -400,7 +400,12 @@ describe('0.2.12 C11-2 月视图日格农历', () => {
     expect(tokensCss).toContain('--lunar-scale: 0.8');
     expect(viewsCss).not.toContain('--lunar-fs');
     expect(viewsCss).toMatch(/\.month__cell\.is-othermonth \.month__lunar \{[^}]*var\(--gray-400\)/);
-    expect(viewsCss).toMatch(/@media \(max-width: 520px\) \{[\s\S]{0,400}\.month__lunar \{\s*display: none/);
+    // 0.5.9（S4）口径变更：用户要求「大屏看得见的信息手机也要看得见」，≤520 不再隐藏农历；
+    // 紧凑段（含 .month__events 的那一段）把它拉回 flex（12px 紧凑行、缩放 0.85）。
+    // 注意 views.css 末尾还有别的 520 段（日程），所以不能用「最后一段」定位。
+    expect(viewsCss).toMatch(
+      /@media \(max-width: 520px\) \{[\s\S]*?\.month__lunar \{\s*display: flex;/,
+    );
   });
 });
 
@@ -423,9 +428,11 @@ describe('0.2.12 C11-2 周/四天/天视图表头农历副标题', () => {
     expect(labels[0].textContent).toBe('十五');
   });
 
-  it('设置关：不创建副标题；CSS ≤720px 隐藏', () => {
+  it('设置关：不创建副标题；CSS 不再按宽度隐藏（0.5.9 S4 口径变更）', () => {
     expect(render(false).querySelectorAll('.timegrid__lunar')).toHaveLength(0);
-    expect(viewsCss).toMatch(/@media \(max-width: 720px\) \{[\s\S]{0,400}\.timegrid__lunar \{\s*display: none/);
+    // 0.5.9（S4）：用户要求手机上保留周/四日/日的表头农历（大屏有、手机不能没有），
+    // 旧的 ≤720 `.timegrid__lunar{display:none}` 已删除，这里改成「全部 CSS 里不得再有这条隐藏」。
+    expect(viewsCss).not.toMatch(/\.timegrid__lunar\s*\{[^}]*display:\s*none/);
   });
 });
 

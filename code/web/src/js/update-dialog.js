@@ -72,9 +72,9 @@ export function openUpdateDialog() {
     on: { click: () => void runCheck() },
   });
 
-  // 「打开下载页」始终在（禁用不隐藏，避免行高跳动）；只在「发现新版本」时给 href，
-  // 其余状态 aria-disabled 且点击无效。M22 §2：禁用态不禁用样式区分（用户已定口径），
-  // 这里只保证不可点、不可键盘聚焦。
+  // 「打开下载页」始终可点（B-07，0.5.9）：任何状态都给 href——接口给了 detail.url 就用它，
+  // 否则按当前更新源回落 FALLBACK_URLS；不再只在「发现新版本」时可用。M22 §2 的
+  // 「禁用态不做样式区分」仍保留：链接态与兜底态外观一致，靠 aria-disabled 表达语义。
   const openEl = el('a', {
     class: 'btn btn--primary update__open',
     'aria-disabled': 'true',
@@ -142,7 +142,20 @@ export function openUpdateDialog() {
     });
   }
 
+  // B-07（0.5.9）：下载页链接不再只在「发现新版本」时可用——已最新/失败/限流也要能点，
+  // 否则按钮灰着、点了没反应（用户 2026-11-06 backlog）。href 优先接口给的 detail.url，
+  // 没有就按**当前更新源**回落到 FALLBACK_URLS；target/rel 与非链接态清理集中在这里。
+  function setOpenLink(url) {
+    openEl.setAttribute('href', url);
+    openEl.setAttribute('target', '_blank');
+    openEl.setAttribute('rel', 'noopener noreferrer');
+    openEl.setAttribute('aria-disabled', 'false');
+    openEl.removeAttribute('tabindex');
+    openEl.dataset.ready = '1';
+  }
+
   function paintState(state, detail = {}) {
+    const currentVia = source === 'github' ? 'github' : 'mirror';
     if (state === 'checking') {
       statusTextEl.textContent = t('update.checking');
       statusTextEl.setAttribute('aria-busy', 'true');
@@ -150,41 +163,24 @@ export function openUpdateDialog() {
       viaEl.hidden = true;
       recheckBtn.disabled = true;
       recheckBtn.setAttribute('aria-busy', 'true');
-      openEl.removeAttribute('href');
-      openEl.removeAttribute('target');
-      openEl.removeAttribute('rel');
-      openEl.setAttribute('aria-disabled', 'true');
-      openEl.setAttribute('tabindex', '-1');
-      delete openEl.dataset.ready;
+      setOpenLink(FALLBACK_URLS[currentVia]);
       return;
     }
     statusTextEl.removeAttribute('aria-busy');
     recheckBtn.disabled = false;
     recheckBtn.setAttribute('aria-busy', 'false');
-    const via = detail.via === 'github' ? 'github' : 'mirror';
+    const via = detail.via === 'github' || (!detail.via && source === 'github') ? 'github' : 'mirror';
     viaEl.textContent = detail.via ? viaLabel(via) : '';
     viaEl.hidden = !detail.via;
+    setOpenLink(detail.url || FALLBACK_URLS[via]);
     if (state === 'available') {
       statusTextEl.textContent = t('update.available', { version: detail.latest || '' });
-      const url = detail.url || FALLBACK_URLS[via];
-      openEl.setAttribute('href', url);
-      openEl.setAttribute('target', '_blank');
-      openEl.setAttribute('rel', 'noopener noreferrer');
-      openEl.setAttribute('aria-disabled', 'false');
-      openEl.removeAttribute('tabindex');
-      openEl.dataset.ready = '1';
     } else {
       statusTextEl.textContent = state === 'rateLimited'
         ? t('update.rateLimited')
         : state === 'failed'
           ? t('update.failed')
           : t('update.upToDate');
-      openEl.removeAttribute('href');
-      openEl.removeAttribute('target');
-      openEl.removeAttribute('rel');
-      openEl.setAttribute('aria-disabled', 'true');
-      openEl.setAttribute('tabindex', '-1');
-      delete openEl.dataset.ready;
     }
   }
 

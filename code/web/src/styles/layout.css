@@ -42,6 +42,32 @@
   height: 30px;
   flex: none;
 }
+/* 0.5.6（D）：图片不参与命中测试——手机点 logo 时事件目标始终是按钮本身，
+   不会因为点在 <img> 上（某些 WebKit 版本上按钮的 click 因此丢失）而落空。 */
+.brand-mark img {
+  pointer-events: none;
+}
+/* 0.5.4（U4）：品牌标是按钮（≤720 侧栏开关）；桌面只是静态品牌，点击不改布局。 */
+.brand-button {
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.brand-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (pointer: coarse) {
+  .brand-button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
 .brand-name {
   font-size: var(--fs-lg);
   font-weight: 650;
@@ -605,6 +631,9 @@
   overflow: hidden;
   position: relative;
   background: var(--bg);
+  /* 0.5.4（U3）：日历主体允许纵向滚动；横向手势交给 swipe-nav.js（触屏档）。
+     可横向滚动的子容器（如 .month__events）是独立滚动容器，不受这条限制。 */
+  touch-action: pan-y;
 }
 
 .main.is-file-drop-target::after {
@@ -2104,6 +2133,27 @@
   display: none;
 }
 
+/* 0.5.12（S7）：`?ctxdebug=1` 的长按菜单关闭原因诊断行（默认不渲染）。
+   只有排查真机「菜单一闪就消失」时才出现，放在最底部、单行、不挡操作。 */
+.ctx-debug {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 200;
+  padding: 2px var(--sp-3);
+  /* 固定深底白字：这是诊断条，不跟随主题（深色主题下也要看得清）。 */
+  background: #14161c;
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 /* ---- Toasts ----------------------------------------------------------- */
 .toaster {
   position: fixed;
@@ -2459,6 +2509,57 @@
   font-weight: 650;
   letter-spacing: 0.02em;
 }
+/* 0.5.4（U6）：底栏视图切换的轻量菜单——无遮罩，fixed 定位于按钮上方。 */
+.tabbar-view-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 176px;
+  max-width: calc(100vw - 16px);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+.tabbar-view-menu__item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* 0.5.4（U6）：悬停只给鼠标设备（与全站 :hover 门控口径一致）。 */
+@media (hover: hover) {
+  .tabbar-view-menu__item:hover {
+    background: var(--surface-2);
+  }
+}
+.tabbar-view-menu__item[aria-checked='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+.tabbar-view-menu__check,
+.tabbar-view-menu__icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+}
+.tabbar-view-menu__icon {
+  justify-content: flex-end;
+  opacity: 0.7;
+}
+
 .tabbar__btn.is-active {
   color: var(--accent-ink-on-soft);
   background: var(--accent-soft);
@@ -3015,5 +3116,18 @@
   }
   .admin-table__actions {
     flex-wrap: wrap;
+  }
+}
+
+/* ---- 0.5.4（U7）：>720 顶栏 logo 折叠左侧栏 ------------------------------
+   桌面折叠态由 app.js 的 `applySidebarCollapsed()` 打在 `.app` 上；≤720 的抽屉
+   形态在 views.css 的媒体段里，两者互斥。折叠后第一列宽 0，主区整块左移；
+   侧栏从栅格与渲染树里一起消失，里面可聚焦的元素也由 JS 加 `inert` 退出 Tab。 */
+@media (min-width: 721px) {
+  .app.app--sidebar-collapsed {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+  .app.app--sidebar-collapsed .sidebar {
+    display: none;
   }
 }

@@ -64,7 +64,10 @@ describe('app — single-key view shortcuts', () => {
     expect(document.querySelector('.scrim')).not.toBeNull();
     pressKey('Escape');
     expect(shell.classList.contains('sidebar-open')).toBe(false);
-    expect(menu.getAttribute('aria-expanded')).toBe('false');
+    // 0.5.4（U7）：aria-expanded 的宽窄口径改了——≤720 表示抽屉开合，>720 表示侧栏
+    // 可见/折叠。本用例的 matchMedia 恒为 false（桌面宽），所以抽屉关掉后侧栏仍可见，
+    // 正确值是 true；抽屉本身已由上面的类、遮罩与焦点断言证明关闭。
+    expect(menu.getAttribute('aria-expanded')).toBe('true');
     expect(document.querySelector('.scrim')).toBeNull();
     expect(document.activeElement).toBe(menu);
     // Idle Escape is a no-op, not an error.

@@ -708,8 +708,16 @@ describe('0.2.19 D9 农历 7px + 月格能放两行就放两行', () => {
     expect(text).toContain('text-overflow: ellipsis');
     expect(tokensCss).toContain('--lunar-scale: 0.8');
     expect(viewsCss).not.toContain('--lunar-fs');
-    const narrow = viewsCss.slice(viewsCss.indexOf('@media (max-width: 520px) {'));
-    expect(narrow.slice(0, 300)).toMatch(/\.month__lunar \{\s*display: none;/);
+    // 0.5.9（S4）口径变更：≤520 不再隐藏农历（用户要求手机保留大屏信息）。
+    // 紧凑段用 display:flex 覆盖更早的 display:none；views.css 末尾还有日程 520 段，
+    // 所以用正则确认「某个 520 段内含 display:flex」，不取最后一段。
+    expect(viewsCss).toMatch(
+      /@media \(max-width: 520px\) \{[\s\S]*?\.month__lunar \{\s*display: flex;/,
+    );
+    const hideAt = viewsCss.search(/\.month__lunar \{\s*display: none;/);
+    const showAt = viewsCss.search(/\.month__lunar \{\s*display: flex;/);
+    // 旧的隐藏规则若仍存在，必须出现在显示规则之前，否则会把它覆盖掉
+    if (hideAt > -1) expect(hideAt).toBeLessThan(showAt);
   });
 
   it('容量按 getBoundingClientRect 的小数像素算，不再用 clientHeight/offsetTop', () => {

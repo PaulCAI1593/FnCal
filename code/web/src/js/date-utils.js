@@ -295,6 +295,21 @@ export function formatTime(date, { hour12 = true } = {}) {
   return formatterFor(clockOptions(hour12)).format(toDate(date));
 }
 
+/**
+ * 0.5.9（F1/F2）：≤520 手机档的**短格式 24 小时制**时钟，如 "09:05"。
+ *
+ * 手机月 chip 的时间列最窄只有 30.7px（320 宽），日程时间列 68px（≤360）；
+ * 12 小时制 "上午10:00" 放不进去，`overflow:hidden` 会直接切掉末位数字
+ * （0.5.9 用户截图：「上午10:0」）。短格式只有 5 个字符，四档都完整。
+ *
+ * 注意：**不改全局 formatTime**，也不读用户的 hour12 设置——这是手机档专用的
+ * 降级格式，桌面/平板仍按设置显示 12 小时制；完整文案保留在 title/aria-label。
+ */
+export function formatTimeShort24(date) {
+  const d = toDate(date);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 /** Hour-axis label, e.g. 0 -> "上午12时", 13 -> "下午1时" (or "13:00" in 24h). */
 export function formatHourLabel(hour, { hour12 = true } = {}) {
   if (!hour12) return `${pad2(hour)}:00`;

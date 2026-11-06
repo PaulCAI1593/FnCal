@@ -25,6 +25,7 @@ import {
   orderedWeekdays,
   minutesSinceMidnight,
   formatTime,
+  formatTimeShort24,
   formatTimeRange,
   formatHourLabel,
   formatMonthYear,
@@ -214,6 +215,15 @@ describe('formatting', () => {
   it('formatTime 24-hour', () => {
     expect(formatTime(new Date(2026, 6, 12, 9, 5), { hour12: false })).toBe('09:05');
     expect(formatTime(new Date(2026, 6, 12, 0, 0), { hour12: false })).toBe('00:00');
+  });
+
+  it('formatTimeShort24 始终 5 个字符（手机月 chip / 日程时间列用）', () => {
+    expect(formatTimeShort24(new Date(2026, 6, 12, 0, 0))).toBe('00:00');
+    expect(formatTimeShort24(new Date(2026, 6, 12, 9, 5))).toBe('09:05');
+    expect(formatTimeShort24(new Date(2026, 6, 12, 13, 0))).toBe('13:00');
+    expect(formatTimeShort24(new Date(2026, 6, 12, 23, 45))).toBe('23:45');
+    // 与用户 hour12 设置无关：这是手机档专用降级格式，不受全局设置影响。
+    expect(formatTimeShort24(new Date(2026, 6, 12, 13, 0), { hour12: true })).toBe('13:00');
   });
 
   it('formatHourLabel', () => {

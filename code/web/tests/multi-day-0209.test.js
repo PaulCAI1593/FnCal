@@ -343,8 +343,9 @@ describe('⑭ 年视图跨天事件横带', () => {
     expect(rule('.year__bar--gap-right')).toContain('right: calc(50% - max(28%, 8px))');
     // 1px 网格 gap 是 .year__days 的既定值
     expect(viewsCss).toMatch(/\.year__days \{[^}]*gap: 1px;/s);
-    // §22.4：≤720px 窄屏只留单日圆点
-    expect(viewsCss).toMatch(/@media \(max-width: 720px\) \{[\s\S]{0,120}\.year__bar \{\s*display: none;/);
+    // 0.5.3（S3）：≤720px 不再整条隐藏多日胶囊（用户反馈「手机上年视图没有条形只有圆形」）；
+    // 只有格高 < 26px 的 .year--compact 才隐藏（见同批 ui-0210 的几何断言）。
+    expect(viewsCss).not.toMatch(/@media \(max-width: 720px\) \{[\s\S]{0,120}\.year__bar \{\s*display: none;/);
     // 角标已作废：不再有 +N 样式
     expect(viewsCss).not.toContain('.year__bar-more');
     // 0.2.11（C1）：胶囊日的日号用白字、尺寸与单日态一致（50% / min 14px）

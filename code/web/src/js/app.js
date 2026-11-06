@@ -4,6 +4,7 @@
  * store changes, resizing, and the per-minute "now" tick.
  */
 import { el, clear } from './dom.js';
+import { shouldFallbackToggle } from './brand-toggle.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
 import { signOut, userInitial } from './auth.js';
@@ -71,6 +72,10 @@ import {
   formatTime,
 } from './date-utils.js';
 import { colorHex, colorFg, EVENT_COLORS } from './colors.js';
+// 0.5.4（U3）：手机日历主体横滑切换周期（判定参数见 swipe-nav.js）。
+import { createSwipeNav } from './swipe-nav.js';
+
+const viewLabelKey = (key) => (VIEWS.find((v) => v.key === key) || VIEWS[0]).labelKey;
 
 const VIEWS = [
   { key: 'year', labelKey: 'view.year' },
@@ -92,6 +97,10 @@ export function createApp(root, { store, user }) {
     // 0.2.0（B4）：右侧任务栏与它的筛选页签。
     taskbarOpen: false,
     taskFilter: 'all', // 'all' | 'open' | 'done'
+    // 0.5.4（U1）：≤720 底部「任务」是视图态（主区显示任务列表），不是覆盖抽屉。
+    tasksView: false,
+    // 0.5.6（A）：进任务视图时记下当时的日历视图，再点一次「任务」退回它。
+    tasksReturnView: null,
   };
 
   applyTheme(store.getSettings().theme);
@@ -426,12 +435,18 @@ export function createApp(root, { store, user }) {
         '-',
         { label: t('common.delete'), danger: true, action: () => deleteWithUndo(ev) },
       ]),
-    slotContextMenu: (evt, startMs) =>
-      openContextMenu(evt, [
-        { label: t('editor.newEvent'), action: () => modal.openNew({ start: startMs }) },
-        { label: t('app.action.newAllDayEvent'), action: () => modal.openNew({ start: startMs, allDay: true }) },
-        { label: t('editor.newTask'), action: () => modal.openNew({ mode: 'task', due: startMs }) },
-      ]),
+    slotContextMenu: (evt, startMs, opts) =>
+      openContextMenu(
+        evt,
+        [
+          // 0.5.10（用户第三次确认）：全应用没有「新建全天事件」——桌面右键、时间网格
+          // 右键、手机长按都只有「新建事件」「新建任务」两项；编辑器里的「全天」开关保留。
+          { label: t('editor.newEvent'), action: () => modal.openNew({ start: startMs }) },
+          { label: t('editor.newTask'), action: () => modal.openNew({ mode: 'task', due: startMs }) },
+        ],
+        // 0.5.12（S1）：视图层透传打开来源（触屏长按 source:'touch'；桌面右键不传）。
+        opts,
+      ),
     createTask: (defaults) => {
       closeSidebar();
       modal.openNew({ ...defaults, mode: 'task' });
@@ -658,6 +673,10 @@ export function createApp(root, { store, user }) {
   // `state`/settings already in place. A second render() here drew the whole
   // app twice per keystroke (every view switch and settings toggle).
   function setView(view) {
+    // 0.5.4（U1）：切到任一日历视图即退出手机任务视图态。
+    state.tasksView = false;
+    // 0.5.4（U6）：视图菜单选完即收（点菜单项会先 close，这里兜底键盘/外部入口）。
+    if (typeof closeViewMenu === 'function') closeViewMenu();
     state.view = view;
     store.saveSettings({ defaultView: view });
   }
@@ -672,13 +691,121 @@ export function createApp(root, { store, user }) {
     return { main: formatMonthYear(state.cursor), muted: t('view.beyond') };
   }
 
+  let brandBtn = null;
+
+  // 0.5.4（U7）：>720 点顶栏 logo 折叠 / 展开左侧栏。桌面折叠是独立状态，不复用抽屉的
+  // `state.sidebarOpen`（那几个函数会加遮罩）；偏好存 localStorage，刷新后保持。
+  const SIDEBAR_COLLAPSED_KEY = 'fncal.sidebarCollapsed';
+  try {
+    state.sidebarCollapsed = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  } catch {
+    state.sidebarCollapsed = false; // 隐私模式读不到就默认展开
+  }
+
+  /** 0.5.4（U7）：宽屏（>720）才允许桌面折叠态。 */
+  function isDesktopWidth() {
+    return !narrowSearchMedia.matches;
+  }
+
+  // 0.5.6（D）：顶栏 logo 的开合入口做两处硬化——真机反馈「手机点 logo 呼不出左边栏」，
+  // 但本地 Chromium（合成 click 与真实坐标命中）都正常，说明问题在真机事件链路上：
+  //   ① 窄屏判定除 matchMedia 外再用窗口宽度兜底（iOS 上媒体查询值可能滞后一帧），
+  //      避免误走桌面的折叠分支；
+  //   ② 触屏补一层 pointerup 兜底：个别 WebKit 版本在祖先处理过 pointerdown 后不发
+  //      click；click 正常到达时不重复切换（600ms 内见过 click 就跳过，兜底切换后
+  //      再用 900ms 冷却吞掉迟到的 click，避免一次点按开又关）。
+  let brandClickAt = 0;
+  let brandPointerUpAt = 0;
+  let brandSuppressUntil = 0;
+  let brandFallbackTimer = 0;
+
+  /** 0.5.6（D）：手机走抽屉、桌面走折叠；两者互斥，不会同时留下类与遮罩。 */
+  function isNarrowViewport() {
+    return narrowSearchMedia.matches || window.innerWidth <= 720;
+  }
+
+  function doBrandToggle() {
+    if (isNarrowViewport()) toggleSidebar();
+    else toggleDesktopSidebar();
+  }
+
+  function onBrandClick() {
+    if (Date.now() < brandSuppressUntil) return; // pointerup 兜底已经切换过
+    clearTimeout(brandFallbackTimer); // 链路正常：兜底不再跑（0.5.7 修「开了又立刻关」）
+    brandClickAt = Date.now();
+    doBrandToggle();
+  }
+
+  function onBrandPointerUp(e) {
+    if (e.pointerType === 'mouse') return;
+    clearTimeout(brandFallbackTimer);
+    brandPointerUpAt = Date.now();
+    brandFallbackTimer = setTimeout(() => {
+      // 0.5.7：只看「这次 pointerup 之后有没有收到 click」，不再用固定时间窗——
+      // 合成 click 到达很快时旧口径会判成没收到，兜底再切一次，抽屉开了又关。
+      if (!shouldFallbackToggle(brandClickAt, brandPointerUpAt)) return;
+      brandSuppressUntil = Date.now() + 900;
+      doBrandToggle();
+    }, 600);
+  }
+
+  /**
+   * 0.5.4（U4/U7）：aria-expanded 的统一口径——≤720 表示抽屉开合，>720 表示侧栏可见。
+   * 汉堡按钮窄屏已由 CSS 隐藏但 DOM 保留，两者一起同步，读屏不会读到矛盾状态。
+   */
+  function syncSidebarAria() {
+    const expanded = isDesktopWidth() ? !state.sidebarCollapsed : state.sidebarOpen;
+    menuBtn.setAttribute('aria-expanded', String(expanded));
+    if (brandBtn) brandBtn.setAttribute('aria-expanded', String(expanded));
+  }
+
+  /**
+   * 0.5.4（U7）：把桌面折叠态落到 `.app` 类与侧栏 inert 上。
+   * 窄屏一律不生效——这样断点切换后类不会残留（CSS 里折叠规则也只在 >720 生效）。
+   * `inert` 让侧栏内的可聚焦元素退出 Tab 顺序与读屏（display:none 已隐藏，双保险）。
+   */
+  function applySidebarCollapsed(sidebarEl) {
+    const collapsed = isDesktopWidth() && state.sidebarCollapsed;
+    shell.classList.toggle('app--sidebar-collapsed', collapsed);
+    const target = sidebarEl || shell.querySelector('.sidebar');
+    if (target) {
+      if (collapsed) {
+        target.setAttribute('inert', '');
+        target.setAttribute('aria-hidden', 'true');
+      } else {
+        target.removeAttribute('inert');
+        target.removeAttribute('aria-hidden');
+      }
+    }
+    syncSidebarAria();
+  }
+
+  /** 0.5.4（U7）：点 logo 的宽屏动作；折叠前焦点在侧栏里就交给 logo 按钮。 */
+  function toggleDesktopSidebar() {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, state.sidebarCollapsed ? '1' : '0');
+    } catch {
+      /* 写不进去就只在本次会话生效 */
+    }
+    const sidebarEl = shell.querySelector('.sidebar');
+    const hadFocus = Boolean(sidebarEl && sidebarEl.contains(document.activeElement));
+    applySidebarCollapsed(sidebarEl);
+    if (state.sidebarCollapsed && hadFocus && brandBtn) brandBtn.focus();
+  }
+
+  /** 0.5.4（U4）：侧栏开合同步到桌面汉堡（保留 DOM）与顶栏 logo 按钮。 */
+  function setSidebarExpanded() {
+    syncSidebarAria();
+  }
+
   function closeSidebar() {
     state.sidebarOpen = false;
     shell.classList.remove('sidebar-open');
     // Remove every scrim, not just the last-tracked one, so none can leak.
     shell.querySelectorAll('.scrim').forEach((s) => s.remove());
     scrimEl = null;
-    menuBtn.setAttribute('aria-expanded', 'false');
+    setSidebarExpanded(false);
   }
   function openSidebar() {
     if (state.sidebarOpen) return; // idempotent — never stack scrims
@@ -686,7 +813,7 @@ export function createApp(root, { store, user }) {
     shell.classList.add('sidebar-open');
     scrimEl = el('div', { class: 'scrim', on: { click: closeSidebar } });
     shell.append(scrimEl);
-    menuBtn.setAttribute('aria-expanded', 'true');
+    setSidebarExpanded(true);
   }
   function toggleSidebar() {
     state.sidebarOpen ? closeSidebar() : openSidebar();
@@ -711,16 +838,88 @@ export function createApp(root, { store, user }) {
         on: { click: () => setView(v.key) },
       }),
     );
-    tabbar.append(
-      el('button', {
-        type: 'button',
-        class: 'tabbar__btn',
-        dataset: { view: v.key },
-        html: icon(tabIcon(v.key), { size: 'sm' }) + `<span class="tabbar__label">${label}</span>`,
-        on: { click: () => setView(v.key) },
-      }),
-    );
   });
+
+  // 0.5.4（U6）：手机底栏只留 4 项——铃（提案）/ 视图切换 / 今天 / 任务。
+  // 6 个视图不再平铺，收成一个「当前视图」按钮 + 轻量 popover（无遮罩，与 U1 一致）。
+  const tabViewBtn = el('button', {
+    class: 'tabbar__btn tabbar__view',
+    type: 'button',
+    'aria-haspopup': 'menu',
+    'aria-expanded': 'false',
+    'aria-label': t('toolbar.currentViewAria', { name: t(viewLabelKey(state.view)) }),
+    html: icon(tabIcon(state.view), { size: 'sm' }) + `<span class="tabbar__label">${t(viewLabelKey(state.view))}</span>`,
+    on: { click: () => toggleViewMenu() },
+  });
+  let viewMenu = null;
+  function viewMenuBox() {
+    const box = el('div', {
+      class: 'popover tabbar-view-menu',
+      role: 'menu',
+      'aria-label': t('toolbar.viewGroup'),
+    });
+    VIEWS.forEach((v) => {
+      const checked = v.key === state.view;
+      box.append(
+        el('button', {
+          class: 'tabbar-view-menu__item',
+          type: 'button',
+          role: 'menuitemradio',
+          'aria-checked': String(checked),
+          html:
+            `<span class="tabbar-view-menu__check">${checked ? icon('check', { size: 'sm' }) : ''}</span>` +
+            `<span class="tabbar-view-menu__label">${t(v.labelKey)}</span>` +
+            `<span class="tabbar-view-menu__icon">${icon(tabIcon(v.key), { size: 'sm' })}</span>`,
+          on: {
+            click: () => {
+              closeViewMenu();
+              setView(v.key);
+            },
+          },
+        }),
+      );
+    });
+    return box;
+  }
+  function onViewMenuDown(ev) {
+    if (!viewMenu) return;
+    if (viewMenu.contains(ev.target) || tabViewBtn.contains(ev.target)) return;
+    closeViewMenu();
+  }
+  function onViewMenuKey(ev) {
+    if (ev.key !== 'Escape') return;
+    closeViewMenu();
+    tabViewBtn.focus();
+  }
+  function closeViewMenu() {
+    if (!viewMenu) return;
+    document.removeEventListener('pointerdown', onViewMenuDown, true);
+    document.removeEventListener('keydown', onViewMenuKey, true);
+    viewMenu.remove();
+    viewMenu = null;
+    tabViewBtn.setAttribute('aria-expanded', 'false');
+  }
+  function openViewMenu() {
+    if (viewMenu) return;
+    viewMenu = viewMenuBox();
+    document.body.append(viewMenu);
+    const rect = tabViewBtn.getBoundingClientRect();
+    const width = viewMenu.offsetWidth;
+    const left = Math.min(
+      Math.max(8, rect.left + rect.width / 2 - width / 2),
+      Math.max(8, window.innerWidth - width - 8),
+    );
+    viewMenu.style.left = `${left}px`;
+    viewMenu.style.top = `${Math.max(8, rect.top - viewMenu.offsetHeight - 8)}px`;
+    tabViewBtn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onViewMenuDown, true);
+    document.addEventListener('keydown', onViewMenuKey, true);
+    const current = viewMenu.querySelector('[aria-checked="true"]');
+    if (current) current.focus();
+  }
+  function toggleViewMenu() {
+    viewMenu ? closeViewMenu() : openViewMenu();
+  }
 
   const searchBtn = el('button', {
     class: 'icon-btn search-toggle',
@@ -746,28 +945,46 @@ export function createApp(root, { store, user }) {
   });
 
   // 0.1.2：账号与设置入口；0.2.0（B3）扩展为「一般 / 日历 / CalDAV 账户」三页。
+  // 0.5.3（S4）：≤520 顶栏空间不足，齿轮按钮由 CSS 隐藏（`.header__settings`），
+  // 同一个打开动作同时挂到头像菜单的「设置」项，窄屏仍能进设置；宽屏齿轮还在，
+  // 菜单不重复这一项（菜单项数量与顺序因此仍按宽屏口径）。
+  const narrowHeaderQuery = window.matchMedia ? window.matchMedia('(max-width: 520px)') : null;
+  const settingsEntry = () =>
+    narrowHeaderQuery && narrowHeaderQuery.matches
+      ? el('button', {
+          class: 'menu-item popover__settings',
+          type: 'button',
+          html: icon('settings', { size: 'sm' }) + `<span>${t('toolbar.settings')}</span>`,
+          on: {
+            click: () => {
+              closeUserMenu();
+              openSettings();
+            },
+          },
+        })
+      : null;
+  const openSettings = () =>
+    openAccountDialog({
+      user,
+      store,
+      tab: 'general',
+      onSignOut: handleSignOut,
+      onSignOutAll: handleSignOutAll,
+      // 0.2.2（⑥）：表格里的 编辑 / 删除 / 导出 必须真正接上动作，否则
+      // 按钮点了没反应（导出弹窗打不开 / 删除无反馈）。
+      onEditCalendar: (cal) => actions.calendarSettings(cal),
+      onExportCalendar: (cal) => actions.exportCalendar(cal),
+      onDeleteCalendar: (cal, opts) => actions.deleteCalendar(cal, opts),
+      onClearCalendar: (cal, opts) => actions.clearCalendar(cal, opts),
+    });
+
   const settingsBtn = el('button', {
-    class: 'icon-btn',
+    class: 'icon-btn header__settings',
     type: 'button',
     'aria-label': t('toolbar.settings'),
     title: t('toolbar.settings'),
     html: icon('settings'),
-    on: {
-      click: () =>
-        openAccountDialog({
-          user,
-          store,
-          tab: 'general',
-          onSignOut: handleSignOut,
-          onSignOutAll: handleSignOutAll,
-          // 0.2.2（⑥）：表格里的 编辑 / 删除 / 导出 必须真正接上动作，否则
-          // 按钮点了没反应（导出弹窗打不开 / 删除无反馈）。
-          onEditCalendar: (cal) => actions.calendarSettings(cal),
-          onExportCalendar: (cal) => actions.exportCalendar(cal),
-          onDeleteCalendar: (cal, opts) => actions.deleteCalendar(cal, opts),
-          onClearCalendar: (cal, opts) => actions.clearCalendar(cal, opts),
-        }),
-    },
+    on: { click: () => openSettings() },
   });
 
   // 0.3.7（用户 m00779 / 规范 design/M11-设置红点-规范.md §6）：齿轮红点已于 0.4.8
@@ -798,15 +1015,16 @@ export function createApp(root, { store, user }) {
   const tabBellBtn = el('button', {
     class: 'tabbar__btn tabbar__bell',
     type: 'button',
-    'aria-label': t('toolbar.proposals'),
-    title: t('toolbar.proposals'),
+    // 0.5.4（U6）：底栏铃铛的可见文字按用户口径写「提案」（读屏名沿用「AI 提案」族，
+    // paintBell 会用 toolbar.proposals / proposalsWithPending 覆盖 aria-label，两者都含「提案」）。
+    'aria-label': t('tabbar.proposals'),
+    title: t('tabbar.proposals'),
     'aria-haspopup': 'dialog',
     'aria-expanded': 'false',
-    html: icon('bell', { size: 'sm' }),
+    html: icon('bell', { size: 'sm' }) + `<span class="tabbar__label">${t('tabbar.proposals')}</span>`,
     on: { click: (e) => toggleProposalsPanel(e) },
   });
   bells.push(tabBellBtn);
-  tabbar.prepend(tabBellBtn);
 
   // 0.4.10（用户）：AI 关闭时两个铃铛都不显示。浮层状态必须在这里先声明：
   // 挂载时的首次 onAiBadgeChange 回调可能立刻执行「关闭 → 收起浮层」，
@@ -823,9 +1041,27 @@ export function createApp(root, { store, user }) {
     'aria-pressed': 'false',
     'aria-controls': 'taskbar',
     html: icon('check', { size: 'sm' }) + `<span class="tabbar__label">${t('taskbar.title')}</span>`,
-    on: { click: () => toggleTaskbar() },
+    on: { click: () => toggleTaskEntry() },
   });
-  tabbar.append(tabTaskBtn);
+
+  // 0.5.4（U6）：底栏「今天」——≤720 顶栏的今天按钮由 CSS 隐藏，点它等同 goToday()；
+  // 当前在任务视图先退出任务视图再回到今天。
+  const tabTodayBtn = el('button', {
+    class: 'tabbar__btn tabbar__today',
+    type: 'button',
+    'aria-label': t('toolbar.today'),
+    title: t('toolbar.today'),
+    // 0.5.11（S5，用户）：今天用 calendar-today，与视图按钮的月/周图标区分。
+    html: icon('calendar-today', { size: 'sm' }) + `<span class="tabbar__label">${t('toolbar.today')}</span>`,
+    on: {
+      click: () => {
+        if (state.tasksView) state.tasksView = false;
+        goToday();
+      },
+    },
+  });
+  // 0.5.4（U6）：底栏固定 4 项，顺序 = 铃（提案）→ 视图切换 → 今天 → 任务。
+  tabbar.append(tabBellBtn, tabViewBtn, tabTodayBtn, tabTaskBtn);
 
   const avatarBtn = el('button', {
     class: 'avatar',
@@ -1014,9 +1250,23 @@ export function createApp(root, { store, user }) {
       // `.header__nav` 的流内位置，「今天」回到 0.4.7 的 x；≤1200 的 nav 有
       // `overflow: hidden`，挂 nav 上会被裁掉（详见 `styles/layout.css`）。
       bellBtn,
-      el('span', { class: 'brand-mark' }, [
-        el('img', { src: './icon-192.png', alt: '', width: '30', height: '30' }),
-      ]),
+      // 0.5.4（U4/U7）：品牌标就是侧栏开关——≤720 开合抽屉；>720 折叠 / 展开左侧栏。
+      (brandBtn = el(
+        'button',
+        {
+          class: 'brand-mark brand-button',
+          type: 'button',
+          'aria-label': t('toolbar.menu'),
+          'aria-expanded': 'false',
+          'aria-controls': 'app-sidebar',
+          on: {
+            // 0.5.6（D）：click 是主路径；pointerup 只是触屏兜底（见 onBrandPointerUp）。
+            click: onBrandClick,
+            pointerup: onBrandPointerUp,
+          },
+        },
+        [el('img', { src: './icon-192.png', alt: '', width: '30', height: '30' })],
+      )),
       el('span', { class: 'brand-name', text: t('app.name') }),
     ]),
     el('div', { class: 'header__nav' }, [
@@ -1069,6 +1319,26 @@ export function createApp(root, { store, user }) {
   root.removeAttribute('aria-busy');
   root.append(shell);
 
+  // 0.5.4（U3）：≤720 日历主体横滑切换周期（触屏档箭头由 CSS 隐藏）。
+  // 点击、纵向滚动、按钮/链接/开关、chip 行、任务视图都不触发（见 swipe-nav.js）。
+  const swipeNav = createSwipeNav({
+    onPrev: () => shiftCursor(-1),
+    onNext: () => shiftCursor(1),
+    isEnabled: () =>
+      narrowSearchMedia.matches &&
+      !state.tasksView &&
+      !document.querySelector('.modal, .popover, .date-popover, .search__overlay'),
+  });
+  swipeNav.attach(mainEl);
+  if (narrowSearchMedia.addEventListener) {
+    narrowSearchMedia.addEventListener('change', () => {
+      // 0.5.4（U7）：断点来回切换时清理对方的形态——进窄屏不留桌面折叠态（render 里的
+      // applySidebarCollapsed 会移除类），抽屉默认关闭；回宽屏不留遮罩。
+      if (state.sidebarOpen) closeSidebar();
+      render();
+    });
+  }
+
   // 0.4.8（用户 2026-11-04 / 规范 M18 §2）：header 拼好之后再启动状态轮询（首次立刻
   // 拉一次，不等 60 秒）。铃铛节点只在挂载时建一次——分钟 tick 的 render() 换的是
   // 侧栏与视图，不重建 header，所以这里不需要每次 render 重贴；订阅要留，状态一变
@@ -1120,6 +1390,39 @@ export function createApp(root, { store, user }) {
     } else if (taskBtn.focus) {
       taskBtn.focus();
     }
+  }
+
+  /**
+   * 0.5.4（U1）：底部「任务」在 ≤720 是视图切换——主区显示任务列表，没有遮罩、
+   * 没有右上角关闭按钮；桌面仍是右侧任务栏开关（行为不变）。
+   */
+  function toggleTaskEntry() {
+    if (!narrowSearchMedia.matches) {
+      toggleTaskbar();
+      return;
+    }
+    if (state.tasksView) {
+      // 0.5.6（A）：再点一次「任务」退回进入前的日历视图（底部按钮文字随之恢复）。
+      // 进入时若没有记录（例如状态被外部改过），退回当前 `state.view`。
+      const back = state.tasksReturnView || state.view;
+      state.tasksView = false;
+      state.tasksReturnView = null;
+      state.view = back;
+      render();
+      // 退出后焦点交给底栏「任务」按钮，读屏能读到视图已切换（不抢日历格焦点）。
+      if (taskBtn && taskBtn.focus) taskBtn.focus({ preventScroll: true });
+      return;
+    }
+    state.tasksReturnView = state.view;
+    state.tasksView = true;
+    render();
+    focusTasksHeading();
+  }
+
+  /** 0.5.4（U1，交互约束 5）：切进任务视图后焦点落到主区标题。 */
+  function focusTasksHeading() {
+    const target = mainEl.querySelector('.tasks-view__title') || mainEl.querySelector('.task-row__main');
+    if (target && target.focus) target.focus({ preventScroll: true });
   }
 
   /** 任务排序：未完成按截止升序（无截止垫底）→ 已完成按更新时间倒序。 */
@@ -1191,38 +1494,99 @@ export function createApp(root, { store, user }) {
     return row;
   }
 
+  /** 0.5.4（U1）：任务筛选 segmented——桌面任务栏与手机任务视图共用。 */
+  function taskFiltersEl() {
+    const filters = [
+      { key: 'all', label: t('taskbar.filter.all') },
+      { key: 'open', label: t('taskbar.filter.open') },
+      { key: 'done', label: t('taskbar.filter.done') },
+    ];
+    return el(
+      'div',
+      { class: 'segmented taskbar__filters', role: 'group', 'aria-label': t('taskbar.title') },
+      filters.map((filter) =>
+        el('button', {
+          type: 'button',
+          text: filter.label,
+          'aria-pressed': String(state.taskFilter === filter.key),
+          on: {
+            click: () => {
+              state.taskFilter = filter.key;
+              render();
+            },
+          },
+        }),
+      ),
+    );
+  }
+
+  /** 0.5.4（U1）：任务列表（或空态）——两处共用。 */
+  function taskListEl(now) {
+    const tasks = taskbarTasks();
+    if (!tasks.length) {
+      return el('div', { class: 'taskbar__empty' }, [
+        el('p', { class: 'taskbar__empty-title', text: t('taskbar.empty.title') }),
+        el('p', { class: 'taskbar__empty-desc', text: t('taskbar.empty.desc') }),
+        el('button', {
+          class: 'btn btn--primary',
+          type: 'button',
+          text: t('taskbar.new'),
+          on: { click: () => modal.openNew({ mode: 'task' }) },
+        }),
+      ]);
+    }
+    const listEl = el('div', { class: 'taskbar__list', role: 'list' });
+    for (const task of tasks) listEl.append(buildTaskRow(task, now));
+    return listEl;
+  }
+
+  function taskNewButton() {
+    return el('button', {
+      class: 'icon-btn taskbar__new',
+      type: 'button',
+      'aria-label': t('taskbar.new'),
+      title: t('taskbar.new'),
+      html: icon('plus'),
+      on: { click: () => modal.openNew({ mode: 'task' }) },
+    });
+  }
+
+  /** 0.5.4（U1）：手机任务视图（主区内、无遮罩、无关闭按钮）。 */
+  function buildTasksView(now) {
+    return el('section', { class: 'tasks-view', 'aria-label': t('taskbar.title') }, [
+      el('div', { class: 'tasks-view__head' }, [
+        el('h2', { class: 'tasks-view__title', tabindex: '-1', text: t('taskbar.title') }),
+        taskNewButton(),
+      ]),
+      taskFiltersEl(),
+      taskListEl(now),
+    ]);
+  }
+
   function renderTaskbar(now) {
-    const open = state.taskbarOpen;
+    const narrow = narrowSearchMedia.matches;
+    // 0.5.4（U1）：≤720 任务走主区视图态，右侧栏永不打开（没有遮罩、没有关闭按钮）。
+    const open = state.taskbarOpen && !narrow;
+    const mobileTasks = state.tasksView && narrow;
     shell.classList.toggle('has-taskbar', open);
     taskbarEl.hidden = !open;
     taskbarScrim.hidden = !open;
     taskBtn.classList.toggle('is-active', open);
     taskBtn.setAttribute('aria-pressed', String(open));
     // 0.4.9：底部工具栏的「任务」是同一个动作的第二个入口，按下态同步。
-    tabTaskBtn.setAttribute('aria-pressed', String(open));
+    tabTaskBtn.classList.toggle('is-active', mobileTasks);
+    tabTaskBtn.setAttribute('aria-pressed', String(mobileTasks || open));
     taskbarEl.setAttribute('aria-expanded', String(open));
     if (!open) {
       clear(taskbarEl);
       return;
     }
     clear(taskbarEl);
-    const filters = [
-      { key: 'all', label: t('taskbar.filter.all') },
-      { key: 'open', label: t('taskbar.filter.open') },
-      { key: 'done', label: t('taskbar.filter.done') },
-    ];
     taskbarEl.append(
       el('div', { class: 'taskbar__head' }, [
         el('h2', { class: 'taskbar__title', text: t('taskbar.title') }),
         el('div', { class: 'taskbar__head-actions' }, [
-          el('button', {
-            class: 'icon-btn taskbar__new',
-            type: 'button',
-            'aria-label': t('taskbar.new'),
-            title: t('taskbar.new'),
-            html: icon('plus'),
-            on: { click: () => modal.openNew({ mode: 'task' }) },
-          }),
+          taskNewButton(),
           el('button', {
             class: 'icon-btn taskbar__close',
             type: 'button',
@@ -1233,43 +1597,9 @@ export function createApp(root, { store, user }) {
           }),
         ]),
       ]),
-      el(
-        'div',
-        { class: 'segmented taskbar__filters', role: 'group', 'aria-label': t('taskbar.title') },
-        filters.map((filter) =>
-          el('button', {
-            type: 'button',
-            text: filter.label,
-            'aria-pressed': String(state.taskFilter === filter.key),
-            on: {
-              click: () => {
-                state.taskFilter = filter.key;
-                render();
-              },
-            },
-          }),
-        ),
-      ),
+      taskFiltersEl(),
+      taskListEl(now),
     );
-    const tasks = taskbarTasks();
-    if (!tasks.length) {
-      taskbarEl.append(
-        el('div', { class: 'taskbar__empty' }, [
-          el('p', { class: 'taskbar__empty-title', text: t('taskbar.empty.title') }),
-          el('p', { class: 'taskbar__empty-desc', text: t('taskbar.empty.desc') }),
-          el('button', {
-            class: 'btn btn--primary',
-            type: 'button',
-            text: t('taskbar.new'),
-            on: { click: () => modal.openNew({ mode: 'task' }) },
-          }),
-        ]),
-      );
-      return;
-    }
-    const listEl = el('div', { class: 'taskbar__list', role: 'list' });
-    for (const task of tasks) listEl.append(buildTaskRow(task, now));
-    taskbarEl.append(listEl);
   }
 
   // ---- Render ----
@@ -1280,7 +1610,9 @@ export function createApp(root, { store, user }) {
 
   function render() {
     renderPending = false;
-    closeContextMenu();
+    // 0.5.12（S7）：重渲染拆掉菜单时记为 render，`?ctxdebug=1` 能看出菜单是被
+    // 视图重建收走的（onResize / tick / store 变更的 defer 已保证不打断手势）。
+    closeContextMenu('render');
     const s = store.getSettings();
     // Keep the DOM theme in step with the (possibly just-reloaded) setting. The
     // views read weekStartsOn/hour12/lunar from `s` on every render, but
@@ -1295,9 +1627,11 @@ export function createApp(root, { store, user }) {
     applyAccentColor(s.accentColor);
     const now = new Date();
     const ctx = { store, settings: s, cursor: state.cursor, miniCursor: state.miniCursor, now, actions };
+    // 0.5.4（U1）：≤720 的「任务」是视图态——主区显示任务列表，右侧栏不打开。
+    const mobileTasks = state.tasksView && narrowSearchMedia.matches;
 
     // Header title + active states.
-    const title = headerTitle();
+    const title = mobileTasks ? { main: t('taskbar.title') } : headerTitle();
     clear(headerTitleEl);
     headerTitleEl.append(document.createTextNode(title.main));
     if (title.muted) headerTitleEl.append(el('span', { class: 'muted', text: ' ' + title.muted }));
@@ -1307,11 +1641,18 @@ export function createApp(root, { store, user }) {
     );
     // The phone tab bar states its current view the same way the desktop
     // segmented control does, so it is announced and not only painted.
-    tabbar.querySelectorAll('button').forEach((b) => {
-      const active = b.dataset.view === state.view;
+    tabbar.querySelectorAll('button[data-view]').forEach((b) => {
+      // 任务视图态下日历视图按钮都不算选中（底部「任务」自己亮）。
+      const active = !mobileTasks && b.dataset.view === state.view;
       b.classList.toggle('is-active', active);
       b.setAttribute('aria-pressed', String(active));
     });
+    // 0.5.4（U6）：底栏视图按钮显示当前视图图标 + 名称（任务视图态下仍显示原视图）。
+    // 读屏名同步成「当前视图：X，点按切换」，与可见文字一致；aria-expanded 由开合逻辑维护。
+    tabViewBtn.innerHTML =
+      icon(tabIcon(state.view), { size: 'sm' }) +
+      `<span class="tabbar__label">${t(viewLabelKey(state.view))}</span>`;
+    tabViewBtn.setAttribute('aria-label', t('toolbar.currentViewAria', { name: t(viewLabelKey(state.view)) }));
 
     // Both the sidebar and the view are rebuilt from scratch, which detaches
     // whatever the user last activated and drops keyboard focus to <body>.
@@ -1326,6 +1667,8 @@ export function createApp(root, { store, user }) {
     const newSidebar = renderSidebar(ctx);
     if (sidebarSlot.firstChild) sidebarSlot.firstChild.replaceWith(newSidebar);
     else sidebarSlot.append(newSidebar);
+    // 0.5.4（U7）：侧栏每次都重建，折叠态（类 / inert / aria-expanded）要重新落到新节点上。
+    applySidebarCollapsed(newSidebar);
     // 0.2.2（⑧）：必须等新侧栏进入 DOM 后再量（此前在插入前调用，量到的是旧
     // 节点/空节点，遮罩会因 re-render 误消失）。
     updateSidebarFade();
@@ -1349,10 +1692,15 @@ export function createApp(root, { store, user }) {
       prevScroll != null &&
       (cursorMs === lastCursorMs || !prevScrollEl.classList.contains('agenda'));
 
-    const rendered = renderView(state.view, ctx);
-    clear(mainEl);
-    mainEl.append(rendered.node);
-    rendered.afterMount?.();
+    if (mobileTasks) {
+      clear(mainEl);
+      mainEl.append(buildTasksView(now));
+    } else {
+      const rendered = renderView(state.view, ctx);
+      clear(mainEl);
+      mainEl.append(rendered.node);
+      rendered.afterMount?.();
+    }
 
     // 0.2.0（B4）：任务栏与当前视图同帧刷新（勾选/筛选/新建都会走到这里）。
     renderTaskbar(now);
@@ -1547,6 +1895,8 @@ export function createApp(root, { store, user }) {
           },
         },
       }),
+      // 0.5.3（S4）：≤520 顶栏齿轮隐藏后从头像菜单进设置（宽屏为 null，不占位）。
+      settingsEntry(),
       // 0.4.14（M22 §1，用户 2026-11-04）：「立即同步」之后、「登出」之前。
       // 点开只打开弹窗（弹窗内自己检查），这里不改菜单其他项。
       el('button', {
@@ -1666,10 +2016,18 @@ export function createApp(root, { store, user }) {
     box.style.width = `${width}px`;
     box.style.left = `${left}px`;
     const bottomMode = anchor.classList.contains('tabbar__bell');
-    const top = bottomMode
-      ? Math.max(8, rect.top - box.offsetHeight - 8)
-      : Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - box.offsetHeight - 8));
-    box.style.top = `${top}px`;
+    if (bottomMode) {
+      // 0.5.8：底栏铃铛的浮层改成「底边锚定」——底边固定在铃铛上方 8px，内容加载变高
+      // 时向**上**生长。原来按 top = 铃铛顶 − 面板高 − 8 定位，可面板刚挂载时高度还没
+      // 算完（提案列表异步填充），top 偏下，长高后一路向下压，手机上看着就贴在屏幕下半截。
+      // 0.5.10（S4，用户：「提案列表底部稍微和底栏空开一点距离」）：留距 8 → 16px，
+      // maxHeight 同步多留 8px，内容再长也不压到底栏。
+      box.style.bottom = `${Math.max(16, window.innerHeight - rect.top + 16)}px`;
+      box.style.maxHeight = `${Math.max(120, rect.top - 24)}px`;
+    } else {
+      const top = Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - box.offsetHeight - 8));
+      box.style.top = `${top}px`;
+    }
     box.focus();
 
     const onDocDown = (ev) => {
@@ -1771,9 +2129,16 @@ export function createApp(root, { store, user }) {
     // The mobile drawer sits over the calendar behind a scrim, like any other
     // overlay — so Escape dismisses it too, and hands focus back to the button
     // that opened it (the drawer's controls are about to leave the screen).
+    // 0.5.4（U6）：视图菜单的 Esc 关闭挂在自己的捕获监听上（openViewMenu 里注册），
+    // 这里只兜底处理「菜单还开着」的键盘场景。
+    if (e.key === 'Escape' && viewMenu) {
+      closeViewMenu();
+      tabViewBtn.focus();
+      return;
+    }
     if (e.key === 'Escape' && state.sidebarOpen) {
       closeSidebar();
-      menuBtn.focus();
+      (narrowSearchMedia.matches && brandBtn ? brandBtn : menuBtn).focus();
       return;
     }
     // 0.2.8（用户 2）：Esc 也能收起右侧任务栏（与 ×、遮罩点击一致）。
@@ -1886,7 +2251,17 @@ export function createApp(root, { store, user }) {
     // The drawer + scrim are mobile-only; never let them survive a resize.
     if (!window.matchMedia('(max-width: 720px)').matches && state.sidebarOpen) closeSidebar();
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(render);
+    // 0.5.12（S5）：resize 会重建视图，而 render() 会顺手关掉上下文菜单。真机上
+    // iOS 地址栏/键盘/视觉视口变化会频繁触发 resize，长按菜单因此「一闪就消失」。
+    // 菜单开着时不重建视图（推迟到它自己关闭后由 flushPending 补一次），让
+    // context-menu 的 resize 护栏去判断「是不是真的变尺寸」。
+    resizeRaf = requestAnimationFrame(() => {
+      if (isContextMenuOpen()) {
+        renderPending = true;
+        return;
+      }
+      render();
+    });
   };
   window.addEventListener('resize', onResize);
 
@@ -1950,7 +2325,8 @@ export function createApp(root, { store, user }) {
       window.removeEventListener('resize', updateSidebarFade);
       if (sidebarFadeObserver) sidebarFadeObserver.disconnect();
       closeUserMenu();
-      closeContextMenu();
+      // 0.5.12（S7）：拆壳时菜单随视图一起收走，诊断里记为 render。
+      closeContextMenu('render');
       search.close();
       search.closeDocked();
     },
@@ -1962,10 +2338,11 @@ function normalizeView(v) {
 }
 
 function tabIcon(key) {
+  // 0.5.11（S5，用户）：月 / 周改用专属图标，六项视图与「今天」互不相同。
   const icons = {
     year: 'grid',
-    month: 'calendar',
-    week: 'calendar-blank',
+    month: 'view-month',
+    week: 'view-week',
     '4day': 'columns',
     day: 'clock',
     agenda: 'align-left',

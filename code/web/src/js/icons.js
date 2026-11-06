@@ -46,6 +46,18 @@ const PATHS = {
     '<path d="M17.8 19.2 16 11l3.5-3.5c1-1 1-2.6.5-3.1s-2.1-.5-3.1.5L13.4 8.4 5.2 6.6c-.5-.1-1 0-1.4.4l-.7.7 5.5 3.6-3 3-2.5-.5-1 1 3.5 2 2 3.5 1-1-.5-2.5 3-3 3.6 5.5.7-.7c.4-.4.5-.9.4-1.4z"/>',
   'calendar-blank':
     '<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+  // 0.5.11（S5，用户）：月 / 周各一枚专属视图图标，与「今天」区分。
+  // 月 = 日历框 + 3×3 实心点（月格子）；周 = 日历框 + 7 条竖线（一周 7 天）。
+  // 24×24 网格、currentColor、无 fill 色值；点/线用实心保证 16px 下仍可辨。
+  'view-month':
+    '<rect x="3" y="4" width="18" height="17" rx="2.5"/><line x1="3" y1="9" x2="21" y2="9"/>' +
+    '<circle cx="7.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="16.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/>' +
+    '<circle cx="7.5" cy="15.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="15.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="16.5" cy="15.5" r="1.1" fill="currentColor" stroke="none"/>' +
+    '<circle cx="7.5" cy="18.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="16.5" cy="18.5" r="1.1" fill="currentColor" stroke="none"/>',
+  'view-week':
+    '<rect x="3" y="4" width="18" height="17" rx="2.5"/><line x1="3" y1="9" x2="21" y2="9"/>' +
+    '<line x1="6" y1="12" x2="6" y2="18.5"/><line x1="8" y1="12" x2="8" y2="18.5"/><line x1="10" y1="12" x2="10" y2="18.5"/>' +
+    '<line x1="12" y1="12" x2="12" y2="18.5"/><line x1="14" y1="12" x2="14" y2="18.5"/><line x1="16" y1="12" x2="16" y2="18.5"/><line x1="18" y1="12" x2="18" y2="18.5"/>',
   grid:
     '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
   columns:

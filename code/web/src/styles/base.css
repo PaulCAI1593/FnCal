@@ -191,6 +191,58 @@ a {
   width: 100%;
 }
 
+/* ---- 0.5.4（U5）：交互控件在触屏上不选字、不弹 callout、不双击缩放、无蓝色高亮 ----
+   只覆盖交互控件，不用 `*` 全局禁选（正文、事件详情仍需可复制）。
+   `touch-action: manipulation` 去掉双击缩放/选词的等待，正常点击与滚动不受影响。 */
+button,
+[role='button'],
+[role='checkbox'],
+[role='radio'],
+[role='tab'],
+.btn,
+.icon-btn,
+.tabbar,
+.tabbar__btn,
+.segmented,
+.segmented button,
+.chip,
+.mini__cell,
+.mini-cal__day,
+.task-row,
+.month__day,
+.month__cell,
+.year__day,
+.menu-toggle,
+.brand-button {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+button *,
+[role='button'] *,
+.tabbar__btn *,
+.segmented *,
+.chip *,
+.task-row *,
+.month__cell * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* 可复制内容的显式例外：上面后代规则会覆盖到这些容器里的文字。 */
+input,
+textarea,
+select,
+[contenteditable='true'],
+.view__desc,
+.cal-desc,
+.modal__body .view__desc {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
 /* Icon-only square button */
 .icon-btn {
   display: inline-flex;

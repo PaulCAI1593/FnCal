@@ -336,9 +336,11 @@ describe('0.2.22 G3 / 0.2.23 H3 折叠容量 = 逐格实测 R（含按钮行、�
 
   it('容量算式写进代码：按实测 R，n>R 才让出最后一行；不再有 max(3, …) 硬下界', () => {
     expect(monthJs).not.toMatch(/Math\.max\(3/);
-    // 全显判定：**渲染行数** ≤ 容量（R）直接 return，不出按钮。0.2.35 起把泳道占位行也
-    // 算进去（totalRows）——只数真实条目会让「条 + 空占位 + 单日」判成 2 行、实际 3 行。
-    expect(monthJs).toMatch(/if\s*\(totalRows\s*<=\s*capacity\)\s*return;/);
+    // 0.5.9（S1）口径变更：全显判定从 `totalRows <= capacity` 改成「真实要占的行数
+    // effectiveRows（条占泳道行 + 手机档单日上限 2 + 折叠按钮行）<= capacity」，
+    // 否则手机档把 3 条单日当成 3 行、实际只放 2 行 + 1 行按钮，会判成「放不下」而误出按钮。
+    expect(monthJs).toMatch(/if\s*\(effectiveRows\s*<=\s*capacity[^)]*\)\s*return;/);
+    expect(monthJs).toMatch(/const effectiveRows = laneNodes\.length \+ compactOthersCap/);
     // 0.2.33（M1）：真实条目名额 = R − 1（由 planCellRows 统一分配：先保条、再保
     // 单日/任务，最后一行留给「还有 N 个」；条放不下时也要折叠）。
     expect(monthJs).toMatch(/export function planCellRows\(/);

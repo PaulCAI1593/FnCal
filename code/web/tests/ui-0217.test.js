@@ -181,12 +181,18 @@ afterEach(() => {
 describe('0.2.17 B1 手机月视图：文字 chip 取代点阵（≤520px）', () => {
   const compactCss = () => mediaBlock(viewsCss, '@media (max-width: 520px) {', '.header__today-label');
 
-  it('CSS：单行文字块（20px 高、11px 字、左侧 3px 日历色条），不再是 7px 圆点', () => {
+  it('CSS：文字块（26px 高、11px 字、左侧 3px 日历色条），不再是 7px 圆点', () => {
     const block = compactCss();
-    // 文字块本体：最小高度 + 小一号字号 + 单行
-    expect(block).toMatch(/\.chip \{[\s\S]*?min-height: 20px/);
+    // 0.5.9（S4）口径变更：单日 chip 从「20px 单行（时间 + 标题挤一行）」改成
+    // 「26px 两行（标题一行、时间一行）」。20px 单行时 390 宽下 8 个 chip 里只有 2 个
+    // 还看得见标题，其余标题宽度被时间挤成 0 —— 等于把事件名删掉，用户不同意手机少信息。
+    // 高度 26px 与跨天条同高（--month-chip-h 实测），行高 12px × 2 + 上下 padding 2px。
+    expect(block).toMatch(/\.chip \{[\s\S]*?min-height: 26px/);
     expect(block).toMatch(/\.chip \{[\s\S]*?font-size: var\(--fs-xs\)/);
-    expect(block).toMatch(/\.chip \{[\s\S]*?line-height: 20px/);
+    expect(block).toMatch(/\.chip \{[\s\S]*?line-height: 12px/);
+    // 两行规则：标题 order 1、时间 order 2，各占整行宽
+    expect(block).toMatch(/\.chip__title \{[\s\S]*?order: 1/);
+    expect(block).toMatch(/\.chip__time \{[\s\S]*?order: 2/);
     // 日历色语义改成左侧 3px 竖条
     expect(block).toMatch(/\.chip::after \{[\s\S]*?width: 3px/);
     // 命中区撑大（不靠穿透点击）
@@ -211,6 +217,12 @@ describe('0.2.17 B1 手机月视图：文字 chip 取代点阵（≤520px）', (
         actions: VIEW_ACTIONS,
       });
       document.body.append(node);
+      // 0.5.9：紧凑档不再按 children 下标盲切，改为与宽屏同一条「实测容量」路径；
+      // jsdom 没有布局，这里补上 chip 高度（20px = CSS 里 .chip 的实际高度），
+      // 让折叠逻辑能测到真实口径（每格最多 2 条单日 + 「还有 N 个」）。
+      node.querySelectorAll('.chip').forEach((c) => {
+        Object.defineProperty(c, 'offsetHeight', { configurable: true, value: 20 });
+      });
       afterMount();
 
       const day8 = startOfDay(new Date(2026, 9, 8)).getTime();
@@ -226,10 +238,19 @@ describe('0.2.17 B1 手机月视图：文字 chip 取代点阵（≤520px）', (
     }
   });
 
-  it('容量上限写死为 2，且窄屏不再跑多日条端点几何', () => {
-    expect(monthJs).toMatch(/i >= 2/);
-    // 紧凑档走自己的分支后直接 return，0.2.15 D1 的几何只服务宽屏填色条
-    expect(monthJs).toMatch(/if \(compact\) \{[\s\S]{0,900}?return;/);
+  it('容量上限写死为 2，且窄屏同样跑多日条端点几何（0.5.9 口径变更）', () => {
+    // 0.5.9：旧的「按 children 下标 i >= 2 盲切」实现已删除，上限改由
+    // compactOthersCap = Math.min(2, otherNodes.length) 表达（语义仍是每格 2 条）。
+    expect(monthJs).toMatch(/const compactOthersCap = compact \? Math\.min\(2, otherNodes\.length\)/);
+    // 0.5.9：旧口径「紧凑档走自己的分支后直接 return，几何只服务宽屏」作废——
+    // 几何段（monthBarBoxes）在紧凑标记之后**无条件执行**，四档手机宽度同样跑。
+    const compactAt = monthJs.indexOf('const compact = isCompactScreen();');
+    const boxAt = monthJs.indexOf('monthBarBoxes(');
+    expect(compactAt).toBeGreaterThan(-1);
+    expect(boxAt).toBeGreaterThan(compactAt);
+    // 手机上长条永不折叠（只收单日/任务），容量再不够也不让条出去。
+    expect(monthJs).toMatch(/if \(compact\) \{\s*visibleBars = barNodes\.length;/);
+    expect(monthJs).toMatch(/else if \(!compact && visibleBars > 0\)/);
   });
 
   it('宽屏不受影响：>520 仍是可测量容量的填色条（不进入紧凑分支）', () => {

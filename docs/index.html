@@ -70,7 +70,7 @@
   }
   img, svg { max-width: 100%; }
   img { height: auto; display: block; }
-  code { font-family: var(--mono); font-size: .92em; }
+  code { font-family: var(--mono); font-size: .92em; white-space: nowrap; }
   h1, h2, h3 { line-height: 1.22; letter-spacing: -.01em; margin: 0; font-weight: 650; }
   p { margin: 0; }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
@@ -358,6 +358,30 @@
     table.perm td:nth-child(2) { color: var(--ink); font-weight: 600; margin-top: 2px; }
     table.perm td:nth-child(3) { margin-top: 4px; color: var(--ink-2); }
   }
+
+  /* 特色卡片 */
+  .cards { margin-top: 36px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .cards--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .card { padding: 22px 22px 24px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); }
+  .card .card__n { margin: 0; font-family: var(--mono); font-size: var(--t-xs); letter-spacing: .06em; color: var(--accent); }
+  .card h3 { margin-top: 10px; font-size: var(--t-lg); font-weight: 620; }
+  .card p { margin-top: 8px; font-size: var(--t-md); color: var(--ink-2); line-height: 1.7; }
+
+  /* 截图组 */
+  .shots2 { margin-top: 34px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+  .shots2 .shot { margin: 0; }
+  .shot--phone { max-width: 340px; }
+
+  /* 小标题 */
+  h3.sub { margin-top: 34px; font-size: var(--t-lg); font-weight: 620; }
+
+  @media (max-width: 860px) {
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .shots2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .cards, .cards--2 { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body id="top">
@@ -376,11 +400,13 @@
       <span>FnCal</span>
     </a>
     <nav class="top__nav" aria-label="页面导航">
-      <a href="#ai">AI 助手</a>
-      <a href="#why">为什么自托管</a>
-      <a href="#features">功能</a>
+      <a href="#ai-abilities">能力</a>
+      <a href="#ai">四步</a>
+      <a href="#features">特色</a>
       <a href="#install">安装</a>
-      <a href="#download">下载</a>
+      <a href="#clients">客户端</a>
+      <a href="#security">安全</a>
+      <a href="#versions">下载</a>
     </nav>
     <a class="top__gh" href="https://github.com/PaulCAI1593/FnCal">
       <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
@@ -388,21 +414,22 @@
     </a>
   </div>
 </header>
-
 <main>
   <section class="hero wrap">
-    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.5.2</p>
+    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.5.12</p>
     <h1>日历留在自己的 NAS 上</h1>
     <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
-      <a class="btn btn--primary" href="#download">下载 0.5.2</a>
-      <a class="btn" href="#ai">看看 AI 怎么接入</a>
+      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-0.5.12.fpk">下载安装包 0.5.12</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-MCP-Skill-0.5.12.zip">下载 AI 技能包</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/SHA256SUMS.txt">下载校验文件</a>
     </div>
+    <p style="margin-top:16px;font-size:var(--t-md);color:var(--ink-3)">安装包 713,701 B · 技能包 26,202 B · 校验文件 176 B。先看 <a href="#ai-abilities">两条 AI 能力</a>、<a href="#ai">四步接入</a> 与 <a href="#features">六条特色</a>。</p>
     <dl class="spec">
       <div><dt>协议</dt><dd>CalDAV · RFC 4791</dd></div>
       <div><dt>数据</dt><dd>本机 <code>/vol1/<wbr>@appdata/<wbr>FnCal/</code></dd></div>
       <div><dt>许可</dt><dd>MIT</dd></div>
-      <div><dt>体积</dt><dd>708,971 B</dd></div>
+      <div><dt>体积</dt><dd>713,701 B</dd></div>
     </dl>
     <figure class="shot">
       <div class="shot__frame">
@@ -412,12 +439,56 @@
     </figure>
   </section>
 
-  <section class="sec" id="ai">
+  <section class="sec" id="ai-abilities">
+    <div class="wrap">
+      <div class="sec__head">
+        <p class="kicker">AI capabilities</p>
+        <h2>两条能力：读日程，改日程</h2>
+        <p>接上只是第一步。真正决定它能做什么的，是你在凭据里划的那条线。</p>
+      </div>
+      <div class="cards cards--2">
+        <article class="card">
+          <p class="card__n">01</p>
+          <h3>读懂日程，推荐行程</h3>
+          <p>只读授权范围内的日程，提炼你的时间规律与偏好。</p>
+          <p>结合空档给出可行安排，你挑完再写进日历。</p>
+        </article>
+        <article class="card">
+          <p class="card__n">02</p>
+          <h3>改动走审批，权限在你手里</h3>
+          <p>AI 的改动先变成提案，附上改什么、改在哪、什么时候。</p>
+          <p>你点「批准」才写入；每一步都留审计记录，可以回溯。</p>
+        </article>
+      </div>
+      <div class="shots2">
+        <figure class="shot">
+          <div class="shot__frame">
+            <img src="screenshots/ai-credentials.png" alt="FnCal 设置里的 AI 页签：逐个日历设为不可见、只读或读写，并选择写入模式提案或直接写入" width="900" height="900">
+          </div>
+          <figcaption>「设置 → AI」页签：逐个日历设「不可见 / 只读 / 读写」，再选写入模式「提案 / 直接写入」。</figcaption>
+        </figure>
+        <figure class="shot">
+          <div class="shot__frame">
+            <img src="screenshots/mcp-client.png" alt="AI 客户端里添加自定义 MCP 的对话框：名称、连接地址与 Bearer 令牌" width="900" height="900">
+          </div>
+          <figcaption>在 AI 客户端里添加自定义 MCP：填连接地址与 Bearer 令牌。</figcaption>
+        </figure>
+      </div>
+      <figure class="shot shot--phone">
+        <div class="shot__frame">
+          <img src="screenshots/ai-chat.jpg" alt="手机端 AI 对话界面：用户问去过多少省市，助手按日历口径列出城市清单" width="820" height="1664">
+        </div>
+        <figcaption>手机端的 AI 对话：它读的是你授权范围内的日程，回答能对上日历里的记录。</figcaption>
+      </figure>
+    </div>
+  </section>
+
+<section class="sec" id="ai">
     <div class="wrap">
       <div class="sec__head">
         <p class="kicker">AI assistant · MCP</p>
         <h2>让 AI 帮你排日程，<br>但决定权留在你手里</h2>
-        <p>通过 MCP 把 FnCal 接进 AI 助手。它读得到的内容、改得动的范围、写完要不要你点头，全部由一个凭据决定。默认状态下 AI 写不进你的日历：它只会留下提案，等你在 FnCal 里点「接受」，或者把一条一次性审批链接发给你。</p>
+        <p>通过 MCP 把 FnCal 接进 AI 助手。它读得到的内容、改得动的范围、写完要不要你点头，全部由一个凭据决定。默认状态下 AI 写不进你的日历：它只会留下提案，等你在 FnCal 里点「接受」，或者把一条一次性审批链接发给你。批准或拒绝之后，FnCal 会给客户端推一条通知；客户端也可以主动等待审批结果。</p>
       </div>
 
       <div class="stepfigs">
@@ -456,11 +527,11 @@
               <text class="ts" x="50" y="30" font-size="11">AI 助手</text>
               <text class="tl" x="50" y="46">FnCal MCP · 已连接</text>
               <rect x="18" y="58" width="284" height="42" rx="10" fill="#f3f6fb"/>
-              <text class="tv" x="32" y="76">把「产品评审」改到周五 15:00，可以吗？</text>
+              <text class="tv" x="32" y="76">把「团队周会」改到周五 15:00，可以吗？</text>
               <text class="tm" x="32" y="91">applied: false · 等待你确认</text>
               <rect x="18" y="112" width="284" height="60" rx="10" fill="#ffffff" stroke="#e2e7ef"/>
               <rect x="18" y="112" width="4" height="60" rx="2" fill="#1094b7"/>
-              <text class="tv" x="34" y="132" font-weight="600">产品评审</text>
+              <text class="tv" x="34" y="132" font-weight="600">团队周会</text>
               <text class="tl" x="34" y="148">11-06 周五 15:00–15:30</text>
               <text class="tl" x="34" y="163">提案 · 修改 · 24 小时内有效</text>
             </svg>
@@ -480,7 +551,7 @@
               <text class="tl" x="18" y="84">待确认 1 条 · 10 分钟内有效</text>
               <rect x="18" y="96" width="284" height="90" rx="10" fill="#ffffff" stroke="#e2e7ef"/>
               <rect x="18" y="96" width="4" height="90" rx="2" fill="#1094b7"/>
-              <text class="tv" x="34" y="118" font-weight="600">产品评审</text>
+              <text class="tv" x="34" y="118" font-weight="600">团队周会</text>
               <text class="tl" x="34" y="138">11-06 周五 15:00–15:30</text>
               <rect x="188" y="152" width="46" height="22" rx="11" fill="#0e63b8"/>
               <text class="tw" x="211" y="167" text-anchor="middle">批准</text>
@@ -502,7 +573,7 @@
               <circle cx="160" cy="52" r="24" fill="url(#okg)"/>
               <path d="M149 52l7 8 15-16" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
               <text x="160" y="96" text-anchor="middle" class="ts" font-size="15">已批准，变更已生效</text>
-              <text x="160" y="116" text-anchor="middle" class="tl">「产品评审」已从 14:00 改到 15:00</text>
+              <text x="160" y="116" text-anchor="middle" class="tl">「团队周会」已从 14:00 改到 15:00</text>
               <line x1="40" y1="134" x2="280" y2="134" stroke="#e2e7ef"/>
               <text class="tm" x="40" y="154">approval-link-decision · pin ✓</text>
               <text class="tm" x="40" y="176">ai-change-applied · 11-05 21:15</text>
@@ -538,66 +609,63 @@
         </tbody>
       </table>
 
-      <p style="margin-top:26px;font-size:var(--t-md);color:var(--ink-2)">客户端：凡支持自定义 MCP 的都能接，如 Claude Desktop、Cherry Studio。配置与令牌见 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/README.md">README</a>；AI 技能包随 Release 附带，可在客户端里「立即更新」。</p>
+      <p style="margin-top:26px;font-size:var(--t-md);color:var(--ink-2);max-width:44em">客户端：凡支持自定义 MCP 的都能接，如 Claude Desktop、Cherry Studio。</p>
+    <p style="margin-top:10px;font-size:var(--t-md);color:var(--ink-2);max-width:44em">在 FnCal 里打开「设置 → AI」页签，新建凭据后把连接地址与令牌填进客户端；令牌只显示一次。配置细节见 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/README.md">README</a>；AI 技能包随 Release 附带，可在客户端里「立即更新」。</p>
     </div>
   </section>
 
-  <section class="sec" id="why">
-    <div class="wrap two-col">
-      <div class="col-sticky">
-        <p class="kicker">Why self-host</p>
-        <div class="sec__head">
-          <h2>日历不需要<br>经过别人的服务器</h2>
-          <p>把日程交给第三方，等于把每天几点出门、几点开会、去哪出差都交给一个你不控制的服务。FnCal 把这件事收回 NAS：数据落在自己的硬盘上，备份、迁移、删除都由你决定。</p>
-        </div>
-      </div>
-      <ol class="args">
-        <li>
-          <span class="n">01</span>
-          <div>
-            <h3>零云依赖</h3>
-            <p>运行期不请求 puter.com 或任何第三方云；前端不引 CDN、字体与统计脚本。依赖与许可列在 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>，可逐条审计。</p>
-          </div>
-        </li>
-        <li>
-          <span class="n">02</span>
-          <div>
-            <h3>标准协议，不是封闭格式</h3>
-            <p>按 RFC 4791 实现 CalDAV，事件（VEVENT）与任务（VTODO）都能同步。导出是标准 <code>.ics</code>，时区、重复规则与提醒往返不丢；哪天不用 FnCal，数据照旧能带走。</p>
-          </div>
-        </li>
-        <li>
-          <span class="n">03</span>
-          <div>
-            <h3>AI 只能在授权范围内动作</h3>
-            <p>每个凭据单独设置：能看到哪些日历、能看多远的时间窗、能读写哪些字段、写操作是「提案」还是「直接通过」。默认提案，改动要你点确认。</p>
-          </div>
-        </li>
-        <li>
-          <span class="n">04</span>
-          <div>
-            <h3>装在一台 NAS 上就完事</h3>
-            <p>飞牛 OS 应用中心安装 <code>.fpk</code>，填端口和管理员密码即可用；也提供 Docker 镜像。没有外部账号、没有激活码、没有订阅。</p>
-          </div>
-        </li>
-      </ol>
-    </div>
-  </section>
-
-  <section class="sec" id="features">
+<section class="sec" id="features">
     <div class="wrap">
       <div class="sec__head">
-        <p class="kicker">Features</p>
-        <h2>一个日历，六种看法</h2>
-        <p>年、月、周、四天、日、日程六种视图，桌面与手机都能用；手机上每格最多两条文字加「+N」，点开是当日清单。</p>
+        <p class="kicker">Features · 六条</p>
+        <h2>六条理由，说清楚 FnCal 是什么</h2>
+        <p>先说值不值得装，再说怎么装。每一条都对应一件具体的事。</p>
+      </div>
+      <div class="cards">
+        <article class="card">
+          <p class="card__n">01</p>
+          <h3>数据在自己的硬盘</h3>
+          <p>账号、日历与事件全部落在 NAS 本机。</p>
+          <p>运行期不请求第三方服务，无遥测、无统计脚本。</p>
+        </article>
+        <article class="card">
+          <p class="card__n">02</p>
+          <h3>标准 CalDAV，不是封闭格式</h3>
+          <p>按 RFC 4791 实现，事件与任务都能同步。</p>
+          <p>导出是标准 <code>.ics</code>，时区与重复规则不丢。</p>
+        </article>
+        <article class="card">
+          <p class="card__n">03</p>
+          <h3>六种看法，一套数据</h3>
+          <p>年、月、周、四日、日、日程，同一批日程。</p>
+          <p>左侧迷你月历点年月即可跳转。</p>
+        </article>
+        <article class="card">
+          <p class="card__n">04</p>
+          <h3>每个日历一种颜色</h3>
+          <p>各自有名称、颜色、描述与显示开关。</p>
+          <p>事件默认继承日历色，单条可另行覆盖。</p>
+        </article>
+        <article class="card">
+          <p class="card__n">05</p>
+          <h3>事件和任务分开管</h3>
+          <p>待办放进独立的「任务」日历。</p>
+          <p>任务以 VTODO 暴露给 CalDAV 客户端。</p>
+        </article>
+        <article class="card">
+          <p class="card__n">06</p>
+          <h3>装在自己的 NAS 上</h3>
+          <p>飞牛 OS 应用包，填端口与管理员账号即可。</p>
+          <p>也提供 Docker 部署，手机平板同样可用。</p>
+        </article>
       </div>
       <div class="views" aria-label="视图">
-        <span>年</span><span>月</span><span>周</span><span>四天</span><span>日</span><span>日程</span>
+        <span>年</span><span>月</span><span>周</span><span>四日</span><span>日</span><span>日程</span>
       </div>
       <dl class="feat">
         <div class="feat__row">
           <dt>多日历</dt>
-          <dd>新建任意多个日历，各自颜色与描述；可单独隐藏、单独导出。<strong>「我的日历」与「任务」不可删除</strong>，可改名。</dd>
+          <dd>新建任意多个日历，各自颜色与描述；可单独隐藏、单独导出。<strong>「我的日历」与「任务」不可删除</strong>，可改名。删除非空日历会提示条数，10 秒内可撤销。</dd>
         </div>
         <div class="feat__row">
           <dt>事件与任务</dt>
@@ -605,11 +673,11 @@
         </div>
         <div class="feat__row">
           <dt>重复与提醒</dt>
-          <dd>支持 RRULE 重复、全天事件、多时区；提醒可设默认值与全天默认值，导入导出往返不丢。</dd>
+          <dd>支持 RRULE 重复、全天事件与多时区；提醒可设默认值与全天默认值。客户端写入的提醒原样保存，导出时一并带走。</dd>
         </div>
         <div class="feat__row">
           <dt>导入导出</dt>
-          <dd>导入 <code>.ics</code> 可新建日历或并入已有日历；导出按日历单独进行，不放管理员菜单。</dd>
+          <dd>导入 <code>.ics</code> 可新建日历或并入已有日历；导出按日历单独进行，保留时区、重复规则与提醒。</dd>
         </div>
         <div class="feat__row">
           <dt>中国公共假日</dt>
@@ -617,7 +685,15 @@
         </div>
         <div class="feat__row">
           <dt>主题与设置</dt>
-          <dd>明暗跟随系统或手动指定，主题色可选预设或自定义；每周开始日、显示周数、时区都可调。设置页页脚显示当前版本号。</dd>
+          <dd>明暗跟随系统或手动指定，主题色可选预设或自定义；时区、每周开始日、显示周数都可调。设置页页脚显示当前版本号。</dd>
+        </div>
+        <div class="feat__row">
+          <dt>搜索与批量修改</dt>
+          <dd>搜索可按关键词与时间范围筛选；重复事件可改所属日历，选「整个系列」或「此事件及以后」。</dd>
+        </div>
+        <div class="feat__row">
+          <dt>检查更新</dt>
+          <dd>头像菜单里有「检查更新」，可以看到当前版本与可用更新。</dd>
         </div>
       </dl>
     </div>
@@ -632,21 +708,27 @@
           <p>飞牛 OS 用户走应用中心；其他环境用 Docker。装之前先核对包的 SHA-256。</p>
         </div>
         <ol class="steps">
-          <li><div><strong>下载安装包</strong><br>从 Release 下载 <code>FnCal-0.5.2.fpk</code>，先核对哈希再安装。</div></li>
-          <li><div><strong>安装向导</strong><br>填一个空闲端口（建议 1024 以上，避开 5232）与管理员用户名、密码；两步都必填。</div></li>
-          <li><div><strong>打开</strong><br>装完点桌面图标，浏览器新标签打开 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>。<strong>桌面图标不会随端口修改自动更新</strong>，改端口后要手动改。</div></li>
-          <li><div><strong>配 CalDAV 客户端</strong><br>服务器地址填 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用户名密码同登录；推荐在「安全设置 → 我的安全」建一个 CalDAV 专用密码。</div></li>
+          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-0.5.12.fpk">Release 下载 <code>FnCal-0.5.12.fpk</code></a>，核对哈希后再装。</div></li>
+          <li><div><strong>安装向导</strong><br>填一个空闲端口（1024 以上，避开 5232）与管理员用户名、密码；两步都必填。</div></li>
+          <li><div><strong>打开并登录</strong><br>装完点桌面图标，浏览器新标签打开 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用刚设的账号登录。</div></li>
         </ol>
+        <h3 class="sub">系统要求</h3>
+        <ul class="rules">
+          <li>飞牛 OS 1.2.0401 或更高；支持 x86 与 arm。</li>
+          <li>依赖 Node.js 22，安装时由应用中心一并带上。</li>
+          <li>端口范围 1024–65535；避开系统保留端口，不要用 5232。</li>
+        </ul>
+        <p style="margin-top:22px;font-size:var(--t-md);color:var(--ink-2)">升级在应用中心覆盖安装即可，数据保留；升级前会自动备份数据目录。源码构建需要 Node.js 22，步骤见仓库 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/BUILD.md">BUILD.md</a>。</p>
       </div>
       <div>
         <pre class="code"><span># 先核对哈希（Linux / macOS）</span>
-sha256sum FnCal-0.5.2.fpk
+sha256sum FnCal-0.5.12.fpk
 
 <span># Windows PowerShell</span>
-Get-FileHash .\FnCal-0.5.2.fpk -Algorithm SHA256
+Get-FileHash .\FnCal-0.5.12.fpk -Algorithm SHA256
 
 <span># 期望值</span>
-3B74D23BC85AB8DFF1667C0A9E4B04A63BA49806A30976C3B8FEE070512A432A</pre>
+4C7BD8D1C6139189C977BB34761BEEC62AD432CAB7B39DFA844A581D29BEA391</pre>
         <div class="callout">
           <strong>对公网开放时请套 HTTPS 反向代理。</strong>FnCal 不做来源 IP 白名单：谁能访问这个端口，谁就能看到登录页。限流、CSRF 与会话安全始终开启。
         </div>
@@ -655,66 +737,119 @@ Get-FileHash .\FnCal-0.5.2.fpk -Algorithm SHA256
     </div>
   </section>
 
-  <section class="sec" id="download">
+  <section class="sec" id="clients">
     <div class="wrap">
       <div class="sec__head">
-        <p class="kicker">Download</p>
-        <h2>v0.5.2</h2>
-        <p>2026-11-06 发布。旧版本不要再装；升级请用应用中心覆盖安装，数据保留。</p>
+        <p class="kicker">Clients & data</p>
+        <h2>客户端与数据</h2>
+        <p>凡按 RFC 4791 实现的客户端都能接上；数据在自己的目录里，备份与迁移由你决定。</p>
       </div>
-      <div class="assets">
-        <div class="asset">
-          <div class="asset__name">安装包 <code>FnCal-0.5.2.fpk</code></div>
-          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.5.2.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.2/FnCal-0.5.2.fpk">下载</a>
-          <div class="asset__meta">708,971 B · SHA-256 3B74D23BC85AB8DFF1667C0A9E4B04A63BA49806A30976C3B8FEE070512A432A</div>
-        </div>
-        <div class="asset">
-          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.5.2.zip</code></div>
-          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.5.2.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.2/FnCal-MCP-Skill-0.5.2.zip">下载</a>
-          <div class="asset__meta">26,201 B · SHA-256 5F65C0867CAD06EAB1EA4E27C4AC0C45E40C02823D4B2CA494D9C9AAC7CD9528</div>
-        </div>
-        <div class="asset">
-          <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
-          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.2/SHA256SUMS.txt">下载</a>
-          <div class="asset__meta">174 B · 含上面两个文件的哈希，可一条命令核对</div>
-        </div>
-      </div>
-      <p style="margin-top:24px;font-size:var(--t-md);color:var(--ink-2)">全部版本：<a href="https://github.com/PaulCAI1593/FnCal/releases">Releases</a> · 更新内容：<a href="https://github.com/PaulCAI1593/FnCal/blob/main/CHANGELOG.md">CHANGELOG</a> · 源码与文档：<a href="https://github.com/PaulCAI1593/FnCal">GitHub 仓库</a></p>
-    </div>
-  </section>
-
-  <section class="sec" id="faq">
-    <div class="wrap">
-      <div class="sec__head">
-        <p class="kicker">FAQ</p>
-        <h2>常见问题</h2>
-      </div>
-      <div style="margin-top:24px">
+      <table class="perm">
+        <caption>客户端接入：服务器地址、账号与密码。</caption>
+        <thead>
+          <tr><th scope="col">客户端</th><th scope="col">平台</th><th scope="col">怎么接</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>DAVx5</td><td>安卓</td><td>添加账户时选「用 URL 和用户名登录」，填服务器地址、用户名与密码，再选要同步的日历。</td></tr>
+          <tr><td>Thunderbird</td><td>Windows / Linux</td><td>新建「网络日历」，位置填服务器地址，输账号密码后让它自动发现。</td></tr>
+          <tr><td>eM Client</td><td>Windows / macOS</td><td>账户里选 CalDAV，填服务器地址与账号。</td></tr>
+          <tr><td>iOS / macOS 系统日历</td><td>iOS / macOS</td><td>未做真机验收，行为以你实际测试为准。</td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top:22px;font-size:var(--t-md);color:var(--ink-2)">服务器地址统一填 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用户名与登录账号相同；密码可以用登录密码，也可以单独建一个 CalDAV 专用密码，便于随时单独吊销。</p>
+      <h3 class="sub">数据在哪、怎么备份</h3>
+      <p>数据在应用数据目录（飞牛 OS 是 <code>/vol1/@appdata/FnCal/</code>，Docker 是 <code>/data</code> 卷）：<code>accounts.json</code> 是账号与设置，<code>secret.key</code> 是会话与加密密钥（不要删），<code>calendars/</code> 放各账号的日历与事件，<code>logs/</code> 是审计与访问日志。</p>
+      <p>备份就是整目录打包，恢复时把目录放回原位再启动。单本日历也可以用「导出」拿到标准 <code>.ics</code>。</p>
+      <h3 class="sub">常见问题</h3>
+      <div style="margin-top:12px">
         <details class="faq">
-          <summary>数据存在哪里？需要联网吗？</summary>
-          <p>存在 NAS 的用户数据目录（Docker 是 <code>/data</code> 卷）：账号、密钥、<code>calendars/</code> 与日志。运行时不需要外网；AI 接入也是你的客户端去连 FnCal，不是 FnCal 去连外部服务。</p>
+          <summary>数据存在哪里？运行时需要联网吗？</summary>
+          <p>存在 NAS 的应用数据目录（Docker 是 <code>/data</code> 卷）：账号、密钥、<code>calendars/</code> 与日志。运行时不需要外网；AI 接入也是你的客户端去连 FnCal，不是 FnCal 去连外部服务。</p>
         </details>
         <details class="faq">
           <summary>支持哪些日历客户端？</summary>
           <p>凡按 RFC 4791 实现的客户端都可接入：DAVx5（安卓）、Thunderbird、eM Client 等。iOS / macOS 系统日历未做真机验收，行为以你实际测试为准。</p>
         </details>
         <details class="faq">
-          <summary>AI 会自己改我的日程吗？</summary>
-          <p>默认不会。凭据的「新建、修改」是「提案」时，AI 只能留下提案，需要你接受或通过一次性审批链接批准；只有把它设成「直接通过」，AI 才会直接写入。删除同理，可设成提案或进回收站。</p>
-        </details>
-        <details class="faq">
           <summary>怎么备份？</summary>
           <p>整目录备份应用数据目录即可（飞牛 OS 是 <code>/vol1/@appdata/FnCal/</code>，Docker 是 <code>/data</code> 卷；账号、密钥、日历与日志都在里面）；单本日历也可以用「导出」拿到标准 <code>.ics</code>。恢复时把目录放回原位重启。</p>
         </details>
         <details class="faq">
-          <summary>能不能只给家人用、不开公网？</summary>
-          <p>可以。把端口留在局域网内最省事；要远程访问就套 HTTPS 反向代理，并留意路由器的端口映射是否是你想要的暴露面。</p>
+          <summary>手机上能怎么用？</summary>
+          <p>六个视图在手机上保留大屏的元素与信息，只按宽度缩放；底栏四项（提案、当前视图、今天、任务），横滑切周期，点左上角 logo 开合侧栏。</p>
         </details>
       </div>
     </div>
   </section>
-</main>
 
+  <section class="sec" id="security">
+    <div class="wrap two-col">
+      <div class="col-sticky">
+        <p class="kicker">Security & self-hosting</p>
+        <div class="sec__head">
+          <h2>安全与自托管</h2>
+          <p>自托管的意义是：谁在访问、访问了什么，你都能查到，也能随时收回。</p>
+        </div>
+      </div>
+      <div>
+        <ul class="rules">
+          <li><strong>运行期零云依赖。</strong>不请求第三方云，无遥测、无统计脚本；前端不引外部字体、CDN 与统计。</li>
+          <li><strong>密码用 bcrypt 存储。</strong>登录限流与账号锁定一直开着。</li>
+          <li><strong>CSRF 双提交、会话失效、安全响应头。</strong>每次改动都写审计日志。</li>
+          <li><strong>来源按 TCP 对端地址判定。</strong>默认不采信转发头，也不做来源 IP 白名单。</li>
+          <li><strong>要上公网就套 HTTPS 反向代理。</strong>开启「通过反向代理提供 HTTPS」的前提是请求确实经可信反代以 HTTPS 到达；开启后 HTTP 访问会 301 到 443。内置 HTTPS 端口 5243。</li>
+          <li><strong>AI 的权限逐个日历划。</strong>「不可见」的日历对 AI 等同于不存在，连名字都读不到。</li>
+        </ul>
+        <h3 class="sub">常见问题</h3>
+        <div style="margin-top:12px">
+          <details class="faq">
+            <summary>AI 会自己改我的日程吗？</summary>
+            <p>默认不会。凭据的「新建、修改」是「提案」时，AI 只能留下提案，需要你接受或通过一次性审批链接批准；只有把它设成「直接通过」，AI 才会直接写入。删除同理，可设成提案或进回收站。</p>
+          </details>
+          <details class="faq">
+            <summary>能不能只给家人用、不开公网？</summary>
+            <p>可以。把端口留在局域网内最省事；要远程访问就套 HTTPS 反向代理，并留意路由器的端口映射是否是你想要的暴露面。</p>
+          </details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sec" id="versions">
+    <div class="wrap">
+      <div class="sec__head">
+        <p class="kicker">Releases</p>
+        <h2>版本与下载</h2>
+        <p>当前版本 0.5.12（2026-11-06）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
+      </div>
+      <div class="assets">
+        <div class="asset">
+          <div class="asset__name">安装包 <code>FnCal-0.5.12.fpk</code></div>
+          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.5.12.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-0.5.12.fpk">下载</a>
+          <div class="asset__meta">713,701 B · SHA-256 4C7BD8D1C6139189C977BB34761BEEC62AD432CAB7B39DFA844A581D29BEA391</div>
+        </div>
+        <div class="asset">
+          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.5.12.zip</code></div>
+          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.5.12.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-MCP-Skill-0.5.12.zip">下载</a>
+          <div class="asset__meta">26,202 B · SHA-256 E2E1DD59679CD6775607F31E8DCE6D2C01B5168B7BEE1094172142B3770BF139</div>
+        </div>
+        <div class="asset">
+          <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
+          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/SHA256SUMS.txt">下载</a>
+          <div class="asset__meta">176 B · 含上面两个文件的哈希，可一条命令核对</div>
+        </div>
+      </div>
+      <p style="margin-top:24px;font-size:var(--t-md);color:var(--ink-2)">全部版本：<a href="https://github.com/PaulCAI1593/FnCal/releases">Releases</a> · 更新内容：<a href="https://github.com/PaulCAI1593/FnCal/blob/main/CHANGELOG.md">CHANGELOG</a> · 源码与文档：<a href="https://github.com/PaulCAI1593/FnCal">GitHub 仓库</a></p>
+      <h3 class="sub">0.5.12 改了什么</h3>
+      <ul class="rules">
+        <li><strong>手机长按菜单不再被过早关掉。</strong>滚动、指针移动、窗口变化与失焦都不再触发关闭。</li>
+        <li><strong>菜单打开后保持键盘焦点。</strong>聚焦时不动页面滚动位置。</li>
+        <li><strong>加了关闭原因诊断。</strong>需要排查时在地址后加 <code>?ctxdebug=1</code>。</li>
+        <li><strong>接口、数据结构与 CalDAV 行为不变。</strong>已有日历数据与客户端配置不受影响。</li>
+      </ul>
+    </div>
+  </section>
+</main>
 <footer class="foot">
   <div class="wrap">
     <div class="foot__in">
@@ -734,9 +869,13 @@ Get-FileHash .\FnCal-0.5.2.fpk -Algorithm SHA256
         <a href="https://github.com/PaulCAI1593/FnCal/releases">Releases</a>
         <a href="https://github.com/PaulCAI1593/FnCal/blob/main/CHANGELOG.md">更新日志</a>
         <a href="https://github.com/PaulCAI1593/FnCal/blob/main/README.md">文档</a>
+        <a href="https://github.com/PaulCAI1593/FnCal/blob/main/THIRD_PARTY_NOTICES.md">许可与致谢</a>
       </div>
     </div>
-    <p class="foot__note">Copyright © 2026 PaulCAI1593 · MIT 许可 · 本页不加载任何第三方资源（字体、图标、脚本、统计都来自本地）。</p>
+    <p class="foot__note">Copyright © 2026 PaulCAI1593 · MIT 许可。</p>
+    <p class="foot__note">前端源自 HeyPuter/everything 的 <code>src/calendar</code>（MIT），完整清单见 THIRD_PARTY_NOTICES.md。</p>
+    <p class="foot__note">本页不加载任何第三方资源：字体、图标、脚本、统计都来自本地。</p>
+    <p class="foot__note">本页由 <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> 协作产出。</p>
   </div>
 </footer>
 

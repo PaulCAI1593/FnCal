@@ -6,7 +6,8 @@
  *   1. 菜单顺序：`立即同步` → `检查更新` → `登出`（管理员与普通用户都如此）。
  *   2. 打开弹窗即检查一次（不读旧结果）；当前版本显示 `FnCal <version>`。
  *   3. 四种状态：检查中 / 已是最新 / 发现新版本 / 失败（含限流），状态行右侧标本源。
- *   4. `打开下载页` 只在「发现新版本」可用（其余状态禁用不隐藏）；链接按实际 via 给。
+ *   4. `打开下载页` 任何结果态都可点（0.5.9 B-07 口径变更；旧口径「只在发现新版本可用」作废），
+ *      链接优先接口给的 url，否则按当前更新源回落；链接按实际 via 给。
  *   5. 切换源立即重查并写 localStorage；关掉再开保持新源。
  *   6. `重新检查` 用当前源再查；检查中按钮禁用。
  *   7. 请求失败（断网）给中文失败文案，`重新检查` 仍可用；关闭弹窗丢掉飞行结果。
@@ -169,15 +170,21 @@ describe('0.4.14 检查更新弹窗：结构与状态', () => {
     expect(recheckBtn().disabled).toBe(false);
   });
 
-  it('已是最新：文案 `已是最新版本`，右侧标本源 `国内加速`，下载页禁用', async () => {
+  it('已是最新：文案 `已是最新版本`，右侧标本源 `国内加速`，下载页仍可点（B-07 口径变更）', async () => {
+    // 0.5.9（B-07，用户 2026-11-06）：旧断言「已最新时下载页禁用、无 href」作废——
+    // 「打开下载页」在任何结果态都可点，href 优先接口给的 url，否则按当前更新源回落。
     mocks.checkForUpdate.mockResolvedValue(OK_LATEST);
     openUpdateDialog();
     await settle();
     expect(statusText()).toBe(t('update.upToDate'));
     expect(viaText().hidden).toBe(false);
     expect(viaText().textContent).toBe(t('update.via.mirror'));
-    expect(openLink().getAttribute('aria-disabled')).toBe('true');
-    expect(openLink().getAttribute('href')).toBeNull();
+    expect(openLink().getAttribute('aria-disabled')).toBe('false');
+    expect(openLink().getAttribute('href')).toBe(
+      'https://gh-proxy.com/https://github.com/PaulCAI1593/FnCal/releases/latest',
+    );
+    expect(openLink().getAttribute('target')).toBe('_blank');
+    expect(openLink().getAttribute('rel')).toBe('noopener noreferrer');
   });
 
   it('发现新版本：带版本号、标源、下载页可用且按 via 给链接（target/rel 正确）', async () => {
@@ -317,5 +324,87 @@ describe('0.4.15 更新弹窗：右上角关闭按钮', () => {
     closeDialog();
     expect(document.querySelector('.modal--update')).toBeNull();
     expect(document.querySelector('.dialog-scrim')).toBeNull();
+  });
+});
+
+/* 0.5.9 backlog B-07（用户 2026-11-06）：已最新/失败/限流时「打开下载页」是灰的、点了没反应。
+ * 新口径：任何状态都可点，href 优先接口给的 detail.url，否则按**当前更新源**回落
+ * FALLBACK_URLS；target=_blank、rel=noopener noreferrer 保留。 */
+describe('0.5.9 B-07：打开下载页在任何状态都可点', () => {
+  const MIRROR_LATEST = 'https://gh-proxy.com/https://github.com/PaulCAI1593/FnCal/releases/latest';
+  const GITHUB_LATEST = 'https://github.com/PaulCAI1593/FnCal/releases/latest';
+
+  beforeEach(() => {
+    document.body.replaceChildren();
+    window.localStorage.clear();
+    mocks.checkForUpdate.mockReset();
+    __setAppVersionForTest('0.4.14');
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+  });
+
+  it('检查中也可点：href 按当前源回落，target/rel 齐全，不再 tabindex=-1', async () => {
+    let resolveCheck;
+    mocks.checkForUpdate.mockImplementation(() => new Promise((resolve) => { resolveCheck = resolve; }));
+    openUpdateDialog();
+    await settle();
+    expect(statusText()).toBe(t('update.checking'));
+    expect(openLink().getAttribute('aria-disabled')).toBe('false');
+    expect(openLink().getAttribute('href')).toBe(MIRROR_LATEST);
+    expect(openLink().getAttribute('target')).toBe('_blank');
+    expect(openLink().getAttribute('rel')).toBe('noopener noreferrer');
+    expect(openLink().hasAttribute('tabindex')).toBe(false);
+    resolveCheck(OK_LATEST);
+    await settle();
+  });
+
+  it('失败/限流：状态文案不变，链接仍可点（按当前源回落）', async () => {
+    mocks.checkForUpdate.mockResolvedValue(FAIL_NETWORK);
+    openUpdateDialog();
+    await settle();
+    expect(statusText()).toBe(t('update.failed'));
+    expect(openLink().getAttribute('aria-disabled')).toBe('false');
+    expect(openLink().getAttribute('href')).toBe(MIRROR_LATEST);
+    closeDialog();
+    document.body.replaceChildren();
+    mocks.checkForUpdate.mockResolvedValue(FAIL_RATE);
+    openUpdateDialog();
+    await settle();
+    expect(statusText()).toBe(t('update.rateLimited'));
+    expect(openLink().getAttribute('aria-disabled')).toBe('false');
+    expect(openLink().getAttribute('href')).toBe(MIRROR_LATEST);
+  });
+
+  it('已最新 + 当前源 github：没有 detail.url 时回落到 github 站点', async () => {
+    window.localStorage.setItem(UPDATE_SOURCE_KEY, 'github');
+    mocks.checkForUpdate.mockResolvedValue({ ...OK_LATEST, url: undefined, via: 'github' });
+    openUpdateDialog();
+    await settle();
+    expect(statusText()).toBe(t('update.upToDate'));
+    expect(openLink().getAttribute('href')).toBe(GITHUB_LATEST);
+  });
+
+  it('失败且结果里没有 via：仍按用户选的源回落（github）', async () => {
+    window.localStorage.setItem(UPDATE_SOURCE_KEY, 'github');
+    mocks.checkForUpdate.mockResolvedValue({ ok: false, current: '0.4.14', code: 'network' });
+    openUpdateDialog();
+    await settle();
+    expect(statusText()).toBe(t('update.failed'));
+    expect(openLink().getAttribute('href')).toBe(GITHUB_LATEST);
+  });
+
+  it('接口给了 url：优先用 detail.url，不被回落覆盖（发现新版本与已最新都一样）', async () => {
+    const custom = 'https://example.com/fncal/releases';
+    mocks.checkForUpdate.mockResolvedValue({ ...OK_NEW, url: custom });
+    openUpdateDialog();
+    await settle();
+    expect(openLink().getAttribute('href')).toBe(custom);
+    closeDialog();
+    document.body.replaceChildren();
+    mocks.checkForUpdate.mockResolvedValue({ ...OK_LATEST, url: custom });
+    openUpdateDialog();
+    await settle();
+    expect(openLink().getAttribute('href')).toBe(custom);
   });
 });

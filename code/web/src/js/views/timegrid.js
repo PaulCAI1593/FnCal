@@ -15,6 +15,9 @@ import { dayLunarText, lunarEnabled } from '../lib/lunar-view.js';
 import { colorHex, colorFg, DEFAULT_COLOR } from '../colors.js';
 import { t } from '../../i18n/index.js';
 import { buildEmptyState } from './empty-state.js';
+// 0.5.11（S1，用户）：「手机上月视图『国庆』『中秋』都显示两个字就好，不要显示
+// 『……』」——节日名去「节」的规则与月视图同源，避免两处各写一份。
+import { holidayDisplayName } from './month.js';
 import {
   startOfDay,
   minutesIntoDay,
@@ -363,6 +366,9 @@ export function renderTimeGrid(days, ctx) {
   root.append(scroll);
 
   function afterMount() {
+    // 0.5.11（S1）：≤520 节日全天行恢复旗子后名字只剩 ~25px，按实测宽度裁成完整
+    // 汉字（不画省略号）。必须在宽度落定后跑，且每次重渲染都会再跑一次。
+    fitCompactHolidayChips(root);
     // The date header and the all-day / tasks rails are siblings of the hour
     // scroller, not children of it, so the scroller's vertical scrollbar eats
     // width from the body's columns and from nothing else. Both bands are
@@ -954,6 +960,61 @@ function buildAllDayChip(event, ctx, day, bounds, slot = null) {
  * month-view twin; no drag and no context menu, because there is no stored
  * event behind it to move or delete.
  */
+/**
+ * 0.5.11（S1，用户）：「节日名一律不显示省略号」。≤520 节日全天 chip 恢复 12px
+ * 旗子后，名字区只剩 ~25px（390 周视图）。这里按 chip 实际可用宽裁成**完整汉字**：
+ * 375/390/430 至少 2 个，320 至少 1 个；名字先去掉尾部「节」（春节/元旦保留），
+ * chip 的 title 与 aria-label 仍是全名。>520 不跑，桌面文案不变。
+ */
+function fitCompactHolidayChips(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+  if (!window.matchMedia('(max-width: 520px)').matches) return;
+  const minChars = window.innerWidth >= 360 ? 2 : 1;
+  for (const chip of root.querySelectorAll('.allday-chip--holiday')) {
+    const title = chip.querySelector('.allday-chip__title');
+    if (!title) continue;
+    const full = holidayDisplayName(chip.getAttribute('title') || title.textContent || '');
+    const chars = [...full];
+    if (!chars.length) continue;
+    const icon = chip.querySelector('.allday-chip__icon');
+    const cs = window.getComputedStyle(chip);
+    const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+    const gap = parseFloat(cs.columnGap || cs.gap) || 0;
+    const iconW = icon ? icon.getBoundingClientRect().width : 0;
+    const avail = chip.clientWidth - padX - (icon ? iconW + gap : 0);
+    // 先用全名量自然宽，再按「自然宽 ÷ 字数」估每字宽（节日名是纯汉字）。
+    title.textContent = full;
+    const natural = title.scrollWidth || 0;
+    if (!avail || !natural) continue;
+    const charW = natural / chars.length;
+    let n = Math.floor((avail + 0.5) / charW);
+    n = Math.max(minChars, Math.min(chars.length, n));
+    // 至少要保证完整汉字：任何情况下都不截半个字，也不用省略号。
+    if (n < chars.length) title.textContent = chars.slice(0, n).join('');
+    // 0.5.11：360 最窄列会差 1px（名字 2 字 22px、可用 21px）。先缩名字字号
+    // （11 → 9.5px，chip 高度不变），仍放不下才减到 1 个字。保证「完整汉字」。
+    const fits = () => title.scrollWidth <= title.clientWidth + 0.5;
+    let chosenSize = 0;
+    if (!fits()) {
+      for (const px of [10.5, 10, 9.5]) {
+        title.style.fontSize = px + 'px';
+        if (fits()) {
+          chosenSize = px;
+          break;
+        }
+      }
+      if (!chosenSize) {
+        title.style.fontSize = '';
+        while (n > 1 && !fits()) {
+          n -= 1;
+          title.textContent = chars.slice(0, n).join('');
+        }
+      }
+    }
+  }
+}
+
 function buildOverlayChip(item, ctx) {
   const kind = t('agenda.holiday.kindHoliday');
   const node = el(

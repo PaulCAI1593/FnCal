@@ -407,14 +407,20 @@ describe('⑪⑫ 样式断言', () => {
     expect(block('.allday-chip.chip--span-end')).toContain('margin-left: calc(-1 * var(--sp-1))');
   });
 
-  it('⑫ ≤520px 文字 chip 模式不连条（0.2.17 B1：圆角 4px、纵向排列）', () => {
+  it('⑫ ≤520px 也画连续长条（0.5.9 S1 口径变更：4px 圆角文字块改回连条）', () => {
     const at = css.indexOf('@media (max-width: 520px)');
     const media = css.slice(at);
-    // 0.2.17（B1）：窄屏不再是点阵，chip 是带日历色条的单行文字块——跨格连条的
-    // 负外边距与「圆」都必须消失（圆角改回 4px），否则文字块会被拉成半圆。
+    // 0.5.9（用户 2026-11-06「手机上月视图没有多日、跨日的长条」）：0.2.17 B1 的
+    // 「窄屏只做 4px 圆角文字块、不连条」口径作废。段几何由 month.js 用**同一套**
+    // monthBarBoxes 写内联（内缩/宽度/真首末圆角），CSS 只负责「无圆角实色段 +
+    // 事件区不裁」——任何裁切都会在跨格处留缝。
     expect(media).toMatch(
-      /\.chip\.chip--span-start,\s*\.chip\.chip--span-mid,\s*\.chip\.chip--span-end \{[\s\S]{0,120}margin: 0;[\s\S]{0,120}border-radius: var\(--r-xs\);/,
+      /\.chip\.chip--span-start,\s*\.chip\.chip--span-mid,\s*\.chip\.chip--span-end \{[\s\S]{0,160}border-radius: 0;/,
     );
-    expect(media).toMatch(/\.month__events \{[\s\S]{0,120}flex-direction: column;/);
+    expect(media).toMatch(/\.chip\.chip--span-start::after,[\s\S]{0,200}display: none;/);
+    expect(media).toMatch(/\.month__events \{[\s\S]{0,160}flex-direction: column;[\s\S]{0,160}overflow: visible;/);
+    // 单日文字 chip 的 4px 圆角与 3px 日历色条仍保留（S2 不回归）。
+    expect(media).toMatch(/\.chip \{[\s\S]{0,200}border-radius: var\(--r-xs\);/);
+    expect(media).toMatch(/\.chip::after \{[\s\S]{0,200}width: 3px;/);
   });
 });

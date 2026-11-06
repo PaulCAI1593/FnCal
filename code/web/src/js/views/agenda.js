@@ -14,6 +14,7 @@ import {
   isToday,
   formatTime,
   formatTimeRange,
+  formatTimeShort24,
   WEEKDAYS_SHORT,
   MONTHS_SHORT,
 } from '../date-utils.js';
@@ -30,12 +31,32 @@ const MAX_DAYS = 365 * 5;
  *   emptyStreak 从末尾起「连续无任何日程」的段数
  *   noMore     已到底：连续 2 段空，或到达 5 年上限
  */
-let paging = { anchor: null, segments: 1, emptyStreak: 0, noMore: false };
+let paging = {
+  anchor: null,
+  segments: 1,
+  emptyStreak: 0,
+  noMore: false,
+  // 0.5.6（C）：向过去翻页——段数 / 连续空段数 / 是否到底。段号越大越早。
+  pastSegments: 0,
+  pastEmptyStreak: 0,
+  pastNoMore: false,
+};
 
 /** 清掉模块级分页进度（测试、以及「重新进入视图」的显式重置用）。 */
 export function resetAgendaPaging() {
-  paging = { anchor: null, segments: 1, emptyStreak: 0, noMore: false };
+  paging = {
+    anchor: null,
+    segments: 1,
+    emptyStreak: 0,
+    noMore: false,
+    pastSegments: 0,
+    pastEmptyStreak: 0,
+    pastNoMore: false,
+  };
 }
+
+/** 0.5.6（C）：下拉多远才加载（px）。 */
+export const PULL_THRESHOLD = 70;
 
 export function renderAgenda(ctx) {
   const { store, cursor, now, actions } = ctx;
@@ -48,6 +69,11 @@ export function renderAgenda(ctx) {
   const capMs = addDays(anchorDay, MAX_DAYS).getTime();
   const segmentFrom = (i) => addDays(anchorDay, (i - 1) * WINDOW_DAYS).getTime();
   const segmentTo = (i) => Math.min(addDays(anchorDay, i * WINDOW_DAYS).getTime(), capMs);
+  // 0.5.6（C）：向过去翻页。第 j 段 = [anchor - j*60d, anchor - (j-1)*60d)，向过去同样
+  // 封底到 5 年（与向后翻页同一个上限，避免无限请求）。
+  const floorMs = addDays(anchorDay, -MAX_DAYS).getTime();
+  const pastSegmentFrom = (j) => Math.max(addDays(anchorDay, -j * WINDOW_DAYS).getTime(), floorMs);
+  const pastSegmentTo = (j) => addDays(anchorDay, -(j - 1) * WINDOW_DAYS).getTime();
 
   const root = el('div', { class: 'view agenda' });
   const inner = el('div', { class: 'agenda__inner' });
@@ -57,6 +83,10 @@ export function renderAgenda(ctx) {
   const footer = el('div', { class: 'agenda__footer' });
   inner.append(footer);
   const insert = (node) => inner.insertBefore(node, footer);
+  // 0.5.6（C）：列表顶部向过去翻页条——按钮（键盘/鼠标兜底）+ 下拉提示 / 到底静态文字。
+  // 它是列表第一项，随内容滚动，只有在顶部才看得见。
+  const pastBar = el('div', { class: 'agenda__past' });
+  inner.insertBefore(pastBar, footer);
 
   let emptyNode = null;
 
@@ -101,12 +131,24 @@ export function renderAgenda(ctx) {
     });
   }
 
-  /** 把 [from, to) 这一段日程分组、按天追加到列表末尾，返回查询结果供统计。 */
-  function appendSegment(from, to) {
-    // 0.2.15（D4）：日程**不再列节假日**——节假日照旧在月/周/年视图与日格里展示，
-    // 侧栏「显示公共假日」开关只影响那几个视图，语义不变。
-    const events = store.getEventsInRange(from, to, { includeHolidays: false });
+  /**
+   * 把 [from, to) 这一段日程分组、按天排好，返回 `{ nodes, events, tasks, ownCount }`。
+   * 0.5.6（C）：与插入位置解耦——向前翻页插到末尾，向过去翻页插到顶部。
+   */
+  function buildSegment(from, to) {
+    // 0.5.10（S6）：只查一次叠加层，再按 readOnly（节日的唯一来源）拆开。
+    // 分两次 getEventsInRange 会让分页的查询计数翻倍（既有用例按 1 段 1 次断言），
+    // 也会让「5 年上限」这类按次数算的边界提前触发；一次查询语义不变：
+    // store 的 includeHolidays 已受 `settings.holidaysEnabled` 控制，关掉开关时
+    // 这里拿不到任何节日。
+    const all = store.getEventsInRange(from, to, { includeHolidays: true });
+    const holidayItems = all.filter((ev) => ev.readOnly);
+    const events = all.filter((ev) => !ev.readOnly);
     const tasks = store.getTasksInRange(from, to);
+    const holidayOn = (dayStart, dayEnd) => {
+      const hit = holidayItems.find((ev) => ev.start < dayEnd && ev.end > dayStart);
+      return hit && hit.title ? String(hit.title) : '';
+    };
     // Group events and tasks together by day within this segment.
     const groups = new Map();
     const push = (key, item) => {
@@ -139,6 +181,7 @@ export function renderAgenda(ctx) {
       });
     });
 
+    const nodes = [];
     [...groups.keys()]
       .sort((a, b) => a - b)
       .forEach((key) => {
@@ -153,19 +196,30 @@ export function renderAgenda(ctx) {
             else list.append(buildRow(entry.item, key, ctx));
           });
 
-        insert(
+        const holidayName = holidayOn(key, addDays(day, 1).getTime());
+        const dateChildren = [
+          el('div', {
+            class: `agenda__date-num${isToday(day, now) ? ' is-today' : ''}`,
+            'aria-current': isToday(day, now) ? 'date' : null,
+            text: String(day.getDate()),
+          }),
+          el('div', {
+            class: 'agenda__date-dow',
+            text: `${WEEKDAYS_SHORT[day.getDay()]} · ${MONTHS_SHORT[day.getMonth()]}`,
+          }),
+        ];
+        if (holidayName) {
+          dateChildren.push(
+            el('div', {
+              class: 'agenda__date-holiday',
+              title: holidayName,
+              text: holidayName,
+            }),
+          );
+        }
+        nodes.push(
           el('div', { class: 'agenda__day' }, [
-            el('div', { class: 'agenda__date' }, [
-              el('div', {
-                class: `agenda__date-num${isToday(day, now) ? ' is-today' : ''}`,
-                'aria-current': isToday(day, now) ? 'date' : null,
-                text: String(day.getDate()),
-              }),
-              el('div', {
-                class: 'agenda__date-dow',
-                text: `${WEEKDAYS_SHORT[day.getDay()]} · ${MONTHS_SHORT[day.getMonth()]}`,
-              }),
-            ]),
+            el('div', { class: 'agenda__date' }, dateChildren),
             list,
           ]),
         );
@@ -174,7 +228,14 @@ export function renderAgenda(ctx) {
     // （readOnly，按来源字段判定，不做标题匹配），照旧显示在列表里，但不参与
     // 「这一段有没有内容」——否则节假日会把每一段都填成「有内容」，永远判不到底。
     const ownCount = events.filter((ev) => !ev.readOnly).length;
-    return { events, tasks, ownCount };
+    return { nodes, events, tasks, ownCount };
+  }
+
+  /** 把一段追加到列表末尾（向未来翻页；插在 footer 之前）。 */
+  function appendSegment(from, to) {
+    const res = buildSegment(from, to);
+    res.nodes.forEach(insert);
+    return res;
   }
 
   // ---- 首次渲染：把已加载的段全部铺出来（重渲染时保留进度） ----
@@ -184,6 +245,21 @@ export function renderAgenda(ctx) {
   let lastTo = anchor;
   let ownCount = 0;
   let taskCount = 0;
+  // 0.5.6（C）：先把已加载的过去段铺出来（分钟 tick / 数据刷新重渲染时不丢进度）。
+  // 段号越大越早：从最大段号往回插到 pastBar 之后，最终按时间升序。
+  let pastOwnCount = 0;
+  let pastTaskCount = 0;
+  for (let j = paging.pastSegments; j >= 1; j--) {
+    const from = pastSegmentFrom(j);
+    const to = pastSegmentTo(j);
+    if (to <= floorMs) break;
+    const res = buildSegment(from, to);
+    const ref = pastBar.nextSibling;
+    res.nodes.forEach((node) => inner.insertBefore(node, ref));
+    pastOwnCount += res.ownCount;
+    pastTaskCount += res.tasks.length;
+    if (from <= floorMs) paging.pastNoMore = true;
+  }
   for (let i = 1; i <= paging.segments; i++) {
     const from = segmentFrom(i);
     if (from >= capMs) break;
@@ -196,7 +272,7 @@ export function renderAgenda(ctx) {
   }
   paging.emptyStreak = 0;
   if (lastTo >= capMs) paging.noMore = true;
-  if (ownCount === 0 && taskCount === 0) {
+  if (ownCount === 0 && taskCount === 0 && pastOwnCount === 0 && pastTaskCount === 0) {
     emptyNode = buildEmptyNode();
     insert(emptyNode);
   }
@@ -219,6 +295,133 @@ export function renderAgenda(ctx) {
     footer.append(moreBtn);
   }
   renderFooter();
+
+  // ---- 顶部：向过去翻页（0.5.6 C） ----
+  // 与底部「加载更多」同一套分页状态思路：一次加载一段；连续 2 段空或到达 5 年下限
+  // 判定到底；加载中不重复请求；错误只影响顶部这条，重试从同一段继续。
+  let loadingEarlier = false;
+  let earlierBtnText = t('agenda.loadEarlier');
+  let pullArmed = false;
+
+  function renderPastBar() {
+    pastBar.replaceChildren();
+    if (paging.pastNoMore) {
+      pastBar.append(el('div', { class: 'agenda__past-end', text: t('agenda.noEarlier') }));
+      return;
+    }
+    if (loadingEarlier) {
+      pastBar.append(el('div', { class: 'agenda__past-hint', text: t('agenda.loadingEarlier') }));
+      return;
+    }
+    if (pullArmed) {
+      pastBar.append(el('div', { class: 'agenda__past-hint is-armed', text: t('agenda.pullEarlierRelease') }));
+      return;
+    }
+    pastBar.append(
+      el('button', {
+        class: 'btn btn--ghost agenda__earlier',
+        type: 'button',
+        text: earlierBtnText,
+        on: { click: () => void loadEarlier() },
+      }),
+      el('span', { class: 'agenda__past-hint agenda__pull-hint', text: t('agenda.pullEarlierHint') }),
+    );
+  }
+
+  async function loadEarlier() {
+    if (loadingEarlier || paging.pastNoMore) return;
+    loadingEarlier = true;
+    earlierBtnText = t('agenda.loadEarlier');
+    renderPastBar();
+    try {
+      // 让「正在加载」先上屏（与底部「加载更多」同一手法）。
+      await Promise.resolve();
+      while (!paging.pastNoMore) {
+        const j = paging.pastSegments + 1;
+        const from = pastSegmentFrom(j);
+        const to = pastSegmentTo(j);
+        if (to <= floorMs) {
+          paging.pastNoMore = true;
+          break;
+        }
+        const heightBefore = root.scrollHeight;
+        const topBefore = root.scrollTop;
+        const res = buildSegment(from, to);
+        const ref = pastBar.nextSibling;
+        res.nodes.forEach((node) => inner.insertBefore(node, ref));
+        paging.pastSegments = j;
+        // 新内容插在当前视口上方：把滚动手势补偿回来，屏幕上那一批日程不跳。
+        if (res.nodes.length) root.scrollTop = topBefore + (root.scrollHeight - heightBefore);
+        const empty = res.ownCount === 0 && res.tasks.length === 0;
+        paging.pastEmptyStreak = empty ? paging.pastEmptyStreak + 1 : 0;
+        // 到底判定同底部：连续 2 段空，或到达 5 年下限。
+        if (paging.pastEmptyStreak >= 2 || from <= floorMs) paging.pastNoMore = true;
+        if (!empty) {
+          if (emptyNode) {
+            emptyNode.remove();
+            emptyNode = null;
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      loadingEarlier = false;
+      earlierBtnText = t('agenda.loadEarlierError');
+      renderPastBar();
+      return;
+    }
+    loadingEarlier = false;
+    earlierBtnText = t('agenda.loadEarlier');
+    renderPastBar();
+  }
+
+  // 手指在列表顶部往下拉：位移到 PULL_THRESHOLD 松手加载。只识别纵向、只识别触屏；
+  // 不 preventDefault（顶部下拉本来就没有可滚内容），原生 overscroll 由 CSS 的
+  // `overscroll-behavior-y: contain` 收住，不会触发浏览器整页下拉刷新。
+  let pullStart = null;
+  function clearPull() {
+    pullStart = null;
+    if (pullArmed) {
+      pullArmed = false;
+      renderPastBar();
+    }
+  }
+  function onPullTouchStart(e) {
+    if (e.touches.length !== 1 || loadingEarlier || paging.pastNoMore || root.scrollTop > 0) {
+      pullStart = null;
+      return;
+    }
+    const touch = e.touches[0];
+    pullStart = { x: touch.clientX, y: touch.clientY };
+  }
+  function onPullTouchMove(e) {
+    if (!pullStart || e.touches.length !== 1) return;
+    if (root.scrollTop > 0) {
+      clearPull();
+      return;
+    }
+    const touch = e.touches[0];
+    const dy = touch.clientY - pullStart.y;
+    const dx = touch.clientX - pullStart.x;
+    const armed = dy >= PULL_THRESHOLD && dy > Math.abs(dx) * 1.2;
+    if (armed !== pullArmed) {
+      pullArmed = armed;
+      renderPastBar();
+    }
+  }
+  function onPullTouchEnd() {
+    const armed = pullArmed;
+    pullStart = null;
+    pullArmed = false;
+    if (armed) void loadEarlier();
+    else renderPastBar();
+  }
+  root.addEventListener('touchstart', onPullTouchStart, { passive: true });
+  root.addEventListener('touchmove', onPullTouchMove, { passive: true });
+  root.addEventListener('touchend', onPullTouchEnd, { passive: true });
+  root.addEventListener('touchcancel', onPullTouchEnd, { passive: true });
+  renderPastBar();
 
   let loading = false;
 
@@ -299,6 +502,32 @@ function rowTimeRange(start, end, dayStart, hour12) {
   return `${formatTime(new Date(start), opts)} – ${endDate} ${formatTime(e, opts)}`;
 }
 
+/** 0.5.9（F2）：≤520 手机档判定（与月视图 `isCompactScreen` 同一条断点）。 */
+function isCompactAgenda() {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 520px)').matches
+  );
+}
+
+/**
+ * 0.5.9（F2）：手机日程时间列的**短格式 24 小时制区间**，拆成两个不可断的片段：
+ * 开始片段自带结尾的「–」，结束时（跨过本行午夜时还带日期）在第二片段。
+ * 时间列只有 68px（≤360），12 小时制「上午10:00 – 上午11:00」会在「上午」中间
+ * 断行；短格式单行放得下，放不下时靠 flex-wrap **整段**换到第二行，不会在词内断开。
+ */
+function compactRangeParts(start, end, dayStart) {
+  const startText = formatTimeShort24(new Date(start));
+  const nextMidnight = addDays(new Date(dayStart), 1).getTime();
+  if (end <= nextMidnight) {
+    return { start: `${startText}–`, end: formatTimeShort24(new Date(end)) };
+  }
+  const e = new Date(end);
+  const endDate = `${MONTHS_SHORT[e.getMonth()]}${e.getDate()}日`;
+  return { start: `${startText}–`, end: `${endDate} ${formatTimeShort24(e)}` };
+}
+
 /**
  * 0.2.9（用户 13）：事件覆盖的自然日总数（单日 = 1）。
  *
@@ -354,6 +583,19 @@ function buildRow(event, dayStart, ctx) {
   const main = el('span', { class: 'agenda__event-main' }, mainChildren);
   if (location) row.classList.add('agenda__event--has-location');
 
+  // 0.5.9（F2）：手机档时间列改短格式区间；两个片段各自 nowrap（CSS），
+  // 放不下时整段换行 → 开始一行、结束一行，不会在「上午/下午」中间断开。
+  let timeNode;
+  if (isCompactAgenda() && !event.allDay) {
+    const parts = compactRangeParts(shownStart, event.end, dayStart);
+    timeNode = el('span', { class: 'agenda__event-time agenda__event-time--compact' }, [
+      el('span', { class: 'agenda__event-time-start', text: parts.start }),
+      el('span', { class: 'agenda__event-time-end', text: parts.end }),
+    ]);
+  } else {
+    timeNode = el('span', { class: 'agenda__event-time', text: timeText });
+  }
+
   const children = [
     event.ooo
       // The plane replaces the color dot on an away row, so it has to carry the
@@ -364,7 +606,7 @@ function buildRow(event, dayStart, ctx) {
           html: icon('plane', { size: 'sm' }),
         })
       : el('span', { class: 'agenda__event-dot', style: { '--chip-color': colorHex(event.color) } }),
-    el('span', { class: 'agenda__event-time', text: timeText }),
+    timeNode,
     main,
   ];
   row.append(...children);

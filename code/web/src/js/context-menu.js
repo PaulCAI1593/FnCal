@@ -19,6 +19,40 @@ import { el } from './dom.js';
 
 let activeMenu = null;
 
+// 0.5.12（S7，用户：「长按的菜单很快又缩回了」）：关闭原因留痕。真机复现不到电脑上
+// 的合成时序，所以给一个 `?ctxdebug=1` 开关，在页面底部显示「哪条监听、距打开多少
+// 毫秒」把菜单关掉；默认（无该查询参数）完全不写 DOM。
+const CLOSE_REASON_LABELS = {
+  pick: '点项',
+  escape: 'Esc',
+  pointerdown: '点外部',
+  contextmenu: '原生 contextmenu',
+  scroll: '滚动',
+  resize: '视口尺寸变化',
+  blur: '失焦',
+  render: '重渲染',
+  reopen: '换菜单（内部）',
+};
+
+function debugEnabled() {
+  try {
+    return new URLSearchParams(window.location.search).get('ctxdebug') === '1';
+  } catch {
+    return false;
+  }
+}
+
+function renderDebugLine(reason, elapsedMs) {
+  if (!debugEnabled()) return;
+  let node = document.querySelector('.ctx-debug');
+  if (!node) {
+    node = el('div', { class: 'ctx-debug', role: 'status', 'aria-live': 'polite' });
+  }
+  const label = CLOSE_REASON_LABELS[reason] || reason;
+  node.textContent = `[ctx] 关闭原因 ${label} (${reason}) · 距打开 ${elapsedMs} ms`;
+  if (!node.isConnected) document.body.append(node);
+}
+
 // Told when the fallback menu closes, whichever way — a pick, Escape, a click
 // elsewhere, a scroll — so work held back while it was up (the app's
 // re-renders, which tear the menu down) can catch up.
@@ -28,16 +62,24 @@ export function onContextMenuClose(fn) {
   return () => closeListeners.delete(fn);
 }
 
-export function closeContextMenu() {
-  if (activeMenu) {
-    activeMenu.cleanup();
-    activeMenu = null;
-    for (const fn of [...closeListeners]) {
-      try {
-        fn();
-      } catch {
-        /* one listener's failure must not silence the rest */
-      }
+/**
+ * Close the fallback menu.
+ * 0.5.12（S7）：`reason` 只用于 `?ctxdebug=1` 的诊断行，取值为 pick / escape /
+ * pointerdown / contextmenu / scroll / resize / blur / render（`reopen` 是同一个
+ * 位置连续开菜单时的内部替换，不算用户关闭路径）。
+ */
+export function closeContextMenu(reason = 'unknown') {
+  if (!activeMenu) return;
+  const closing = activeMenu;
+  activeMenu = null;
+  const elapsedMs = Math.max(0, Date.now() - closing.openedAt);
+  closing.cleanup();
+  renderDebugLine(reason, elapsedMs);
+  for (const fn of [...closeListeners]) {
+    try {
+      fn();
+    } catch {
+      /* one listener's failure must not silence the rest */
     }
   }
 }
@@ -51,23 +93,39 @@ export function isContextMenuOpen() {
  * Open a context menu at the pointer location of `evt`.
  * @param {MouseEvent} evt
  * @param {Array} items
+ * @param {{source?: 'touch'|'pointer', pointerId?: number, pointerType?: string}} [opts]
+ *   0.5.12（S1）：打开来源。触屏长按传 source:'touch'；鼠标右键不传（默认 pointer）。
+ *   菜单的关闭规则按来源分开：触屏要容忍系统补发的 contextmenu / 指针事件 / 视觉
+ *   视口抖动，桌面仍按 0.5.11 的即时关闭（右键菜单外关闭照常）。
  */
-export function openContextMenu(evt, items) {
+export function openContextMenu(evt, items, opts = {}) {
   evt.preventDefault();
-  closeContextMenu();
+  // 同一个位置连续开菜单（理论上不会与用户关闭路径混用）：先收掉旧的，原因记为
+  // reopen，只影响 ?ctxdebug=1 的诊断显示。
+  closeContextMenu('reopen');
 
   const usable = items.filter(Boolean);
   if (!usable.length) return;
 
-  renderFallback(evt.clientX, evt.clientY, usable);
+  renderFallback(evt.clientX, evt.clientY, usable, opts);
 }
 
-function renderFallback(x, y, items) {
+function renderFallback(x, y, items, opts = {}) {
   const coords = { x, y };
   // The menu is about to steal focus (menu.focus() below, arrows after that);
   // remember where from, so closing can hand it back instead of dropping the
   // keyboard user on <body> to re-Tab from the top of the page.
   const lastFocused = document.activeElement;
+  // 0.5.12（S1）：来源标记与打开瞬间的参照值。触屏长按后系统会补发原生
+  // contextmenu、重放指针事件、并在地址栏/键盘变化时抖动视觉视口；0.5.11 只靠固定
+  // 时间窗兜底，真机上仍会「弹出来又很快缩回」。这里记下来源、按下手指的 pointerId、
+  // 打开时的视口与滚动位置，下面每条关闭监听只对「用户真的做了这件事」生效。
+  const source = opts.source === 'touch' ? 'touch' : 'pointer';
+  const openPointerId = typeof opts.pointerId === 'number' ? opts.pointerId : null;
+  const viewportAtOpen = { width: window.innerWidth, height: window.innerHeight };
+  const scrollAtOpen = { x: window.scrollX || 0, y: window.scrollY || 0 };
+  const openedAt = Date.now();
+  const elapsedMs = () => Date.now() - openedAt;
   const menu = el('div', { class: 'ctx-menu', role: 'menu', tabindex: '-1' });
 
   const focusables = [];
@@ -132,7 +190,9 @@ function renderFallback(x, y, items) {
         }
         if (focusFirst) {
           const first = submenu.querySelector('.ctx-menu__item');
-          if (first) first.focus();
+          // 0.5.12（S6）：聚焦不滚动页面（iOS 对非输入元素 focus 会滚动，滚动又会
+          // 命中关闭监听——真机上「一闪就消失」的间接来源之一）。
+          if (first) first.focus({ preventScroll: true });
         }
       };
       item.addEventListener('pointerenter', (e) => {
@@ -158,19 +218,19 @@ function renderFallback(x, y, items) {
           e.preventDefault();
           e.stopPropagation();
           hideSubmenu(item, submenu);
-          item.focus();
+          item.focus({ preventScroll: true });
         } else if (e.key === 'ArrowDown' && subs.length) {
           e.preventDefault();
-          subs[(i + 1) % subs.length].focus();
+          subs[(i + 1) % subs.length].focus({ preventScroll: true });
         } else if (e.key === 'ArrowUp' && subs.length) {
           e.preventDefault();
-          subs[(i - 1 + subs.length) % subs.length].focus();
+          subs[(i - 1 + subs.length) % subs.length].focus({ preventScroll: true });
         } else if (e.key === 'Tab') {
           e.preventDefault();
           e.stopPropagation();
           if (!subs.length) return;
           const next = e.shiftKey ? (i - 1 + subs.length) % subs.length : (i + 1) % subs.length;
-          subs[next].focus();
+          subs[next].focus({ preventScroll: true });
         }
       });
       menu.append(submenu);
@@ -181,7 +241,7 @@ function renderFallback(x, y, items) {
     }
     if (!it.disabled) {
       item.addEventListener('click', () => {
-        closeContextMenu();
+        closeContextMenu('pick');
         it.action && it.action();
       });
       focusables.push(item);
@@ -213,7 +273,7 @@ function renderFallback(x, y, items) {
       if (!sub.disabled) {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          closeContextMenu();
+          closeContextMenu('pick');
           sub.action && sub.action();
         });
       }
@@ -237,10 +297,12 @@ function renderFallback(x, y, items) {
   menu.style.top = `${Math.max(pad, top)}px`;
 
   let focusIndex = -1;
+  // 0.5.12（S6）：菜单本身与焦点项都用 preventScroll 聚焦。iOS 对非输入元素的
+  // focus 可能把页面滚一下，而滚动 / 视口变化正是关闭监听——先避免自己制造这些事件。
   const setFocus = (i) => {
     focusIndex = (i + focusables.length) % focusables.length;
     focusables.forEach((f, idx) => f.classList.toggle('is-focused', idx === focusIndex));
-    focusables[focusIndex]?.focus();
+    focusables[focusIndex]?.focus({ preventScroll: true });
   };
 
   const onKey = (e) => {
@@ -249,7 +311,7 @@ function renderFallback(x, y, items) {
     if (e.target && e.target.closest && e.target.closest('.ctx-menu__submenu')) return;
     if (e.key === 'Escape') {
       e.preventDefault();
-      closeContextMenu();
+      closeContextMenu('escape');
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setFocus(focusIndex + 1);
@@ -272,26 +334,71 @@ function renderFallback(x, y, items) {
     }
   };
 
+  // 0.5.12（S2/S3）：按打开来源判断关闭。触屏长按会收到系统补发的原生 contextmenu
+  // 与重放的 pointerdown（同一根手指、非主指针），它们不代表用户要关菜单；桌面右键
+  // 仍是「菜单外再点一下右键就关」，并保留 0.5.11 的 900ms 宽限（打开菜单的那个
+  // 原生事件也走这条监听）。
   const onPointerDown = (e) => {
-    if (!menu.contains(e.target)) closeContextMenu();
+    if (e.type === 'contextmenu') {
+      if (source === 'touch') return;
+      if (elapsedMs() < 900) return;
+      if (!menu.contains(e.target)) closeContextMenu('contextmenu');
+      return;
+    }
+    if (menu.contains(e.target)) return;
+    if (source === 'touch') {
+      // 同一根手指的后续事件（含 iOS 重放）不关；多指里非主指针不关；开菜单后
+      // 400ms 内的 pointerdown 是长按收尾的一部分，不关。
+      if (openPointerId !== null && e.pointerId === openPointerId) return;
+      if (e.isPrimary === false) return;
+      if (elapsedMs() < 400) return;
+    }
+    closeContextMenu('pointerdown');
   };
-  const onBlurClose = () => closeContextMenu();
+
+  // 0.5.12（S4）：滚动要「真滚动」。长按中的细微滚动、滚动锚定、菜单自己的内部
+  // 滚动都不关；只有打开 600ms 后页面实际位移超过 16px 才算用户要离开。
+  const onScrollClose = (e) => {
+    if (menu.contains(e.target)) return;
+    if (elapsedMs() < 600) return;
+    const dx = (window.scrollX || 0) - scrollAtOpen.x;
+    const dy = (window.scrollY || 0) - scrollAtOpen.y;
+    if (Math.hypot(dx, dy) <= 16) return;
+    closeContextMenu('scroll');
+  };
+
+  // 0.5.12（S5）：iOS 地址栏/视觉视口变化会发 resize，系统 UI 抢焦点会发 blur，
+  // 二者都不是「用户关菜单」。400ms 内不关；resize 还要宽高真的变了 >2px，
+  // blur 还要文档确实不再持有焦点。
+  const onResizeClose = () => {
+    if (elapsedMs() < 400) return;
+    const dw = Math.abs(window.innerWidth - viewportAtOpen.width);
+    const dh = Math.abs(window.innerHeight - viewportAtOpen.height);
+    if (dw <= 2 && dh <= 2) return;
+    closeContextMenu('resize');
+  };
+  const onBlurClose = () => {
+    if (elapsedMs() < 400) return;
+    if (document.hasFocus()) return;
+    closeContextMenu('blur');
+  };
 
   document.addEventListener('keydown', onKey, true);
   document.addEventListener('pointerdown', onPointerDown, true);
   document.addEventListener('contextmenu', onPointerDown, true);
   window.addEventListener('blur', onBlurClose);
-  window.addEventListener('resize', onBlurClose);
-  document.addEventListener('scroll', onBlurClose, true);
+  window.addEventListener('resize', onResizeClose);
+  document.addEventListener('scroll', onScrollClose, true);
 
   activeMenu = {
+    openedAt,
     cleanup() {
       document.removeEventListener('keydown', onKey, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('contextmenu', onPointerDown, true);
       window.removeEventListener('blur', onBlurClose);
-      window.removeEventListener('resize', onBlurClose);
-      document.removeEventListener('scroll', onBlurClose, true);
+      window.removeEventListener('resize', onResizeClose);
+      document.removeEventListener('scroll', onScrollClose, true);
       // Restore focus only when the menu still holds it (Escape, Enter, an
       // item click) — if the user is mid-click on another control, the browser
       // is already moving focus there and we must not fight it. The opener may
@@ -311,5 +418,5 @@ function renderFallback(x, y, items) {
     },
   };
 
-  menu.focus();
+  menu.focus({ preventScroll: true });
 }

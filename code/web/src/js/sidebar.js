@@ -32,7 +32,8 @@ import { dayColorFor } from './lib/day-color.js';
 export function renderSidebar(ctx) {
   const { store, settings, cursor, miniCursor, now, actions } = ctx;
 
-  const root = el('aside', { class: 'sidebar', 'aria-label': t('sidebar.nav') });
+  // 0.5.4（U4）：侧栏加 id，顶栏 logo 按钮用 aria-controls 指向它。
+  const root = el('aside', { class: 'sidebar', id: 'app-sidebar', 'aria-label': t('sidebar.nav') });
 
   // 新建事件。
   root.append(

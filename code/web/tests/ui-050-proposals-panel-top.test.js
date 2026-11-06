@@ -144,8 +144,11 @@ describe('0.4.11 · 议程视图顶部不透出、日期头吸顶', () => {
 
   it('滚动容器 `.agenda` 顶部内边距归零（底部 16px 保留）', () => {
     expect(anyBody('.agenda', (b) => b.includes('overflow-y: auto'))).toBe(true);
-    expect(ruleBodies(VIEWS, '.agenda')).toHaveLength(1);
-    const agenda = ruleBodies(VIEWS, '.agenda')[0];
+    // 0.5.6（B）新增窄屏 `@media (max-width:720px){ .agenda { touch-action: pan-y } }`，
+    // 所以同名规则变成 2 条；本用例的意图是「唯一那条带滚动定义的基础规则」，断言按滚动定义定位。
+    const agendaRules = ruleBodies(VIEWS, '.agenda').filter((b) => b.includes('overflow-y: auto'));
+    expect(agendaRules).toHaveLength(1);
+    const agenda = agendaRules[0];
     expect(agenda).toContain('padding: 0 0 var(--sp-4)');
     // 不允许多值 shorthand 再把顶部内边距加回来（`var(--sp-4) 0` 即上下 16px）。
     expect(agenda).not.toMatch(/padding:\s*var\(--sp-4\)\s+0\b/);
