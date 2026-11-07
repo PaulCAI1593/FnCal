@@ -65,7 +65,7 @@
     <string name="about_connection_status">连接状态</string>
     <string name="about_status_connected">已连接</string>
     <string name="about_status_unknown">未连接</string>
-    <string name="about_desktop_hint">桌面卡片设置将在后续版本提供。当前版本请用网页端。</string>
+    <string name="about_desktop_hint">在桌面长按空白处 →「小部件」→ FnCal，可选五款只读卡片：迷你月历、单日日程、月视图、四日视图、日程列表。卡片跟随 App 登录态，约 30 分钟自动刷新。</string>
     <string name="about_address_dialog_title">完整地址</string>
     <string name="about_ok">确定</string>
 

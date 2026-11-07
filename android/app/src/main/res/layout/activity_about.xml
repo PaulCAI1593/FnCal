@@ -374,7 +374,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:lineSpacingExtra="4dp"
-                        android:maxLines="2"
+                        android:maxLines="4"
                         android:text="@string/about_desktop_hint"
                         android:textColor="@color/text_2"
                         android:textSize="13sp" />

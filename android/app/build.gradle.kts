@@ -11,11 +11,11 @@ android {
         applicationId = "com.paulcai1593.fncal.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 301
-        versionName = "0.3.1"
+        versionCode = 302
+        versionName = "0.3.2"
 
         // 外壳版本与 FnCal 服务端版本无关；UA 里带的是壳版本。
-        resValue("string", "fncal_shell_version", "0.3.1")
+        resValue("string", "fncal_shell_version", "0.3.2")
     }
 
     signingConfigs {

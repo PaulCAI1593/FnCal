@@ -34,6 +34,11 @@
     <color name="glass_stroke">#8CFFFFFF</color>
     <color name="glass_fill_solid">#F5FFFFFF</color>
 
+    <!-- 0.3.2（§A）：主界面根容器底色。系统栏区域由 shell_root 的背景填充，
+         不再露出窗口底色 bg_grad_start（浅色是蓝的，会在白页面上形成蓝条）。
+         深色值在 values-night/colors.xml；与网页 surface 令牌的 #ffffff / #16181f 对齐。 -->
+    <color name="bg_shell_surface">#FFFFFF</color>
+
     <!-- 0.3.0 桌面卡片：卡片自己的底色与描边（与壳内卡片同族，深色在 values-night）。 -->
     <color name="widget_bg">#FFFFFF</color>
     <color name="widget_border">#E2E5EB</color>

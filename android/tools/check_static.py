@@ -329,9 +329,11 @@ def check_update_manifest() -> None:
         fail("update.json apk should be " + expected_apk + ", got " + repr(apk))
     else:
         ok("update.json apk " + apk)
-    if not isinstance(notes, list) or not (3 <= len(notes) <= 6) \
+    # 0.3.2 起允许 2 条 notes：本版只有「系统栏底色」「关于页说明」两处改动，
+    # 硬凑第三条会写进无关内容。上限仍是 6。
+    if not isinstance(notes, list) or not (2 <= len(notes) <= 6) \
             or not all(isinstance(n, str) and n for n in notes):
-        fail("update.json notes should be 3-6 non-empty strings")
+        fail("update.json notes should be 2-6 non-empty strings")
     else:
         ok("update.json notes " + str(len(notes)))
 
@@ -348,9 +350,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 301": app_gradle,
-        'versionName = "0.3.1"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.1")': app_gradle,
+        "versionCode = 302": app_gradle,
+        'versionName = "0.3.2"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.2")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -892,7 +894,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.1"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.2"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -916,11 +918,77 @@ def check_widgets() -> None:
     # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。
     workflow = ROOT.parent / ".github" / "workflows" / "android.yml"
     wf = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
-    for needle in ("TAG=android-v0.3.1", "OUT=FnCal-Android-0.3.1.apk", "versionCode='301'", "versionName='0.3.1'"):
+    for needle in ("TAG=android-v0.3.2", "OUT=FnCal-Android-0.3.2.apk", "versionCode='302'", "versionName='0.3.2'"):
         if needle in wf:
             ok("workflow has " + needle)
         else:
             fail("workflow missing " + needle)
+
+
+def check_shell_surface() -> None:
+    """0.3.2（§A）：主界面根容器必须有实体底色，系统栏区域不再露窗口渐变。"""
+    main_xml = (APP / "res" / "layout" / "activity_main.xml").read_text(encoding="utf-8")
+    if 'android:id="@+id/shell_root"' in main_xml:
+        ok("main layout has shell_root")
+    else:
+        fail("main layout missing shell_root")
+    if 'android:background="@color/bg_shell_surface"' in main_xml:
+        ok("shell_root uses @color/bg_shell_surface")
+    else:
+        fail("shell_root must paint @color/bg_shell_surface")
+
+    pattern = re.compile(
+        r'<color name="bg_shell_surface">(#[0-9A-Fa-f]{6})</color>')
+    surfaces = {}
+    for label, rel in (("light", "values/colors.xml"), ("night", "values-night/colors.xml")):
+        text = (APP / "res" / rel).read_text(encoding="utf-8")
+        found = pattern.search(text)
+        if not found:
+            fail(rel + " missing bg_shell_surface")
+            continue
+        surfaces[label] = found.group(1).upper()
+    gradients = {}
+    for label, rel in (("light", "values/colors.xml"), ("night", "values-night/colors.xml")):
+        text = (APP / "res" / rel).read_text(encoding="utf-8")
+        found = re.search(r'<color name="bg_grad_start">(#[0-9A-Fa-f]{6,8})</color>', text)
+        gradients[label] = found.group(1).upper() if found else ""
+    if surfaces.get("light") == "#FFFFFF":
+        ok("light shell surface #FFFFFF")
+    else:
+        fail("light shell surface should be #FFFFFF, got " + repr(surfaces.get("light")))
+    if surfaces.get("night") == "#16181F":
+        ok("night shell surface #16181F")
+    else:
+        fail("night shell surface should be #16181F, got " + repr(surfaces.get("night")))
+    for label in ("light", "night"):
+        if surfaces.get(label) and surfaces.get(label) != gradients.get(label):
+            ok("shell surface differs from bg_grad_start (" + label + ")")
+        else:
+            fail("shell surface must differ from bg_grad_start (" + label + ")")
+
+    # 关于页：卡片说明写实际做法，且不再出现「后续版本」。
+    strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
+    hint = re.search(r'<string name="about_desktop_hint">(.*?)</string>', strings, re.S)
+    if hint and "小部件" in hint.group(1):
+        ok("about_desktop_hint mentions 小部件")
+    else:
+        fail("about_desktop_hint must describe the widget flow (小部件)")
+    about_xml = (APP / "res" / "layout" / "activity_about.xml").read_text(encoding="utf-8")
+    if re.search(r'about_desktop_hint[\s\S]{0,200}?android:maxLines="4"', about_xml) \
+            or re.search(r'android:maxLines="4"[\s\S]{0,200}?about_desktop_hint', about_xml):
+        ok("about_desktop_hint allows 4 lines")
+    else:
+        fail("about_desktop_hint maxLines should be 4")
+    stale = []
+    for path in list(APP.rglob("*")) + [ROOT / "update.json"]:
+        if not path.is_file() or path.suffix.lower() not in (".kt", ".xml", ".json"):
+            continue
+        if "后续版本" in path.read_text(encoding="utf-8"):
+            stale.append(str(path.relative_to(ROOT)))
+    if stale:
+        fail("stale phrase 后续版本 still present: " + ", ".join(stale))
+    else:
+        ok("no stale phrase 后续版本")
 
 
 def check_update_fallback() -> None:
@@ -977,6 +1045,7 @@ def main() -> int:
     check_resources()
     check_urls()
     check_update_manifest()
+    check_shell_surface()
     check_update_fallback()
     check_gradle()
     check_theme_tokens()

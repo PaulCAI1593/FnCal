@@ -29,6 +29,9 @@
     <!-- 深色卡片上的错误文案：原 #B3261E 在 #1A1C24 上约 2.3:1，不可读。 -->
     <color name="error_red">#FFB4AB</color>
 
+    <!-- 0.3.2（§A）：主界面根容器底色（深色）。系统栏区域由此填充，见 activity_main.xml。 -->
+    <color name="bg_shell_surface">#16181F</color>
+
     <!-- 0.3.0 桌面卡片深色令牌。 -->
     <color name="widget_bg">#17191F</color>
     <color name="widget_border">#2A2E3A</color>
