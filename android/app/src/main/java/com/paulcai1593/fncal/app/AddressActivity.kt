@@ -67,9 +67,10 @@ class AddressActivity : AppCompatActivity() {
         }
 
         setContentView(R.layout.activity_address)
-        // 0.2.0：深色蓝绿渐变 + 毛玻璃（状态栏/导航栏同色，API 31+ 真模糊）。
-        GlassSurface.applyWindow(this)
-        GlassSurface.installBlurLayer(this)
+        // 0.2.1（§S2-2b）：edge-to-edge + 背景光斑模糊 + 用 insets 补系统栏内距。
+        ShellChrome.applyWindow(this)
+        ShellChrome.installBlurLayer(this)
+        ShellChrome.applyInsets(findViewById(R.id.shell_root))
         input = findViewById(R.id.input_address)
         errorText = findViewById(R.id.text_error)
         buttonConnect = findViewById(R.id.btn_connect)

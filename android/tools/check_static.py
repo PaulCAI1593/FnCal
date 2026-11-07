@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""FnCal 安卓外壳 v0.2.0 · 静态自检（本机不能编译，只能做这些）。
+"""FnCal 安卓外壳 v0.2.1 · 静态自检（本机不能编译，只能做这些）。
 
 检查项：
   1. 所有 XML 用 xml.etree 解析；
@@ -8,8 +8,11 @@
   3. Kotlin 文件括号/引号配对（去注释与字符串后），并检查 LF/结尾换行；
   4. 资源引用一致性（@string / @color / @layout / @drawable / @mipmap / @style / @xml / R.*）；
   5. 全局 http(s):// 字面量清单（外链只放行四个更新域名）；
-  6. Gradle 关键配置断言（版本、包名、SDK、JVM target、依赖白名单）；
-  7. 确认没有 gradle-wrapper.jar / gradlew。
+  6. Gradle 关键配置断言（版本、包名、SDK、JVM target、依赖白名单、固定测试签名）；
+  7. 主题令牌：浅色 / 深色值只能是范围文档列出的那些；状态栏与导航栏必须透明；
+  8. 布局：根容器不得 fitsSystemWindows="true" 或写死 paddingTop；必须有 shell_root；
+     卡片 / 按钮口径（9dp 卡片、44dp 按钮、16-13-12sp 字级）；
+  9. 确认没有 gradle-wrapper.jar / gradlew，也没有遗留的 GlassSurface.kt。
 
 用法：C:\\Python314\\python.exe projects/CalDAV/android/tools/check_static.py
 退出码 0 = 全过；1 = 有失败项。
@@ -328,18 +331,23 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 200": app_gradle,
-        'versionName = "0.2.0"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.2.0")': app_gradle,
+        "versionCode = 201": app_gradle,
+        'versionName = "0.2.1"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.2.1")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
         "android.useAndroidX=true": props,
         "android.nonTransitiveRClass=true": props,
         "org.gradle.jvmargs=-Xmx2048m": props,
-        # 0.2.0：地址页与关于页用固定深色渐变毛玻璃主题，主界面保持 Theme.FnCal。
+        # 0.2.1（§S2-2b）：三页统一 Theme.FnCal（透明状态栏 / 导航栏）。
         'android:name=".AddressActivity"': manifest,
         'android:name=".AboutActivity"': manifest,
+        'android:name=".MainActivity"': manifest,
+        'create("test")': app_gradle,
+        'storeFile = file("../keystore/fncal-test.keystore")': app_gradle,
+        'keyAlias = "fncal"': app_gradle,
+        'signingConfig = signingConfigs.getByName("test")': app_gradle,
     }
     for needle, haystack in checks.items():
         if needle in haystack:
@@ -347,11 +355,17 @@ def check_gradle() -> None:
         else:
             fail("gradle missing " + needle)
 
-    theme_count = manifest.count('android:theme="@style/Theme.FnCal.Glass"')
-    if theme_count == 2:
-        ok("manifest glass theme x2")
+    theme_count = manifest.count('android:theme="@style/Theme.FnCal"')
+    if theme_count == 3:
+        ok("manifest Theme.FnCal x3")
     else:
-        fail("manifest glass theme count " + str(theme_count))
+        fail("manifest Theme.FnCal count " + str(theme_count))
+
+    keystore = ROOT / "keystore" / "fncal-test.keystore"
+    if keystore.is_file() and keystore.stat().st_size > 1000:
+        ok("keystore fncal-test.keystore " + str(keystore.stat().st_size) + " bytes")
+    else:
+        fail("keystore missing or too small: " + str(keystore))
 
     if "android.permission.REQUEST_INSTALL_PACKAGES" in manifest:
         ok("manifest install permission")
@@ -368,7 +382,11 @@ def check_gradle() -> None:
         else:
             ok("gradle dep " + dep)
 
-    for banned in ("gradlew", "gradle/wrapper/gradle-wrapper.jar"):
+    for banned in (
+        "gradlew",
+        "gradle/wrapper/gradle-wrapper.jar",
+        "app/src/main/java/com/paulcai1593/fncal/app/GlassSurface.kt",
+    ):
         if (ROOT / banned).exists():
             fail("must not commit " + banned)
     print("gradle checks done")
@@ -381,6 +399,9 @@ def check_line_endings() -> None:
     for path in sorted(ROOT.rglob("*")):
         if not path.is_file() or path.suffix not in text_suffixes:
             continue
+        rel = path.relative_to(ROOT).as_posix()
+        if rel in BINARY_ALLOW:
+            continue
         checked += 1
         raw = path.read_bytes()
         cr = raw.count(b"\r")
@@ -392,6 +413,139 @@ def check_line_endings() -> None:
     print("text files (LF check):", checked)
 
 
+BINARY_ALLOW = {
+    # 0.2.1（§S1）：签名 keystore 是二进制，不参与文本检查（LF / URL / 括号配对）。
+    "keystore/fncal-test.keystore",
+}
+
+# 0.2.1（§S2）：范围文档列出的令牌值，浅色 / 深色。不得自换色。
+COLOR_TOKENS_LIGHT = {
+    "surface_2": "#F5F6F8",
+    "surface_3": "#ECEEF2",
+    "border": "#E2E5EB",
+    "text": "#14161C",
+    "text_2": "#4B5162",
+    "text_3": "#656C7A",
+    "accent": "#2F5E9E",
+    "accent_contrast": "#FFFFFF",
+    "bg_grad_start": "#EAF1F8",
+    "bg_grad_end": "#E3F0EA",
+    "glow_blue": "#1A2F5E9E",
+    "glow_teal": "#1A12A594",
+}
+COLOR_TOKENS_NIGHT = {
+    "surface_2": "#1A1C24",
+    "surface_3": "#21242E",
+    "border": "#2A2E3A",
+    "text": "#F4F6FA",
+    "text_2": "#A7ADBC",
+    "text_3": "#8A91A2",
+    "bg_grad_start": "#101A22",
+    "bg_grad_end": "#0E2422",
+    "glow_blue": "#2E3E7BB8",
+    "glow_teal": "#2E12A594",
+    "error_red": "#FFB4AB",
+}
+
+
+def parse_color_file(path: Path) -> dict[str, str]:
+    colors: dict[str, str] = {}
+    for node in ET.parse(path).getroot():
+        if node.tag != "color":
+            continue
+        name = node.get("name")
+        if name and node.text:
+            colors[name] = node.text.strip()
+    return colors
+
+
+def check_theme_tokens() -> None:
+    """0.2.1（§S2 / §S2-2b）：令牌值只允许文档列出的那些；系统栏必须透明。"""
+    light = parse_color_file(APP / "res" / "values" / "colors.xml")
+    night = parse_color_file(APP / "res" / "values-night" / "colors.xml")
+
+    for name, value in COLOR_TOKENS_LIGHT.items():
+        if light.get(name) == value:
+            ok("color light " + name + " " + value)
+        else:
+            fail("color light " + name + " = " + repr(light.get(name)) + " expected " + value)
+    for name, value in COLOR_TOKENS_NIGHT.items():
+        if night.get(name) == value:
+            ok("color night " + name + " " + value)
+        else:
+            fail("color night " + name + " = " + repr(night.get(name)) + " expected " + value)
+
+    for name in COLOR_TOKENS_NIGHT:
+        if name not in light:
+            fail("night color not defined in light: " + name)
+
+    transparent = {"@android:color/transparent", "#00000000"}
+    for rel in ("values/themes.xml", "values-night/themes.xml"):
+        path = APP / "res" / rel
+        text = path.read_text(encoding="utf-8")
+        if "Theme.FnCal.Glass" in text:
+            fail("legacy Theme.FnCal.Glass still in " + rel)
+        root = ET.parse(path).getroot()
+        style = next((n for n in root if n.tag == "style" and n.get("name") == "Theme.FnCal"), None)
+        if style is None:
+            fail("style Theme.FnCal missing in " + rel)
+            continue
+        items = {n.get("name"): (n.text or "").strip() for n in style if n.tag == "item"}
+        for attr in ("android:statusBarColor", "android:navigationBarColor"):
+            if items.get(attr) in transparent:
+                ok("theme " + rel + " " + attr + " transparent")
+            else:
+                fail("theme " + rel + " " + attr + " must be transparent, got " + repr(items.get(attr)))
+
+
+def check_layouts() -> None:
+    """0.2.1（§S2 / §S2-2b）：布局口径与根容器不得写死系统栏内距。"""
+    layouts = APP / "res" / "layout"
+    for name in ("activity_address.xml", "activity_about.xml", "activity_main.xml"):
+        path = layouts / name
+        text = path.read_text(encoding="utf-8")
+        # 注释里会提到 fitsSystemWindows（解释口径），判定前先去掉注释。
+        markup = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+        rel = "layout/" + name
+        if "@+id/shell_root" in markup:
+            ok("layout shell_root " + rel)
+        else:
+            fail("layout missing shell_root " + rel)
+        if "fitsSystemWindows" in markup:
+            fail("layout must not set fitsSystemWindows: " + rel)
+        start = markup.find("<FrameLayout")
+        if start >= 0:
+            end = markup.find(">", start)
+            head = markup[start:end]
+            if "paddingTop" in head:
+                fail("layout root must not hardcode paddingTop: " + rel)
+            if "fitsSystemWindows" in head:
+                fail("layout root must not set fitsSystemWindows: " + rel)
+        if re.search(r"#[0-9A-Fa-f]{6,8}", markup):
+            fail("layout has hardcoded color: " + rel)
+
+    for name in ("activity_address.xml", "activity_about.xml"):
+        text = (layouts / name).read_text(encoding="utf-8")
+        for needle in ('@drawable/bg_card', '44dp', '16sp', '12sp'):
+            if needle in text:
+                ok("layout " + name + " has " + needle)
+            else:
+                fail("layout " + name + " missing " + needle)
+
+    card = (APP / "res" / "drawable" / "bg_card.xml").read_text(encoding="utf-8")
+    for needle in ('android:radius="9dp"', 'android:width="1dp"', "@color/surface_2", "@color/border"):
+        if needle in card:
+            ok("card drawable has " + needle)
+        else:
+            fail("card drawable missing " + needle)
+
+    field = (APP / "res" / "drawable" / "bg_input_field.xml").read_text(encoding="utf-8")
+    if "bg_input_focused" in field and "bg_input" in field:
+        ok("input field selector")
+    else:
+        fail("input field selector missing focused/default states")
+
+
 def main() -> int:
     print("root:", ROOT)
     check_xml()
@@ -401,6 +555,8 @@ def main() -> int:
     check_urls()
     check_update_manifest()
     check_gradle()
+    check_theme_tokens()
+    check_layouts()
     check_line_endings()
     print()
     if failures:

@@ -58,9 +58,10 @@ class AboutActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_about)
-        // 0.2.0：与地址页同一套深色蓝绿渐变 + 毛玻璃。
-        GlassSurface.applyWindow(this)
-        GlassSurface.installBlurLayer(this)
+        // 0.2.1（§S2-2b）：与地址页同一套 edge-to-edge + 光斑模糊 + insets 内距。
+        ShellChrome.applyWindow(this)
+        ShellChrome.installBlurLayer(this)
+        ShellChrome.applyInsets(findViewById(R.id.shell_root))
 
         val appVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()

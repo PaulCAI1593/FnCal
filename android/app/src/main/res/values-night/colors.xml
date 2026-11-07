@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 0.2.1（范围文档 §S2）：深色值。两页跟随系统明暗，不再固定深色。
+         令牌值来自范围文档，不得自换色。 -->
+    <color name="surface_2">#1A1C24</color>
+    <color name="surface_3">#21242E</color>
+    <color name="border">#2A2E3A</color>
+    <color name="text">#F4F6FA</color>
+    <color name="text_2">#A7ADBC</color>
+    <color name="text_3">#8A91A2</color>
+    <color name="accent">#2F5E9E</color>
+    <color name="accent_contrast">#FFFFFF</color>
+
+    <color name="bg_grad_start">#101A22</color>
+    <color name="bg_grad_end">#0E2422</color>
+    <!-- 深色光斑从 10% 提到 18%：深底上 10% 几乎看不见。 -->
+    <color name="glow_blue">#2E3E7BB8</color>
+    <color name="glow_blue_clear">#003E7BB8</color>
+    <color name="glow_teal">#2E12A594</color>
+    <color name="glow_teal_clear">#0012A594</color>
+
+    <!-- 深色卡片上的错误文案：原 #B3261E 在 #1A1C24 上约 2.3:1，不可读。 -->
+    <color name="error_red">#FFB4AB</color>
+</resources>

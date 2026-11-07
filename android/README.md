@@ -1,4 +1,4 @@
-# FnCal 安卓外壳 v0.2.0
+# FnCal 安卓外壳 v0.2.1
 
 给自托管 FnCal 一个安卓安装包：首次打开填自己的地址，之后正常登录使用。
 本目录只包含安卓壳；FnCal 网页与后端仍在 `code/`。
@@ -17,9 +17,21 @@
    在仓库根目录的 `android/` 里执行 `gradle assembleDebug --no-daemon`。
 3. 产物：
    - Actions artifact `FnCal-Android-debug`；
-   - Release `android-v0.2.0` 的资产 `FnCal-Android-0.2.0.apk`（调试签名）。
-4. 构建自检会打印 `aapt dump badging`：包名 `com.paulcai1593.fncal.app`、
-   `versionName=0.2.0`、`versionCode=200`。
+   - Release `android-v0.2.1` 的资产 `FnCal-Android-0.2.1.apk`（固定测试签名）。
+4. 构建自检会打印 `aapt dump badging` 与 `apksigner verify --print-certs`：
+   包名 `com.paulcai1593.fncal.app`、`versionName=0.2.1`、`versionCode=201`，
+   证书 SHA-256 必须是 `0A:78:89:85:4B:B2:E8:A8:21:53:A1:5D:59:A3:48:67:6D:77:2A:8A:22:F7:C9:71:CF:98:A7:F1:C0:8C:3A:CE`。
+
+## 签名（0.2.1）
+
+0.2.0 及以前用 CI 每次重建的 `~/.android/debug.keystore`，私钥随机，新包无法覆盖旧包。
+0.2.1 起仓库内固定一把测试 keystore：`keystore/fncal-test.keystore`
+（PKCS12、RSA 2048、alias `fncal`、口令 `fncal-test-2026`、有效期 10000 天）。
+
+- 同一签名的 0.2.1 及以后版本可直接覆盖升级。
+- 0.1.0 / 0.2.0 已经装过的设备**必须卸载一次**再装 0.2.1。
+- 换正式签名后同样需要卸载一次；日历数据在服务器，损失仅限「已保存的地址」与 Cookie。
+- 这是**测试签名**，只用于自用分发；不要拿它上架应用商店。
 
 ## 怎么改版本
 
@@ -29,7 +41,6 @@
 - `update.json` 的 `notes` 也在这里更新；它随仓库 `main` 分支发布，是应用内
   「检查更新」读取的版本清单。
 - 外壳版本与 FnCal 服务端版本无关，不要动仓库里的版本串。
-- 换正式签名需要卸载重装；日历数据在服务器，损失仅限「已保存的地址」。
 
 ## 目录
 
@@ -37,6 +48,7 @@
 android/
   settings.gradle.kts / build.gradle.kts / gradle.properties
   update.json                            应用内「检查更新」读的版本清单
+  keystore/fncal-test.keystore           固定测试签名（0.2.1 起）
   app/build.gradle.kts
   app/src/main/AndroidManifest.xml
   app/src/main/assets/shell.js           Blob 导出桥（注入网页）
@@ -44,14 +56,15 @@ android/
     AddressActivity.kt                   地址页（首次 / 修改地址）
     MainActivity.kt                      WebView 主界面
     AboutActivity.kt                     关于页 + 检查更新
-    GlassSurface.kt                      渐变毛玻璃：窗口配色 + 光斑模糊
+    ShellChrome.kt                       沉浸式：窗口配色 / insets 内距 / 光斑模糊
     UpdateChecker.kt                     更新清单抓取 / 双源回退 / 版本比较
     ShellPrefs.kt                        地址 / 服务器版本 / 自签开关 / 更新源
     UrlNormalizer.kt                     地址规范化（纯函数）
     BlobSaver.kt                         blob → Downloads/FnCal
   app/src/main/res/layout/               三个页面
-  app/src/main/res/drawable/             渐变、光斑、玻璃卡片、按钮
-  app/src/main/res/values/               strings / colors / themes
+  app/src/main/res/drawable/             渐变、光斑、卡片、输入框、按钮
+  app/src/main/res/values/               strings / colors / themes（浅色）
+  app/src/main/res/values-night/         colors / themes（深色覆盖）
   app/src/main/res/mipmap-*/             启动图标
 ```
 
@@ -62,17 +75,31 @@ android/
 （半透明三点）：轻点弹两项菜单，按住可拖动——网页右上角也可能有可点元素
 （通知铃铛等），拖开即可。
 
-## 渐变毛玻璃（0.2.0）
+## 卡片口径与渐变（0.2.1）
 
-地址页与关于页固定深色（不随系统浅色/深色切换），主题 `Theme.FnCal.Glass`：
+地址页与关于页按网页「审批页」的四项一致性实现（范围文档 §S2），令牌不自换色：
 
-- 背景：CSS 135° 等价的三色渐变 `#0B2637 → #12495C → #0E6B62`（Android
-  gradient angle 写 315）。令牌值来自范围文档 §B1，不自换色。
-- 光斑：右上 `#35C3A6` 22%、左下 `#4A8FE0` 20%；API 31+ 由 `GlassSurface`
-  加 `RenderEffect` 真模糊（28dp），API 24–30 降级为「多层半透明 + 光斑」。
-- 卡片：12% 白 + 18% 白 1dp 描边 + 24dp 圆角；另加 45% 深色垫底，把 72% 白
-  的说明文字在最亮渐变处压到 4.54:1（不加只有 3.37:1）。
-- 主按钮：`#2E8FD6 → #12A594` 渐变、14dp 圆角；次按钮透明 + 18% 白描边。
+- 卡片：`surface_2`（浅 `#F5F6F8` / 深 `#1A1C24`）+ 1dp `border`（浅 `#E2E5EB` /
+  深 `#2A2E3A`）+ 9dp 圆角，内距左右 14dp、上下 12dp，卡片间距 10dp。
+- 字级：标题 16sp / 正文 13sp / 说明 12sp；文字 96% / 72% / 48% 三档。
+- 按钮：主按钮 `accent`（`#2F5E9E`）实底白字、6dp 圆角、高 44dp；次按钮透明 + 1dp 描边。
+- 输入框：`surface_3` 底 + 1dp 边框 + 6dp 圆角，聚焦边框换 `accent`。
+- 背景：浅色 `#EAF1F8 → #E3F0EA`、深色 `#101A22 → #0E2422`，右上青、左下蓝两团光斑；
+  两页跟随系统深浅色（DayNight + `values-night`），不再固定深色。
+- 模糊只在光斑层（`ShellChrome.installBlurLayer`）：API 31+ `RenderEffect` 28dp，
+  API 24–30 降级为半透明光斑；**卡片本身不模糊**。
+
+## 沉浸式（0.2.1 §S2-2b）
+
+三页（地址 / 主界面 / 关于）都 edge-to-edge：
+
+- `WindowCompat.setDecorFitsSystemWindows(window, false)`；状态栏与导航栏透明；
+  API 29+ 关 `isNavigationBarContrastEnforced`，手势条下不出灰条。
+- 根容器 `shell_root` 的上下内距由 `ShellChrome.applyInsets` 用 WindowInsets 补：
+  顶部状态栏高、底部 max(导航栏 / 手势条, 输入法)；不写死 24dp。
+- 状态栏与导航栏图标明暗跟随主题（深色主题用浅色图标）。
+- 键盘弹出只压内容区；地址页输入框不被盖。
+- WebView 内容留在安全区内：顶不压状态栏、底不压手势条，底部栏可点。
 
 ## 检查更新（0.2.0）
 
@@ -89,7 +116,7 @@ android/
 - 安装：`FileProvider` 给 `content://`，`ACTION_VIEW` +
   `application/vnd.android.package-archive`；API 26+ 先查
   `canRequestPackageInstalls()`，未授权跳系统设置页。
-- 调试签名包升级后仍是调试签名；正式签名启用后，跨签名升级需卸载重装。
+- 0.2.1 起签名固定，后续版本可直接覆盖；跨过 0.2.0 之前版本升级需卸载一次。
 
 ## Blob 导出桥
 
@@ -107,7 +134,8 @@ C:\Python314\python.exe android/tools/check_static.py
 
 检查：XML 解析、PNG 尺寸、Kotlin 括号/引号配对、资源引用一致性、http(s) 字面量
 （外链只放行更新用的四个域名）、`update.json` 与 Gradle 版本一致、Gradle 关键配置
-与依赖白名单、文本文件 LF。**这只是静态检查，不等于编译通过。**
+与依赖白名单、固定测试签名、浅色 / 深色令牌值、系统栏必须透明、布局根容器不得
+`fitsSystemWindows` 或写死 `paddingTop`、文本文件 LF。**这只是静态检查，不等于编译通过。**
 
 ## 已知限制
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 0.2.1（§S2）：输入框背景选择器：聚焦时边框变强调色。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/bg_input_focused" android:state_focused="true" />
+    <item android:drawable="@drawable/bg_input" />
+</selector>

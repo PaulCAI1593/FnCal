@@ -83,6 +83,6 @@
     <string name="update_verify_failed">安装包校验失败，已删除文件</string>
     <string name="update_need_permission">需要允许安装未知来源应用后再试</string>
     <string name="update_check_failed">检查更新失败：%1$s</string>
-    <string name="update_signature_note">调试签名包升级后仍是调试签名；正式签名启用后，跨签名升级需卸载重装。</string>
+    <string name="update_signature_note">测试签名：同一签名的版本可直接覆盖升级；换正式签名或跨过 0.2.0 之前版本升级时，需先卸载一次。</string>
     <string name="update_install_started">已打开安装器</string>
 </resources>

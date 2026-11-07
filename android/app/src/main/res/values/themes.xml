@@ -1,18 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 无 ActionBar；跟随系统深浅色（网页自己会切主题）。 -->
+    <!-- 无 ActionBar；跟随系统深浅色（网页自己会切主题）。
+         0.2.1（§S2-2b）：三页都 edge-to-edge —— 状态栏与导航栏透明，图标明暗随主题；
+         窗口底色先铺渐变起点，避免启动瞬间白闪。 -->
     <style name="Theme.FnCal" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="colorPrimary">@color/brand</item>
-        <item name="colorPrimaryDark">@color/brand_dark</item>
-        <item name="colorAccent">@color/brand</item>
-    </style>
-
-    <!-- 0.2.0：地址页 / 关于页固定深色渐变（不随系统浅色/深色切换）。
-         窗口底色先铺渐变起点，避免启动瞬间白闪；状态栏图标用浅色。 -->
-    <style name="Theme.FnCal.Glass" parent="Theme.FnCal">
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorPrimaryDark">@color/bg_grad_start</item>
+        <item name="colorAccent">@color/accent</item>
         <item name="android:windowBackground">@color/bg_grad_start</item>
-        <item name="android:statusBarColor">@color/bg_grad_start</item>
-        <item name="android:navigationBarColor">@color/bg_grad_start</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>

@@ -45,7 +45,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_REFRESH = 1
         private const val MENU_ABOUT = 2
         private const val DOUBLE_BACK_WINDOW_MS = 2_000L
-        private const val UA_SUFFIX = " FnCalAndroid/0.1.0"
+        private const val UA_SUFFIX = " FnCalAndroid/0.2.1"
     }
 
     private lateinit var webView: WebView
@@ -67,6 +67,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         setContentView(R.layout.activity_main)
+        // 0.2.1（§S2-2b）：WebView 也 edge-to-edge；内容用 insets 留在安全区内，
+        // 顶不压状态栏、底不压手势条，三点菜单与底部区域都可点。
+        ShellChrome.applyWindow(this)
+        ShellChrome.applyInsets(findViewById(R.id.shell_root))
         webView = findViewById(R.id.web_view)
         progress = findViewById(R.id.progress)
         errorView = findViewById(R.id.error_view)

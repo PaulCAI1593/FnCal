@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FnCal 安卓外壳 v0.2.0
+  FnCal 安卓外壳 v0.2.1
 
   - 地址页是 LAUNCHER（首次打开先填地址），主界面不导出。
   - usesCleartextTraffic：局域网自托管常是 http，安卓 9 起默认禁明文。
   - 旧系统（API 24-28）保存 Blob 导出文件到公共下载目录需要写外部存储权限。
-  - 0.2.0：地址页 / 关于页换成固定深色的渐变毛玻璃主题（Theme.FnCal.Glass），
-    主界面 WebView 仍用普通 Theme.FnCal，跟随网页自己的主题。
+  - 0.2.1：三页统一 Theme.FnCal，edge-to-edge + 透明状态栏 / 导航栏（§S2-2b）；
+    地址页与关于页的渐变背景与卡片风格由布局与 drawable 决定。
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -29,7 +29,7 @@
         <activity
             android:name=".AddressActivity"
             android:exported="true"
-            android:theme="@style/Theme.FnCal.Glass"
+            android:theme="@style/Theme.FnCal"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -47,7 +47,7 @@
             android:name=".AboutActivity"
             android:exported="false"
             android:label="@string/title_about"
-            android:theme="@style/Theme.FnCal.Glass"
+            android:theme="@style/Theme.FnCal"
             android:windowSoftInputMode="adjustResize" />
 
         <!-- 0.2.0（§B4）：把下载到外部私有目录的 APK 以 content:// 交给安装器。 -->

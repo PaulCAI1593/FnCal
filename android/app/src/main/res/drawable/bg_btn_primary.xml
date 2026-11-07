@@ -1,11 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 0.2.0 主按钮：#2E8FD6 → #12A594 水平渐变、14dp 圆角；文字白色 16sp 粗体。 -->
+<!-- 0.2.1（§S2）：主按钮：强调色实底、白字、6dp 圆角（高度在布局里给 44dp）。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <corners android:radius="14dp" />
-    <gradient
-        android:angle="0"
-        android:endColor="@color/btn_grad_end"
-        android:startColor="@color/btn_grad_start"
-        android:type="linear" />
+    <solid android:color="@color/accent" />
+    <corners android:radius="6dp" />
 </shape>

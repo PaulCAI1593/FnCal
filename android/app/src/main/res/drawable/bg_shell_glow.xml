@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  0.2.0 两个光斑：右上是 #35C3A6 @22%，左下是 #4A8FE0 @20%，边缘过渡到全透明。
-  API 31+ 由 GlassSurface 给这一层加 RenderEffect 真模糊；API 24–30 只降半透明
-  alpha（多层半透明叠加），不调用 RenderEffect。
--->
+<!-- 0.2.1（§S2）：两团径向光斑。右上青、左下蓝；颜色与浓度跟随明暗
+     （浅色 10%，深色 18%）。只有这一层做模糊，卡片不模糊。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
