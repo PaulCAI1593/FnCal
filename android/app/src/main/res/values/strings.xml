@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FnCal</string>
+
+    <!-- 地址页 -->
+    <string name="title_address">连接你的 FnCal</string>
+    <string name="address_label">服务器地址</string>
+    <string name="address_hint">http://192.168.1.10:5581</string>
+    <string name="address_help">填你自己的 FnCal 地址，例如 http://192.168.1.10:5581。局域网地址用 http，公网地址建议 https。地址后面可以带反代的子路径。</string>
+    <string name="allow_self_signed">允许自签证书（仅对当前地址）</string>
+    <string name="self_signed_help">开启后，这个地址的证书错误不拦。只在你确认为自己的服务器时使用。</string>
+    <string name="connect">连接</string>
+    <string name="connecting">正在连接…</string>
+    <string name="open_anyway">仍然打开</string>
+    <string name="probe_success">已连接 FnCal %1$s</string>
+
+    <!-- 地址错误 -->
+    <string name="error_empty">请输入服务器地址</string>
+    <string name="error_whitespace">地址不能包含空格</string>
+    <string name="error_non_ascii">地址只能是英文、数字和符号</string>
+    <string name="error_bad_scheme">只支持 http 或 https</string>
+    <string name="error_no_host">地址里缺少主机名</string>
+    <string name="error_invalid">地址格式不正确</string>
+
+    <!-- 探活失败原因 -->
+    <string name="fail_refused">拒绝连接：请检查地址和端口，确认手机与服务器在同一网络</string>
+    <string name="fail_timeout">连接超时：请检查网络和服务器状态</string>
+    <string name="fail_cert">证书错误：若这是你自己的服务器，可打开「允许自签证书」后重试</string>
+    <string name="fail_not_fncal">这个地址不是 FnCal 服务（没有返回 ok 字段）</string>
+    <string name="fail_http">服务器返回错误（HTTP %1$d）</string>
+    <string name="fail_other">连接失败：请检查地址后重试</string>
+
+    <!-- 主界面 -->
+    <string name="back_again_to_exit">再按一次退出</string>
+    <string name="menu_refresh">刷新</string>
+    <string name="menu_about">关于</string>
+    <string name="menu_more">更多</string>
+    <string name="error_page_title">页面加载失败</string>
+    <string name="error_retry">重试</string>
+    <string name="error_change_address">改地址</string>
+    <string name="error_ssl">证书错误：这是你自己的服务器时，可在地址页打开「允许自签证书」后重试</string>
+    <string name="error_load_failed">加载失败：%1$s</string>
+    <string name="choose_file">选择文件</string>
+    <string name="download_started">开始下载</string>
+    <string name="save_done">已保存到 下载/FnCal</string>
+    <string name="save_failed">保存失败：请检查存储权限</string>
+
+    <!-- 关于页 -->
+    <string name="title_about">关于 FnCal</string>
+    <string name="about_app_version">应用版本</string>
+    <string name="about_server_version">服务器版本</string>
+    <string name="about_server_version_unknown">未记录</string>
+    <string name="about_address">当前地址</string>
+    <string name="about_change_address">修改地址</string>
+    <string name="about_clear_data">清除 Cookie 与缓存</string>
+    <string name="about_cleared">已清除 Cookie 与缓存</string>
+    <string name="about_license">本应用是 FnCal 的安卓外壳。网页与后端代码在项目仓库开源，遵循仓库里的开源许可。</string>
+</resources>

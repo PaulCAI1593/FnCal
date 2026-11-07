@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 品牌色与网页端的强调色一致（浅色主题 rgb(47,94,158)）。 -->
+    <color name="brand">#2F5E9E</color>
+    <color name="brand_dark">#24497B</color>
+    <color name="ic_launcher_background">#2F5E9E</color>
+    <color name="error_red">#B3261E</color>
+    <color name="hint_gray">#5F6674</color>
+</resources>

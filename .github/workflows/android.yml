@@ -1,0 +1,79 @@
+name: android
+
+# 安卓外壳构建（FnCal-Android）。本机无 Android SDK，只能在这里出包。
+# 手动触发，或 android/ 目录与工作流本身有改动时触发。
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Gradle 8.7
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Inspect APK
+        working-directory: android
+        run: |
+          set -e
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          test -f "$APK"
+          ls -l "$APK"
+          sha256sum "$APK"
+          echo "$ANDROID_HOME"
+          ls "$ANDROID_HOME/build-tools" | tail -1
+          AAPT="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/aapt"
+          "$AAPT" dump badging "$APK" | head -6
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FnCal-Android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          OUT=FnCal-Android-0.1.0.apk
+          cp "$APK" "$OUT"
+          TAG=android-v0.1.0
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG 已存在，覆盖资产"
+          else
+            gh release create "$TAG" \
+              --title "FnCal Android 0.1.0" \
+              --notes "安卓外壳测试包（调试签名）。首次打开填自托管地址，之后正常登录。到点提醒不在本版。" \
+              --latest=false
+          fi
+          gh release upload "$TAG" "$OUT" --clobber
