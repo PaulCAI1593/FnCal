@@ -313,6 +313,10 @@
   .asset__name code { font-weight: 400; color: var(--ink-2); }
   .asset__meta { grid-column: 1 / -1; font-family: var(--mono); font-size: var(--t-xs); color: var(--ink-3); word-break: break-all; line-height: 1.6; }
   .asset .btn { min-height: 40px; padding: 0 18px; font-size: var(--t-md); }
+  /* 下载按钮下面一行小字：同一个包的 Gitee 镜像 */
+  .asset__act { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+  .asset__mirror { font-size: var(--t-xs); color: var(--ink-3); text-decoration: none; }
+  .asset__mirror:hover { color: var(--accent); text-decoration: underline; }
 
   /* FAQ */
   details.faq { border-bottom: 1px solid var(--line); }
@@ -363,6 +367,7 @@
     .feat__row { grid-template-columns: 1fr; gap: 6px; }
     .asset { grid-template-columns: 1fr; }
     .asset .btn { justify-self: start; }
+    .asset__act { align-items: flex-start; }
     h1 { letter-spacing: -.02em; }
     table.perm thead { display: none; }
     table.perm tr { display: block; padding: 16px 0; border-bottom: 1px solid var(--line); }
@@ -955,27 +960,37 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
       <div class="assets">
         <div class="asset">
           <div class="asset__name">安装包 <code>FnCal-0.6.11.fpk</code></div>
-          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.6.11.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.11/FnCal-0.6.11.fpk">下载</a>
+          <div class="asset__act">
+            <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.6.11.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.11/FnCal-0.6.11.fpk">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安装包 FnCal-0.6.11.fpk" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.6.11/FnCal-0.6.11.fpk">Gitee 镜像</a>
+          </div>
           <div class="asset__meta">737,865 B · SHA-256 FDD78A057426F0ED16337185A6F89B49FD7664CB1D71AFEF9D45B4F9F9196FC7</div>
         </div>
         <div class="asset">
           <div class="asset__name">安卓 APK <code>FnCal-Android-0.3.6.apk</code></div>
-          <a class="btn" aria-label="下载安卓 APK FnCal-Android-0.3.6.apk" href="https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk">下载</a>
+          <div class="asset__act">
+            <a class="btn" aria-label="下载安卓 APK FnCal-Android-0.3.6.apk" href="https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安卓 APK FnCal-Android-0.3.6.apk" href="https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk">Gitee 镜像</a>
+          </div>
           <div class="asset__meta">3,912,809 B · SHA-256 5962B8B28BE272C103D3C2E423413E21D57A8C03722E3C5F5F62C9549D917576 · 直接覆盖 0.3.5，不用卸载</div>
         </div>
         <div class="asset">
           <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.6.11.zip</code></div>
-          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.6.11.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.11/FnCal-MCP-Skill-0.6.11.zip">下载</a>
+          <div class="asset__act">
+            <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.6.11.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.11/FnCal-MCP-Skill-0.6.11.zip">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载 AI 技能包 FnCal-MCP-Skill-0.6.11.zip" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.6.11/FnCal-MCP-Skill-0.6.11.zip">Gitee 镜像</a>
+          </div>
           <div class="asset__meta">26,175 B · SHA-256 CFC5E025429196182D2BE8E0D5FAE470103D763349F7DB2411887686B980C7FA</div>
         </div>
         <div class="asset">
           <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
-          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.11/SHA256SUMS.txt">下载</a>
+          <div class="asset__act">
+            <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.11/SHA256SUMS.txt">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载校验文件 SHA256SUMS.txt" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.6.11/SHA256SUMS.txt">Gitee 镜像</a>
+          </div>
           <div class="asset__meta">176 B · 含上面网页两个文件的哈希，可一条命令核对</div>
         </div>
       </div>
-      <p style="margin-top:24px;font-size:var(--t-md);color:var(--ink-2)">下载都在 GitHub 发布页 <a href="https://github.com/PaulCAI1593/FnCal/releases">Releases</a>（官方发布页）。全部版本：<a href="https://github.com/PaulCAI1593/FnCal/releases">Releases</a> · 更新内容：<a href="https://github.com/PaulCAI1593/FnCal/blob/main/CHANGELOG.md">CHANGELOG</a> · 源码与文档：<a href="https://github.com/PaulCAI1593/FnCal">GitHub 仓库</a></p>
-      <p style="margin-top:6px;font-size:var(--t-sm);color:var(--ink-3)">国内访问慢时可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>，内容与 GitHub 相同。</p>
       <h3 class="sub">0.6.11 改了什么</h3>
       <ul class="rules">
         <li><strong>日程列表的节日与节气也带图标了。</strong>节日是旗子配主题色，节气是太阳配主题色的互补色；图标只用继承色，所以图标与文字必然同色。</li>
