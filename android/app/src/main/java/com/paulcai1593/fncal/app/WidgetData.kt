@@ -85,7 +85,7 @@ data class WidgetSnapshot(
                     fromDate = root.optString("from", "").ifBlank { null },
                     toDate = root.optString("to", "").ifBlank { null },
                     events = events,
-                    weekStartsOn = normalizedWeekStart(weekStartsOn),
+                    weekStartsOn = CalKit.normalizedWeekStart(weekStartsOn),
                 )
             } catch (e: Exception) {
                 null

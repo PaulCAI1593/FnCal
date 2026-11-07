@@ -534,8 +534,6 @@ class AboutActivity : AppCompatActivity() {
         if (!::textUpdateDiag.isInitialized) {
             return
         }
-        lastDmStatus = status
-        lastDmReason = reason
         textUpdateDiag.text = getString(R.string.update_diag, status, reason, landed)
         textUpdateDiag.visibility = View.VISIBLE
     }
