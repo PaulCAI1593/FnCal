@@ -1416,7 +1416,8 @@ def check_update_fallback() -> None:
         '"https://gitee.com/Paul1593/FnCal/raw/main/android/update.json"',
         '"https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/android/update.json"',
         # 0.3.6（§A 修订）：两源固定顺序，Gitee 永远第一
-        "val checkOrder: List<Source> = listOf(GITEE, GITHUB)",
+        # 0.3.6 编译修正：object 体里的 val 不能套 companion，枚举项要写全限定名
+        "val checkOrder: List<Source> = listOf(Source.GITEE, Source.GITHUB)",
         # 严格按 longVersionCode 比较
         "manifest.versionCode.toLong() > currentVersionCode",
         # 不比当前新就继续下一个源（0.3.1 的 bug 不能重演）
@@ -1440,6 +1441,13 @@ def check_update_fallback() -> None:
             ok("update checker has " + marker)
         else:
             fail("update checker missing " + marker)
+
+    # 0.3.6 编译修正（CI run 42403973939）：UpdateChecker.kt 两个都是 standalone object，
+    # 里面再写 companion object 会编译失败，枚举项也不能省 Source. 前缀。
+    if "companion object" in updater:
+        fail("update checker must not nest companion object in standalone object")
+    else:
+        ok("update checker has no nested companion object")
 
     # 0.3.6（§A 修订）：两源以外的东西都不许残留。
     forbidden = (

@@ -26,10 +26,8 @@ object UpdateSources {
 
     enum class Source { GITEE, GITHUB }
 
-    companion object {
-        /** 0.3.6（§A 修订）：两源固定顺序，Gitee 永远第一。 */
-        val checkOrder: List<Source> = listOf(GITEE, GITHUB)
-    }
+    /** 0.3.6（§A 修订）：两源固定顺序，Gitee 永远第一。 */
+    val checkOrder: List<Source> = listOf(Source.GITEE, Source.GITHUB)
 
     const val MANIFEST_GITEE = "https://gitee.com/Paul1593/FnCal/raw/main/android/update.json"
     const val MANIFEST_GITHUB =
