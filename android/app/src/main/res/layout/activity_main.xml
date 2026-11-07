@@ -29,15 +29,16 @@
 
     <!--
       没有地址栏，也没有 ActionBar（主题是 NoActionBar，WebView 要全屏）。
-      按范围文档选的第二种入口：「关于按钮浮层」——右上角三点，弹菜单含「关于」「刷新」。
+      按范围文档选的第二种入口：「关于按钮浮层」——三点按钮，弹菜单含「关于」「刷新」。
+      0.3.5：默认放右下角、底栏（58dp）上方 12dp，避免压住网页底栏的视图切换按钮。
     -->
     <ImageButton
         android:id="@+id/btn_menu"
         android:layout_width="40dp"
         android:layout_height="40dp"
-        android:layout_gravity="top|end"
-        android:layout_marginTop="8dp"
-        android:layout_marginEnd="8dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="70dp"
         android:background="@drawable/bg_shell_menu"
         android:contentDescription="@string/menu_more"
         android:padding="8dp"

@@ -24,7 +24,7 @@ import javax.net.ssl.X509TrustManager
 object WidgetClient {
 
     private const val TIMEOUT_MS = 10_000
-    private const val VERSION = "0.3.4"
+    private const val VERSION = "0.3.5"
 
     sealed class Result {
         data class Ok(val json: String, val etag: String?) : Result()

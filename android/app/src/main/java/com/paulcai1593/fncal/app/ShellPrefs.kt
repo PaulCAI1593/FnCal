@@ -16,6 +16,9 @@ object ShellPrefs {
     private const val KEY_SERVER_VERSION = "server_version"
     private const val KEY_ALLOW_SELF_SIGNED = "allow_self_signed"
 
+    /** 0.3.5：最近一次刷新服务端版本的时间（毫秒），供排查与节流。 */
+    private const val KEY_SERVER_VERSION_AT = "server_version_at"
+
     /** 0.2.0：更新源（cn = 国内源，direct = 直通），默认国内源。 */
     private const val KEY_UPDATE_SOURCE = "update_source"
 
@@ -38,6 +41,14 @@ object ShellPrefs {
             editor.putString(KEY_SERVER_VERSION, version)
         }
         editor.apply()
+    }
+
+    /** 0.3.5：上次刷新服务端版本的时间；0 表示从未成功刷新过。 */
+    fun serverVersionAt(context: Context): Long =
+        prefs(context).getLong(KEY_SERVER_VERSION_AT, 0L)
+
+    fun setServerVersionAt(context: Context, millis: Long) {
+        prefs(context).edit().putLong(KEY_SERVER_VERSION_AT, millis).apply()
     }
 
     fun allowSelfSigned(context: Context): Boolean =

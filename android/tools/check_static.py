@@ -352,9 +352,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 304": app_gradle,
-        'versionName = "0.3.4"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.4")': app_gradle,
+        "versionCode = 305": app_gradle,
+        'versionName = "0.3.5"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.5")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -901,7 +901,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.4"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.5"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -948,8 +948,8 @@ def workflow_version_status(name: str, code: int) -> tuple[bool, str]:
         return False, "android.yml missing"
     wf = workflow.read_text(encoding="utf-8")
     allowed = {name: code}
-    if name == "0.3.4":
-        allowed["0.3.3"] = 303
+    if name == "0.3.5":
+        allowed["0.3.4"] = 304
     tags = set(re.findall(r"TAG=android-v(\d+\.\d+\.\d+)", wf))
     outs = set(re.findall(r"OUT=FnCal-Android-(\d+\.\d+\.\d+)\.apk", wf))
     badges = set(re.findall(r"versionName='(\d+\.\d+\.\d+)'", wf))
@@ -1022,6 +1022,22 @@ def check_shell_surface() -> None:
             ok("shell surface differs from bg_grad_start (" + label + ")")
         else:
             fail("shell surface must differ from bg_grad_start (" + label + ")")
+
+    # 0.3.5（附）：浮层按钮默认在右下角、底栏上方，不压网页底部视图切换。
+    if 'android:layout_gravity="bottom|end"' in main_xml:
+        ok("menu button anchored bottom|end")
+    else:
+        fail("menu button must use layout_gravity bottom|end")
+    margin = re.search(r'android:id="@\+id/btn_menu"[\s\S]{0,600}?android:layout_marginBottom="(\d+)dp"', main_xml)
+    if margin and 66 <= int(margin.group(1)) <= 80:
+        ok("menu button marginBottom " + margin.group(1) + "dp")
+    else:
+        fail("menu button marginBottom must be 66-80dp, got " + (margin.group(1) if margin else "missing"))
+    margin_end = re.search(r'android:id="@\+id/btn_menu"[\s\S]{0,600}?android:layout_marginEnd="(\d+)dp"', main_xml)
+    if margin_end and int(margin_end.group(1)) >= 8:
+        ok("menu button marginEnd " + margin_end.group(1) + "dp")
+    else:
+        fail("menu button marginEnd must be >= 8dp, got " + (margin_end.group(1) if margin_end else "missing"))
 
     # 关于页：卡片说明写实际做法，且不再出现「后续版本」。
     strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
@@ -1191,6 +1207,60 @@ def check_update_install() -> None:
         ok("about layout has update diag row")
     else:
         fail("about layout missing update diag row")
+
+
+def check_server_version_refresh() -> None:
+    """0.3.5：关于页不再只读缓存，打开就后台探活并刷新服务端版本。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    probe_path = kt / "HealthProbe.kt"
+    if not probe_path.is_file():
+        fail("HealthProbe.kt missing (0.3.5)")
+        return
+    probe = probe_path.read_text(encoding="utf-8")
+    for needle in (
+        "object HealthProbe",
+        "TIMEOUT_MS = 6_000",
+        "data class Health",
+        "fun probe(baseUrl: String, allowSelfSigned: Boolean): Result<Health>",
+        '"/api/health"',
+        'optBoolean("ok"',
+    ):
+        if needle in probe:
+            ok("health probe has " + needle)
+        else:
+            fail("health probe missing " + needle)
+
+    address = (kt / "AddressActivity.kt").read_text(encoding="utf-8")
+    if "HealthProbe.probe(" in address and "HttpURLConnection" not in address:
+        ok("address activity probes through HealthProbe")
+    else:
+        fail("address activity must probe through HealthProbe (no inline HttpURLConnection)")
+    about = (kt / "AboutActivity.kt").read_text(encoding="utf-8")
+    for needle in (
+        "HealthProbe.probe(",
+        "private fun refreshServerVersion()",
+        'thread(name = "fncal-health-refresh")',
+        "ShellPrefs.setServerVersionAt",
+        "ShellPrefs.setServerVersion(this, version)",
+        "SERVER_VERSION_REFRESH_MS = 30_000L",
+        "maybeRefreshServerVersion()",
+    ):
+        if needle in about:
+            ok("about activity has " + needle)
+        else:
+            fail("about activity missing " + needle)
+    # 先按缓存渲染、再后台刷新：缓存读取必须还在（不能删成只读网络）。
+    if "ShellPrefs.serverVersion(this)" in about:
+        ok("about activity still renders cached server version first")
+    else:
+        fail("about activity must keep rendering the cached server version first")
+
+    prefs = (kt / "ShellPrefs.kt").read_text(encoding="utf-8")
+    for needle in ('KEY_SERVER_VERSION_AT = "server_version_at"', "fun serverVersionAt", "fun setServerVersionAt"):
+        if needle in prefs:
+            ok("shell prefs has " + needle)
+        else:
+            fail("shell prefs missing " + needle)
 
 
 def check_widget_week_start() -> None:
@@ -1405,7 +1475,7 @@ def check_update_fallback() -> None:
         fail("workflow version: " + wf_note)
 
     # 0.3.4（§11）：docs/update.json 由 Pages 提供，必须与 android/update.json 同步。
-    # 过渡期：docs 落后（主席还没推）只提示，不判失败；docs 更新反而失败。
+    # 0.3.5 起：两份清单必须一致（不再容忍落后）；docs 新于 android 也判失败。
     docs_file = ROOT.parent / "docs" / "update.json"
     if not docs_file.exists():
         fail("docs/update.json missing")
@@ -1418,14 +1488,18 @@ def check_update_fallback() -> None:
     )
     if same:
         ok("docs/update.json matches android/update.json")
-    elif int(docs.get("versionCode") or 0) < int(code):
-        print(
-            "docs/update.json still on "
-            + str(docs.get("versionName"))
-            + " (pending sync by 主席)"
-        )
     else:
-        fail("docs/update.json is newer than android/update.json")
+        fail(
+            "docs/update.json not synced: %s/%s/%s vs %s/%s/%s"
+            % (
+                docs.get("versionName"),
+                docs.get("versionCode"),
+                docs.get("apk"),
+                manifest.get("versionName"),
+                manifest.get("versionCode"),
+                manifest.get("apk"),
+            )
+        )
 
 
 def main() -> int:
@@ -1443,6 +1517,7 @@ def main() -> int:
     check_widget_agenda_frames()
     check_update_fallback()
     check_update_install()
+    check_server_version_refresh()
     check_gradle()
     check_theme_tokens()
     check_layouts()

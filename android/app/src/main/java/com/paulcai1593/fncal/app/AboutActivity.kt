@@ -43,6 +43,8 @@ class AboutActivity : AppCompatActivity() {
         /** 下载进度的轮询间隔；DownloadManager 没有回调接口，只能 query。 */
         private const val POLL_INTERVAL_MS = 500L
         private const val INSTALL_MIME = "application/vnd.android.package-archive"
+        /** 0.3.5：服务端版本的重新探测间隔——onResume 距上次不足 30 秒就不重复请求。 */
+        private const val SERVER_VERSION_REFRESH_MS = 30_000L
 
         /**
          * 0.3.4 §B：DownloadManager.ERROR_FILE_ALREADY_EXISTS 的数值（1009）。
@@ -82,6 +84,10 @@ class AboutActivity : AppCompatActivity() {
     private var pendingInstallArmed = false
     /** 诊断行：最近一次成功取到的落盘位置（只留目录名 + 文件名）。 */
     private var lastLandedPath = "-"
+
+    /** 0.3.5：服务端版本后台刷新是否在途（避免连点或 onResume 并发重复请求）。 */
+    private var serverRefreshInFlight = false
+    private var lastServerRefreshAttemptAt = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -134,6 +140,8 @@ class AboutActivity : AppCompatActivity() {
 
         setupUpdateCard()
         setupWidgetCard()
+        // 0.3.5：先按缓存渲染（上面已写），随后在后台刷新服务端版本。
+        refreshServerVersion()
     }
 
     /** 0.6.2 §F：卡片跟随 App 登录态；这里只显示状态并提供手动刷新。 */
@@ -660,6 +668,47 @@ class AboutActivity : AppCompatActivity() {
         WidgetScheduler.refreshNow(this)
         // 0.3.4 §D：从「安装未知应用」设置页回来且已授权时，自动续装一次。
         resumePendingInstall()
+        // 0.3.5 §二.B.5：从安装器等页面回来时，距上次刷新超过 30 秒再刷一次。
+        maybeRefreshServerVersion()
+    }
+
+    /**
+     * 0.3.5 §二.B：关于页的服务端版本不再只读缓存。
+     *
+     * 打开页面先用缓存渲染，随后在后台线程探活；成功就把当前版本写回缓存并更新
+     * 版本行与状态行，失败保留缓存、不弹提示（离线打开不应报错）。
+     */
+    private fun refreshServerVersion() {
+        val base = ShellPrefs.baseUrl(this)
+        if (base.isNullOrBlank() || serverRefreshInFlight) return
+        serverRefreshInFlight = true
+        lastServerRefreshAttemptAt = System.currentTimeMillis()
+        val allowSelfSigned = ShellPrefs.allowSelfSigned(this)
+        thread(name = "fncal-health-refresh") {
+            val result = HealthProbe.probe(base, allowSelfSigned)
+            runOnUiThread {
+                serverRefreshInFlight = false
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val version = result.getOrNull()?.version.orEmpty()
+                if (version.isBlank()) return@runOnUiThread
+                ShellPrefs.setServerVersion(this, version)
+                ShellPrefs.setServerVersionAt(this, System.currentTimeMillis())
+                findViewById<TextView>(R.id.text_server_version).text = version
+                findViewById<TextView>(R.id.text_connection_status).text =
+                    getString(R.string.about_status_connected)
+            }
+        }
+    }
+
+    /** 0.3.5 §二.B.5：本页第一次刷新在 onCreate，之后 30 秒内不重复。 */
+    private fun maybeRefreshServerVersion() {
+        val last = if (lastServerRefreshAttemptAt > 0L) {
+            lastServerRefreshAttemptAt
+        } else {
+            ShellPrefs.serverVersionAt(this)
+        }
+        if (System.currentTimeMillis() - last <= SERVER_VERSION_REFRESH_MS) return
+        refreshServerVersion()
     }
 
     override fun onDestroy() {

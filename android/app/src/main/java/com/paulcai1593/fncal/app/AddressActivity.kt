@@ -10,24 +10,12 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
-import org.json.JSONObject
-import java.net.ConnectException
-import java.net.HttpURLConnection
-import java.net.SocketTimeoutException
-import java.net.URL
-import java.net.UnknownHostException
-import java.security.cert.X509Certificate
-import javax.net.ssl.HostnameVerifier
-import javax.net.ssl.HttpsURLConnection
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLException
-import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
 
 /**
  * 地址页：首次打开填自托管地址；从「关于 → 修改地址」进来时预填旧地址。
  *
- * 流程：输入 → UrlNormalizer 规范化 → GET {base}/api/health（10 秒超时）
+ * 流程：输入 → UrlNormalizer 规范化 → HealthProbe（GET {base}/api/health，6 秒超时）
  * → ok:true 就存地址与服务器版本并进主界面；失败给中文原因和「仍然打开」。
  */
 class AddressActivity : AppCompatActivity() {
@@ -35,8 +23,6 @@ class AddressActivity : AppCompatActivity() {
     companion object {
         /** 从「关于」页进来时置 true：不自动跳主界面，显示表单让用户改。 */
         const val EXTRA_EDIT = "edit"
-
-        private const val PROBE_TIMEOUT_MS = 10_000
     }
 
     private enum class FailKind { CERT, TIMEOUT, REFUSED, NOT_FNCAL, HTTP, OTHER }
@@ -118,42 +104,8 @@ class AddressActivity : AppCompatActivity() {
 
     private fun probe(baseUrl: String, allowSelfSigned: Boolean) {
         thread(name = "fncal-health") {
-            val outcome = try {
-                val url = URL(baseUrl + "/api/health")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = PROBE_TIMEOUT_MS
-                connection.readTimeout = PROBE_TIMEOUT_MS
-                connection.requestMethod = "GET"
-                connection.setRequestProperty("Accept", "application/json")
-                if (allowSelfSigned && connection is HttpsURLConnection) {
-                    connection.sslSocketFactory = trustAllContext().socketFactory as javax.net.ssl.SSLSocketFactory
-                    connection.hostnameVerifier = HostnameVerifier { _, _ -> true }
-                }
-                try {
-                    val status = connection.responseCode
-                    if (status !in 200..299) {
-                        Outcome.Failure(FailKind.HTTP, status)
-                    } else {
-                        val body = connection.inputStream
-                            ?.bufferedReader()
-                            ?.use { it.readText() }
-                            .orEmpty()
-                        parseHealth(body)
-                    }
-                } finally {
-                    connection.disconnect()
-                }
-            } catch (e: SSLException) {
-                Outcome.Failure(FailKind.CERT)
-            } catch (e: SocketTimeoutException) {
-                Outcome.Failure(FailKind.TIMEOUT)
-            } catch (e: ConnectException) {
-                Outcome.Failure(FailKind.REFUSED)
-            } catch (e: UnknownHostException) {
-                Outcome.Failure(FailKind.REFUSED)
-            } catch (e: Exception) {
-                Outcome.Failure(FailKind.OTHER)
-            }
+            // 0.3.5：探活实现抽到 HealthProbe，关于页用同一套，避免两处漂移。
+            val outcome = outcomeOf(HealthProbe.probe(baseUrl, allowSelfSigned))
 
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
@@ -162,17 +114,21 @@ class AddressActivity : AppCompatActivity() {
         }
     }
 
-    private fun parseHealth(body: String): Outcome {
-        return try {
-            val json = JSONObject(body)
-            if (json.optBoolean("ok", false)) {
-                Outcome.Success(json.optString("version", ""))
-            } else {
-                Outcome.Failure(FailKind.NOT_FNCAL)
+    private fun outcomeOf(result: Result<HealthProbe.Health>): Outcome {
+        return result.fold(
+            onSuccess = { Outcome.Success(it.version) },
+            onFailure = { error ->
+                val probe = error as? HealthProbe.ProbeException
+                when (probe?.error) {
+                    HealthProbe.Error.CERT -> Outcome.Failure(FailKind.CERT)
+                    HealthProbe.Error.TIMEOUT -> Outcome.Failure(FailKind.TIMEOUT)
+                    HealthProbe.Error.REFUSED -> Outcome.Failure(FailKind.REFUSED)
+                    HealthProbe.Error.NOT_FNCAL -> Outcome.Failure(FailKind.NOT_FNCAL)
+                    HealthProbe.Error.HTTP -> Outcome.Failure(FailKind.HTTP, probe.status)
+                    else -> Outcome.Failure(FailKind.OTHER)
+                }
             }
-        } catch (e: Exception) {
-            Outcome.Failure(FailKind.NOT_FNCAL)
-        }
+        )
     }
 
     private fun applyOutcome(baseUrl: String, outcome: Outcome) {
@@ -242,17 +198,5 @@ class AddressActivity : AppCompatActivity() {
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         startActivity(intent)
         finish()
-    }
-
-    /** 自签证书时探活也放行——否则「允许自签」只对 WebView 生效，探活仍然失败。 */
-    private fun trustAllContext(): SSLContext {
-        val trustAll = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-            override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-        }
-        val context = SSLContext.getInstance("TLS")
-        context.init(null, arrayOf(trustAll), null)
-        return context
     }
 }

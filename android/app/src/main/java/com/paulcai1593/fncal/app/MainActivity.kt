@@ -50,7 +50,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_ABOUT = 2
         private const val DOUBLE_BACK_WINDOW_MS = 2_000L
         // 0.3.0 §D：UA 带机型，服务端「我的安全」因此能显示是哪台手机。
-    private val UA_SUFFIX = " FnCalAndroid/0.3.4" + DeviceName.suffix()
+    private val UA_SUFFIX = " FnCalAndroid/0.3.5" + DeviceName.suffix()
     }
 
     private lateinit var webView: WebView
@@ -308,8 +308,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupShellMenu() {
-        // 主题是 NoActionBar（WebView 全屏），OptionsMenu 不会显示；用右上角浮层按钮 + PopupMenu。
-        // 按钮可拖动：网页右上角也可能有可点元素（通知铃铛等），拖开即可避免遮挡。
+        // 主题是 NoActionBar（WebView 全屏），OptionsMenu 不会显示；用右下角浮层按钮 + PopupMenu。
+        // 按钮可拖动：网页右下角也可能有可点元素，拖开即可；位置限制在父容器内。
         val button = findViewById<ImageButton>(R.id.btn_menu)
         val popup = androidx.appcompat.widget.PopupMenu(this, button)
         popup.menu.add(Menu.NONE, MENU_REFRESH, 0, R.string.menu_refresh)
