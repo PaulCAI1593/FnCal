@@ -35,8 +35,8 @@ object WidgetScheduler {
     }
 
     fun refreshNow(context: Context) {
-        if (!WidgetPrefs.hasToken(context)) {
-            // 没令牌时刷新只会画占位图，跳过网络与耗电。
+        if (ShellPrefs.baseUrl(context).isNullOrBlank()) {
+            // 没配服务器时刷新只会画占位图，跳过网络与耗电。
             FnCalWidgetProvider.updateAll(context)
             return
         }

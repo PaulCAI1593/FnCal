@@ -17,7 +17,7 @@ class WidgetWorker(
 
     override fun doWork(): Result {
         val context = applicationContext
-        if (WidgetPrefs.hasToken(context)) {
+        if (!ShellPrefs.baseUrl(context).isNullOrBlank()) {
             WidgetRepository.refresh(context)
         }
         FnCalWidgetProvider.updateAll(context)
