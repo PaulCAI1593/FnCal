@@ -333,9 +333,11 @@ export function createAiRest({
       });
     }
 
-    // 4）lastUsedAt（60 秒内不写盘；失败不影响请求）。
+    // 4）lastUsedAt（60 秒内不写盘；失败不影响请求）。0.6.2：顺带记 UA 供「登录设备与接入」显示。
     Promise.resolve()
-      .then(() => aiStore.touchLastUsed(found.userId, found.credential.id))
+      .then(() => aiStore.touchLastUsed(found.userId, found.credential.id, {
+        ua: (req.headers && req.headers['user-agent']) || '',
+      }))
       .catch(() => {});
 
     try {

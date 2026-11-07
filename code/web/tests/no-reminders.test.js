@@ -76,7 +76,8 @@ describe('提醒入口已移除（#16）', () => {
     const general = opened.dialog.querySelector('#settings-page-general');
     expect(general.textContent).not.toContain('默认提醒');
     [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
-    const page = opened.dialog.querySelector('#settings-page-calendar');
+    // 0.6.4：日历表格并入 CalDAV 页（页签 5→4）。
+    const page = opened.dialog.querySelector('#settings-page-account');
     const headers = [...page.querySelectorAll('.cal-table__row--head .cal-table__cell')].map((n) => n.textContent);
     expect(headers).toEqual(['名称', '显示', 'CalDAV 权限']);
     expect(page.textContent).not.toContain('事件通知');

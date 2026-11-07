@@ -13,6 +13,7 @@
 import { el, clear, linkify } from './dom.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
+import { closeOnBackdrop } from './scrim.js';
 import { EVENT_COLORS, DEFAULT_COLOR, categoryLabel, colorHex, customColorSwatch } from './colors.js';
 import { openCalendarName } from './calendar-dialog.js';
 import {
@@ -57,6 +58,11 @@ import {
   solarToLunar,
 } from './lib/lunar-core.js';
 import { t } from '../i18n/index.js';
+import { initKeyboardInset, keyboardState, onKeyboardChange } from './keyboard-inset.js';
+
+// 0.5.13：应用一起来就挂可视视口监听（键盘开合 → --vv-* 变量 + html.kb-open）。
+// 弹窗只在自己打开期间订阅变化；初始化幂等，测试里重复加载不会重复绑定。
+initKeyboardInset();
 
 /** What the guest field accepts as an address. Deliberately loose — the mail
  *  server is the real judge — but strict enough that a name or a half-typed
@@ -72,6 +78,8 @@ export function createEventModal({
   onHolidaySettings = null,
 }) {
   let scrim = null;
+  // 0.5.13：弹窗打开期间订阅可视视口变化（键盘开合），关闭时退订。
+  let stopKeyboardWatch = null;
   let current = null; // the event/task being edited, or null for new
   let mode = 'event'; // 'event' | 'ooo' (out of office) | 'task'
   let color = DEFAULT_COLOR;
@@ -2086,12 +2094,13 @@ export function createEventModal({
     showNotice('');
     hideConflict();
     scrim = el('div', { class: 'modal-scrim modal-scrim--anchored' }, [form]);
-    scrim.addEventListener('pointerdown', (e) => {
-      if (e.target === scrim) close();
-    });
+    closeOnBackdrop(scrim, close);
     document.body.append(scrim);
     document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', onViewportResize);
+    // 0.5.13：键盘开合时只重算弹窗锚点与内部滚动，不碰背后的日历。
+    scrim.addEventListener('focusin', onScrimFocusIn);
+    stopKeyboardWatch = onKeyboardChange(onKeyboardViewportChange);
 
     reminders = event && Array.isArray(event.reminders) ? [...event.reminders] : [];
     guests = event && Array.isArray(event.guests) ? event.guests.map((g) => ({ ...g })) : [];
@@ -2251,6 +2260,47 @@ export function createEventModal({
     window.removeEventListener('resize', onViewportResize);
     if (anchorRaf) cancelAnimationFrame(anchorRaf);
     anchorRaf = null;
+    if (stopKeyboardWatch) {
+      stopKeyboardWatch();
+      stopKeyboardWatch = null;
+    }
+  }
+
+  /* ---- 0.5.13：键盘弹出只抬弹窗 --------------------------------------- */
+
+  /** 弹窗内把正在输入的字段滚到可见处——只滚 `.modal__body`，背后日历不动。 */
+  function revealFocusedInModal() {
+    if (!scrim) return;
+    const active = document.activeElement;
+    if (!active) return;
+    const form = scrim.firstElementChild;
+    const body = form && form.querySelector('.modal__body');
+    if (!body || !body.contains(active)) return;
+    const bodyRect = body.getBoundingClientRect();
+    const fieldRect = active.getBoundingClientRect();
+    const pad = 12;
+    if (fieldRect.top < bodyRect.top + pad) {
+      body.scrollTop -= bodyRect.top + pad - fieldRect.top;
+    } else if (fieldRect.bottom > bodyRect.bottom - pad) {
+      body.scrollTop += fieldRect.bottom - (bodyRect.bottom - pad);
+    }
+  }
+
+  /** 可视视口变了（键盘开合 / iOS 平移 / 工具栏伸缩）：按新的可见高度重算
+   *  锚点，再让正在输入的字段可见。收起时重算回完整高度，弹窗回到打开时的
+   *  位置（--modal-anchor-top 是相对 scrim 的边距，scrim 本身只有键盘上方那么高）。 */
+  function onKeyboardViewportChange() {
+    if (!scrim) return;
+    anchorTop();
+    if (keyboardState().open) revealFocusedInModal();
+  }
+
+  /** 键盘已经打开时切换字段（点另一个输入框 / Tab）：滚进弹窗可见区。 */
+  function onScrimFocusIn(e) {
+    if (!scrim || !keyboardState().open) return;
+    const form = scrim.firstElementChild;
+    const body = form && form.querySelector('.modal__body');
+    if (body && body.contains(e.target)) revealFocusedInModal();
   }
 
   /* ---- View mode (read-only details card) ----------------------------- */
@@ -2481,8 +2531,11 @@ export function createEventModal({
    * stored — so the head holds Close alone and the one action changes country.
    */
   function buildHolidayCard(item) {
+    // 0.6.6：二十四节气与节日共用同一张只读卡（同款外壳），只换类别名、图标行
+    // 与来源说明；来源是本地计算，所以没有「更改国家」这一步。
+    const isTerm = Boolean(item.term);
     const head = el('div', { class: 'modal__head modal__head--view' }, [
-      el('span', { class: 'view__kind', text: t('editor.holiday') }),
+      el('span', { class: 'view__kind', text: t(isTerm ? 'editor.solarTerm' : 'editor.holiday') }),
       el('button', {
         class: 'icon-btn',
         type: 'button',
@@ -2506,14 +2559,16 @@ export function createEventModal({
     // The calendar glyph, not a second flag: this row names the source list,
     // the way an event's card would name its calendar.
     rows.push(
-      viewRow('calendar', [
-        el('div', { text: t('editor.holidaySource') }),
-        note ? el('div', { class: 'view__muted', text: note }) : null,
-        el('div', { class: 'view__muted', text: t('editor.holidayBuiltin') }),
-      ]),
+      viewRow('calendar', isTerm
+        ? [el('div', { text: t('editor.solarTermSource') })]
+        : [
+            el('div', { text: t('editor.holidaySource') }),
+            note ? el('div', { class: 'view__muted', text: note }) : null,
+            el('div', { class: 'view__muted', text: t('editor.holidayBuiltin') }),
+          ]),
     );
 
-    const foot = onHolidaySettings
+    const foot = !isTerm && onHolidaySettings
       ? el('div', { class: 'modal__foot modal__foot--view' }, [
           el('button', {
             class: 'btn btn--ghost',
@@ -2539,7 +2594,11 @@ export function createEventModal({
       head,
       el('div', { class: 'modal__body view__body' }, [
         el('div', { class: 'view__title-row' }, [
-          el('span', { class: 'view__color view__color--holiday', html: icon('flag', { size: 'sm' }) }),
+          // 0.6.6：节气与节日共用标题行，但图标不同——节气是 sun，旗帜只属法定节日。
+          el('span', {
+            class: isTerm ? 'view__color view__color--term' : 'view__color view__color--holiday',
+            html: icon(isTerm ? 'sun' : 'flag', { size: 'sm' }),
+          }),
           el('div', { class: 'view__title-main' }, [
             el('h2', { class: 'view__title', id: 'view-title', text: item.title }),
           ]),
@@ -2551,7 +2610,7 @@ export function createEventModal({
   }
 
   function buildViewCard(item) {
-    if (item.holiday) return buildHolidayCard(item);
+    if (item.holiday || item.term) return buildHolidayCard(item);
     const isTask = Boolean(item.isTask);
     const kind = isTask ? t('editor.mode.task') : item.ooo ? t('editor.kind.ooo') : t('editor.mode.event');
 
@@ -2743,12 +2802,14 @@ export function createEventModal({
 
     const card = buildViewCard(item);
     scrim = el('div', { class: 'modal-scrim modal-scrim--anchored' }, [card]);
-    scrim.addEventListener('pointerdown', (e) => {
-      if (e.target === scrim) close();
-    });
+    closeOnBackdrop(scrim, close);
     document.body.append(scrim);
     document.addEventListener('keydown', onViewKeydown, true);
     window.addEventListener('resize', onViewportResize);
+    // 0.5.13：详情卡本身没有输入框，但键盘可能因别的控件弹出；保持同一套
+    // 「只抬弹窗」定位，避免它跟着布局视口一起动。
+    scrim.addEventListener('focusin', onScrimFocusIn);
+    stopKeyboardWatch = onKeyboardChange(onKeyboardViewportChange);
     anchorTop();
     requestAnimationFrame(() => card.focus());
   }

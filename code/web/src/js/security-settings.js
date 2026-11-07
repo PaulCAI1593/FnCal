@@ -42,7 +42,14 @@ import {
   listOwnAppPasswords,
   createOwnAppPassword,
   revokeOwnAppPassword,
+  listAuthSessions,
+  revokeAuthSession,
+  listAuthConnections,
+  revokeAuthConnection,
+  updateAiCredential,
+  exportDiagnostics,
 } from './api-client.js';
+import { parseUserAgent } from './ua-parse.js';
 
 function section(title, children, className = '') {
   return el('section', { class: `security-section ${className}`.trim() }, [
@@ -209,6 +216,32 @@ function formatDate(value) {
   const d = new Date(ms);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/* ---- 0.6.1（M5 §S3）／0.6.2：IP 打码 / 相对时间 ---- */
+// 只做展示归一，不改变服务端记录（记录里保留完整 UA 与 IP，撤设备时按 id 操作）。
+
+function maskIp(ip) {
+  const value = String(ip || '').trim();
+  if (!value) return '';
+  if (value.includes(':')) {
+    const groups = value.split(':').filter(Boolean);
+    return groups.length >= 4 ? `${groups.slice(0, 4).join(':')}…` : '::…';
+  }
+  const parts = value.split('.');
+  if (parts.length === 4) return `${parts[0]}.${parts[1]}.x.x`;
+  return value;
+}
+
+function relativeTime(value) {
+  const ms = typeof value === 'string' ? Date.parse(value) : Number(value);
+  if (!Number.isFinite(ms)) return '-';
+  const minutes = Math.floor((Date.now() - ms) / 60000);
+  if (minutes < 1) return t('security.time.justNow');
+  if (minutes < 60) return t('security.time.minutesAgo', { n: String(minutes) });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t('security.time.hoursAgo', { n: String(hours) });
+  return t('security.time.daysAgo', { n: String(Math.floor(hours / 24)) });
 }
 
 /** 一次性秘密展示（验证码/专用密码/恢复码）：只显示这一次，提供复制按钮。 */
@@ -1069,6 +1102,7 @@ export function openSecuritySettingsDialog({ user } = {}) {
     selfBlock.statusHost,
     selfBlock.guideHost,
     selfBlock.totpSection,
+    selfBlock.devicesSection,
     selfBlock.davSection,
   );
   panelHosts.login.append(
@@ -1081,8 +1115,45 @@ export function openSecuritySettingsDialog({ user } = {}) {
     section(t('security.section.https'), [httpsBody]),
     section(t('security.section.cert'), [certBody]),
   );
+  // 0.6.4（用户 m00854）：「诊断包」从设置 → CalDAV 页搬到管理员「安全设置」④ 审计页，
+  // 作为系统诊断日志的导出入口（审计列表下方）。行为不变：同接口、同文件名、失败同 toast。
+  // 普通用户「我的安全」没有审计页，不渲染这一组。
+  const diagExportBtn = el('button', {
+    class: 'btn btn--sm',
+    type: 'button',
+    text: t('settings.diagnostic.export'),
+    on: {
+      click: async () => {
+        diagExportBtn.disabled = true;
+        try {
+          const diagnostic = await exportDiagnostics();
+          if (!diagnostic) throw new Error('empty diagnostic');
+          const blob = new Blob([JSON.stringify(diagnostic, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const stamp = new Date().toISOString().slice(0, 10);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `FnCal-diagnostic-${stamp}.json`;
+          document.body.append(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch {
+          toast(t('settings.diagnostic.exportFailed'), { variant: 'danger' });
+        } finally {
+          diagExportBtn.disabled = false;
+        }
+      },
+    },
+  });
+  const diagSection = section(t('security.section.diag'), [
+    el('p', { class: 'security-hint security-diag__hint', text: t('security.diag.hint') }),
+    el('div', { class: 'security-inline' }, [diagExportBtn]),
+  ]);
+
   panelHosts.audit.append(
     section(t('security.section.audit'), [auditBody]),
+    diagSection,
   );
 
   sectionsHost.append(
@@ -1138,7 +1209,7 @@ export function openSecuritySettingsDialog({ user } = {}) {
  * 管理员「安全设置」① 页与普通用户「我的安全」内容相同：自己的 TOTP 与
  * CalDAV 专用密码。这里抽成一份构建代码，两个对话框只负责外壳（宽度、
  * 标题、页签），避免两处实现漂移（M13 §2.1）。
- * 返回 { statusHost, guideHost, totpSection, davSection, refresh }。
+ * 返回 { statusHost, guideHost, totpSection, devicesSection, davSection, refresh }。
  */
 function buildSelfSecurity({ user, setError, onChange = () => {} }) {
   const statusHost = el('div', { class: 'security-self-status' });
@@ -1334,12 +1405,198 @@ function buildSelfSecurity({ user, setError, onChange = () => {} }) {
     }) },
   });
 
+  /* ---- 0.6.1（M5 §S3）／0.6.2：登录设备与接入（两组，中间一条浅分割线） ---- */
+  const devicesHost = el('div', { class: 'security-app-passwords' });
+  const connectionsHost = el('div', { class: 'security-app-passwords' });
+
+  function groupTitle(text) {
+    return el('h4', { class: 'security-group__title', text, role: 'heading', 'aria-level': '4' });
+  }
+
+  /**
+   * 两行明细行：第一行是名字（可带「本机」徽标），第二行是归一后的设备/客户端信息。
+   * 320 下靠 nowrap + 省略号收尾，撤销按钮固定右侧、不被文字挤窄。
+   */
+  function detailRow({ first, second, badge = null, actions = [] }) {
+    return el('div', { class: 'security-app-password security-app-password--stack' }, [
+      el('span', { class: 'security-app-password__meta' }, [
+        // 0.6.2：名称与「本机」徽标同一行；拆开会让徽标落到第二行，把行高从
+        // 64 抬到 77，窄屏更明显。
+        el('span', { class: 'security-app-password__title' }, compact([
+          el('span', { class: 'security-app-password__name', text: first }),
+          badge,
+        ])),
+        el('span', { class: 'security-app-password__detail', title: second, text: second }),
+      ]),
+      actions.length ? el('div', { class: 'security-app-password__actions' }, actions) : null,
+    ]);
+  }
+
+  function deviceRow(item) {
+    const info = parseUserAgent(item.ua);
+    // 0.6.2 之前创建的会话没有 UA：不空着、也不编，明确告诉用户「信息不可用」。
+    const first = item.ua
+      ? t('security.devices.line1', { device: info.device, os: info.os })
+      : t('security.devices.legacy');
+    const second = t('security.devices.line2', {
+      client: info.client,
+      ip: maskIp(item.ip) || t('security.meta.unknown'),
+      time: relativeTime(item.lastSeenAt),
+    });
+    const badge = item.current
+      ? el('span', { class: 'security-account__badge', text: t('security.devices.current') })
+      : null;
+    const actions = item.current
+      ? []
+      : [el('button', {
+        class: 'btn btn--sm btn--danger-outline',
+        type: 'button',
+        text: t('security.devices.revoke'),
+        'aria-label': t('security.devices.revokeConfirm', { name: first }),
+        on: { click: () => confirmDialogThen(t('security.devices.revokeConfirm', { name: first }), async () => {
+          try {
+            const result = await revokeAuthSession(item.id);
+            if (result && result.current) {
+              toast(t('security.devices.revokedSelf'), { variant: 'success' });
+              window.setTimeout(() => window.location.reload(), 400);
+              return;
+            }
+            toast(t('security.devices.revoked'), { variant: 'success' });
+            loadDevices();
+          } catch (err) {
+            setError(errorText(err, t('security.error.save')));
+          }
+        }) },
+      })];
+    return detailRow({ first, second, badge, actions });
+  }
+
+  // 0.6.2：接入只剩 MCP 一类；名称沿用 AI 凭据的 label，可在这里改。
+  function startRenameConnection(item, row) {
+    const input = el('input', {
+      class: 'input',
+      type: 'text',
+      maxlength: '60',
+      value: item.label || '',
+      'aria-label': t('security.connections.renameLabel'),
+    });
+    const saveBtn = el('button', {
+      class: 'btn btn--sm btn--primary',
+      type: 'button',
+      text: t('security.action.confirm'),
+    });
+    const cancelBtn = el('button', { class: 'btn btn--sm', type: 'button', text: t('common.cancel') });
+    const editor = el('div', { class: 'security-app-password security-app-password--stack security-app-password--editing' }, [
+      el('div', { class: 'field' }, [
+        el('label', { class: 'field__label', text: t('security.connections.renameLabel') }),
+        input,
+      ]),
+      el('div', { class: 'security-inline' }, [saveBtn, cancelBtn]),
+    ]);
+    saveBtn.addEventListener('click', async () => {
+      const label = String(input.value).trim();
+      if (!label) {
+        input.focus();
+        return;
+      }
+      saveBtn.disabled = true;
+      try {
+        await updateAiCredential(item.id, { label });
+        toast(t('security.connections.renamed'), { variant: 'success' });
+        loadConnections();
+      } catch (err) {
+        setError(errorText(err, t('security.connections.renameFailed')));
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+    cancelBtn.addEventListener('click', () => loadConnections());
+    row.replaceWith(editor);
+    input.focus();
+    input.select();
+  }
+
+  function connectionRow(item) {
+    const label = item.label || t('security.connections.untitled');
+    const name = t('security.connections.mcp', { name: label });
+    const info = parseUserAgent(item.ua);
+    const second = t('security.connections.line2', {
+      client: info.client,
+      time: item.lastUsedAt ? relativeTime(item.lastUsedAt) : t('security.meta.neverUsed'),
+    });
+    const renameBtn = el('button', {
+      class: 'btn btn--sm',
+      type: 'button',
+      text: t('security.connections.rename'),
+      'aria-label': t('security.connections.renameLabel'),
+    });
+    const revokeBtn = el('button', {
+      class: 'btn btn--sm btn--danger-outline',
+      type: 'button',
+      text: t('security.connections.revoke'),
+      'aria-label': t('security.connections.revokeConfirm', { name }),
+      on: { click: () => confirmDialogThen(t('security.connections.revokeConfirm', { name }), async () => {
+        try {
+          await revokeAuthConnection(item.id);
+          toast(t('security.connections.revoked'), { variant: 'success' });
+          loadConnections();
+        } catch (err) {
+          setError(errorText(err, t('security.error.save')));
+        }
+      }) },
+    });
+    const row = detailRow({ first: name, second, actions: [renameBtn, revokeBtn] });
+    renameBtn.addEventListener('click', () => startRenameConnection(item, row));
+    return row;
+  }
+
+  // 设备/接入加载失败只在本区内提示：老版本服务端没有这两个接口时，不应把整页
+  // 的「读取安全设置失败」误报出来（TOTP 与专用密码仍可用）。
+  function loadDevices() {
+    listAuthSessions().then((payload) => {
+      const items = (payload && payload.sessions) || [];
+      devicesHost.replaceChildren(...compact([
+        ...items.map((item) => deviceRow(item)),
+        items.length > 1 ? null : el('p', { class: 'security-hint', text: t('security.devices.empty') }),
+      ]));
+    }).catch(() => {
+      devicesHost.replaceChildren(el('p', { class: 'security-hint', text: t('security.devices.loadFailed') }));
+    });
+  }
+
+  function loadConnections() {
+    listAuthConnections().then((payload) => {
+      const items = (payload && payload.connections) || [];
+      connectionsHost.replaceChildren(...compact([
+        ...items.map((item) => connectionRow(item)),
+        items.length ? el('p', { class: 'security-hint', text: t('security.connections.renameHint') }) : null,
+        items.length ? null : el('p', { class: 'security-hint', text: t('security.connections.empty') }),
+      ]));
+    }).catch(() => {
+      connectionsHost.replaceChildren(el('p', { class: 'security-hint', text: t('security.connections.loadFailed') }));
+    });
+  }
+
+  const devicesSection = section(t('security.section.devices'), [
+    groupTitle(t('security.devices.group')),
+    el('p', { class: 'security-hint', text: t('security.devices.hint') }),
+    devicesHost,
+    el('p', { class: 'security-hint', text: t('security.devices.selfHint') }),
+    el('div', { class: 'security-group__divider', 'aria-hidden': 'true' }),
+    groupTitle(t('security.connections.group')),
+    el('p', { class: 'security-hint', text: t('security.connections.hint') }),
+    // 0.6.5：接入凭据与 CalDAV 专用密码是两套权限，这句放在列表首行之前。
+    el('p', { class: 'permission-hint', text: t('security.connections.independentHint') }),
+    connectionsHost,
+  ]);
   const totpSection = section(t('security.section.totp'), [
     el('div', { class: 'security-actions' }, [enableBtn, disableBtn, regenBtn]),
     setupHost,
   ]);
   const davSection = section(t('security.section.dav'), [
     el('p', { class: 'security-hint', text: t('security.dav.selfHint') }),
+    // 0.6.5（用户 m01273）：两套凭据的权限互不相通，先说明再列凭据列表。
+    el('p', { class: 'permission-hint', text: t('security.dav.independentHint') }),
     el('div', { class: 'security-actions' }, [createBtn]),
     selfCreateHost,
     appHost,
@@ -1349,9 +1606,11 @@ function buildSelfSecurity({ user, setError, onChange = () => {} }) {
     renderStatus(Boolean(user && user.totpEnabled));
     loadAppPasswords();
     void refreshSelf();
+    loadDevices();
+    loadConnections();
   }
 
-  return { statusHost, guideHost, totpSection, davSection, refresh };
+  return { statusHost, guideHost, totpSection, devicesSection, davSection, refresh };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1385,6 +1644,7 @@ export function openMySecurityDialog({ user } = {}) {
       block.guideHost,
       errorEl,
       block.totpSection,
+      block.devicesSection,
       block.davSection,
     ]),
     el('div', { class: 'modal__foot' }, [

@@ -23,6 +23,12 @@ function makeCtx(events, tasks = [], settings = {}) {
       toggleTask() {},
       eventContextMenu() {},
       taskContextMenu() {},
+      // 0.5.19：空态按钮按「分类 / 日历」分桶清筛选；本桩没有分桶（旧口径），
+      // 走分类这一支，等价于 0.5.18 的行为。
+      showAllCategories() {},
+      showHiddenFilters(hidden) {
+        if (hidden.byColor > 0) this.showAllCategories();
+      },
     },
   };
 }
@@ -212,6 +218,10 @@ describe('agenda view — the empty state', () => {
       opts.includeHidden ? all(from, to) : shown;
     ctx.actions.showAllCategories = () => {
       ctx.actions.showAllCategories.calls = (ctx.actions.showAllCategories.calls || 0) + 1;
+    };
+    ctx.actions.showHiddenFilters = (hidden) => {
+      ctx.actions.showHiddenFilters.calls = (ctx.actions.showHiddenFilters.calls || 0) + 1;
+      if (hidden.byColor > 0) ctx.actions.showAllCategories();
     };
     return ctx;
   }

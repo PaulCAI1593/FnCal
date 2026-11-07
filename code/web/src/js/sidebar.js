@@ -28,7 +28,6 @@ import { miniRunStyle } from './lib/segment.js';
 // 0.2.19（D11）：单日圆点的颜色 = 当天最高优先级事件色，与年视图圆填色**同一实现**
 // （lib/day-color.js）。之前这里用 currentColor（格子文字色 = 灰），跟事件色无关。
 import { dayColorFor } from './lib/day-color.js';
-
 export function renderSidebar(ctx) {
   const { store, settings, cursor, miniCursor, now, actions } = ctx;
 
@@ -476,6 +475,11 @@ function buildMini(ctx) {
   // 上边缘不再随 5 周/6 周月份切换而跳动。
   while (days.length < 42) days.push(addDays(days[days.length - 1], 1));
   const marks = miniDayMarks(store, days);
+
+  /* 0.6.9（用户：「迷你日历不要农历这些啊」）：迷你月历不再显示农历、节日、节气
+     副文字，格内只留日期数字与事件点 / 跨天点线。0.6.6 的副文字层与它带来的
+     「有副文字时圆点让位」覆盖整条撤掉——副文字曾把单日圆点挤到格子右上角，
+     与跨天点线的基线分叉。 */
 
   // §20.3：跨天事件在迷你月历里画成一条点线（单日仍是 3px 圆点）。
   // 0.2.11（C3/C7）：线单独一层压到**圆形填色下面**（填色与数字在上）。

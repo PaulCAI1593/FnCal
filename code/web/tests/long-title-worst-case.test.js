@@ -139,11 +139,13 @@ describe('M3 走查：30 字中文 + emoji 最坏标题', () => {
       expect(tevent.querySelector('.tevent__title').textContent).toBe(TITLE);
       expect(tevent.getAttribute('title')).toBe(TITLE);
     });
-    check('周视图截断规则（.tevent__title ellipsis+nowrap）', () => {
+    check('周视图截断规则（.tevent__title 多行 clamp）', () => {
+      // 0.6.3（B）起：标题由「单行 ellipsis + nowrap」改为按 `--tevent-lines-title`
+      // 多行截断（每段卡片按高度分行），因此判据换成 line-clamp + 折行，不再断言 nowrap。
       const rule = cssRule(styles.views, '.tevent__title');
       expect(rule).toMatch(/overflow:\s*hidden/);
-      expect(rule).toMatch(/text-overflow:\s*ellipsis/);
-      expect(rule).toMatch(/white-space:\s*nowrap/);
+      expect(rule).toMatch(/-webkit-line-clamp:\s*var\(--tevent-lines-title/);
+      expect(rule).toMatch(/overflow-wrap:\s*anywhere/);
     });
 
     /* ---------------- 编辑弹窗 ---------------- */

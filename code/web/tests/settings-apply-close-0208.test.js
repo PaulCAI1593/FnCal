@@ -96,7 +96,7 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
   });
 
   it('日历页：应用 → updateCalendar 调用、对话框关闭', async () => {
-    opened = open(store, { tab: 'calendar' });
+    opened = open(store, { tab: 'account' });
     const row = [...document.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')]
       .find((r) => r.textContent.includes('工作'));
     const checkbox = row.querySelector('.cal-table__checkbox');
@@ -134,7 +134,7 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
     const failing = makeStore({
       updateCalendar: vi.fn(async () => { throw new Error('权限更新失败'); }),
     });
-    opened = open(failing, { tab: 'calendar' });
+    opened = open(failing, { tab: 'account' });
     const row = [...document.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')]
       .find((r) => r.textContent.includes('工作'));
     row.querySelector('.cal-table__checkbox').dispatchEvent(new Event('change', { bubbles: true }));
@@ -178,28 +178,32 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
 
   /* ---- 0.2.9（用户 9）：未应用提示常驻弹窗底部、不在滚动容器内 ---- */
 
-  it('0.2.10（1-7）提示与版本号同行、在 .modal__body 之外，位于 body 与底部按钮之间', () => {
-    opened = open(store, { tab: 'calendar' });
-    // 0.2.10：提示与版本号合并进 `.settings__foot` 的同一行（foot-hint 换行时仍不挤压按钮）。
-    const bar = document.querySelector('.settings__foot-hint');
-    expect(bar).toBeTruthy();
-    expect(bar.closest('.modal__body')).toBeNull();
+  it('0.5.22：未应用计数独占上面一行（N=0 不占高），版本号与关于区进按钮行的左侧小块', () => {
+    opened = open(store, { tab: 'account' });
+    // 0.5.22（用户 m00535/m00549）：结构由「提示与版本号同行」改为「计数行 + 按钮行两行小块」，
+    // 不是放宽断言——旧结构已按用户要求撤掉。
     const body = document.querySelector('.settings-modal .modal__body');
     const foot = document.querySelector('.settings__foot');
     const actions = document.querySelector('.settings__actions');
-    expect(body.contains(bar)).toBe(false);
-    expect(foot.contains(bar)).toBe(true);
-    // 说明文字常显
-    expect(bar.textContent).toContain('勾选先暂存，点「应用」才保存；离开前会提示未应用的修改。');
-    // 版本号与提示在同一行容器里
-    expect(foot.querySelector('.settings__version').textContent).toContain('FnCal');
-    // DOM 顺序：body → foot → actions
+    const pendingRow = document.querySelector('.settings__pending-row');
+    expect(pendingRow).toBeTruthy();
+    expect(pendingRow.closest('.modal__body')).toBeNull();
+    expect(pendingRow.hidden).toBe(true);
+    expect(pendingRow.textContent).toBe('');
+    // 常驻提示句不再渲染（key 保留在 i18n）
+    expect(foot.textContent).not.toContain('勾选先暂存');
+    // 左侧两行小块在按钮行里：版本号 + 「开发者 · 项目仓库」
+    const meta = actions.querySelector('.settings__foot-meta');
+    expect(meta).toBeTruthy();
+    expect(meta.querySelector('.settings__version').textContent).toContain('FnCal');
+    expect(meta.querySelector('.settings__about-meta')).toBeTruthy();
+    // DOM 顺序：body → foot → actions（按钮行在 .settings__foot 之内，仍在滚动容器之外）
     expect(body.compareDocumentPosition(foot) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(foot.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(foot.contains(actions)).toBe(true);
   });
 
   it('0.2.9 N=0 时不显示「有 0 项未应用」；改一项后显示「有 1 项未应用」', async () => {
-    opened = open(store, { tab: 'calendar' });
+    opened = open(store, { tab: 'account' });
     const count = document.querySelector('.settings__pending-count');
     expect(count.hidden).toBe(true);
     expect(count.textContent).toBe('');
@@ -210,6 +214,8 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
     await flush();
     expect(count.hidden).toBe(false);
     expect(count.textContent).toBe('有 1 项未应用');
+    // 0.5.22：计数在 N>0 时独占的上面一行随之出现（N=0 时整行不占高）。
+    expect(document.querySelector('.settings__pending-row').hidden).toBe(false);
   });
 
   it('0.2.9 应用成功后提示条随弹窗一起消失（应用并关闭）', async () => {
@@ -219,6 +225,6 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
     applyBtn().click();
     await flush();
     expect(dialogEl()).toBeNull();
-    expect(document.querySelector('.settings__foot-hint')).toBeNull();
+    expect(document.querySelector('.settings__pending-row')).toBeNull();
   });
 });

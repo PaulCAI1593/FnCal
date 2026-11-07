@@ -56,21 +56,45 @@ export function colorKeyOfHex(hex) {
   return hit ? hit.key : '';
 }
 
+/** WCAG 2.1 相对亮度（sRGB → 线性化后再加权）。 */
+function relativeLuminance(hex) {
+  const raw = String(hex || '').replace('#', '').slice(0, 6);
+  if (raw.length !== 6) return 0;
+  const channel = (i) => {
+    const v = parseInt(raw.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+/** WCAG 2.1 对比度（前景 vs 背景），返回 1–21。 */
+export function contrastRatio(fg, bg) {
+  const a = relativeLuminance(fg);
+  const b = relativeLuminance(bg);
+  const light = Math.max(a, b);
+  const dark = Math.min(a, b);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+/**
+ * 在给定实色底上取可读的墨色（白或 DARK_INK），取对比度更高的一方。
+ * 0.6.2（用户：「有些是白色的……，有些黑色的，不统一」）：旧实现用未做 gamma
+ * 校正的平均亮度 + 0.62 阈值，中间调（如 #E8A0BF）会被判成白字、实际只有约 2:1。
+ * 现在按 WCAG 合成后的实色算，深浅主题同一规则。
+ */
+export function inkForFill(hex) {
+  return contrastRatio('#ffffff', hex) >= contrastRatio(DARK_INK, hex) ? '#ffffff' : DARK_INK;
+}
+
 /** The ink that reads on a `colorHex(key)` fill — see the palette note. */
 export function colorFg(key) {
   const raw = String(key || '').trim();
   if (/^#[0-9a-fA-F]{6}/.test(raw)) {
-    // 自定义色：按亮度选白/近黑墨色，保证文字可读（WCAG 近似判断）。
-    const hex = raw.slice(1, 7);
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-    const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-    return luminance > 0.62 ? DARK_INK : '#ffffff';
+    // 自定义色：按 WCAG 相对亮度选白/近黑墨色，保证文字可读。
+    return inkForFill(raw.slice(0, 7));
   }
   return (COLOR_MAP.get(key) || COLOR_MAP.get(DEFAULT_COLOR)).fg;
 }
-
 export function colorLabel(key) {
   // 调色板 key 是稳定的数据标识；显示名走 i18n 词典（英文 label 仅作兜底）。
   // 未知 key 回落到默认色，再翻译默认色的 key，避免界面里冒出英文色名。

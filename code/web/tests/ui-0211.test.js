@@ -283,6 +283,8 @@ describe('C3/C7 迷你月历连线：压在填色圆下面、两端落在点/圆
     const node = renderSidebar(makeCtx([allDayEvent('m', '连线', new Date(2026, 7, 10), new Date(2026, 7, 12))]));
     const cell = cellOf(node, 11);
     const kids = [...cell.children].map((c) => c.className);
+    // 0.6.9 起（用户：「迷你日历不要农历这些啊」）：0.6.6 的副文字层整条删除，
+    // 迷你格只剩填色圆与数字两层，点/线与数字不再被副文字挤位。
     expect(kids).toEqual(['mini__fill', 'mini__num']);
     expect(cell.querySelector('.mini__num').textContent).toBe('11');
   });

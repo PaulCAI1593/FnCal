@@ -386,6 +386,9 @@
   z-index: 3;
   pointer-events: none;
 }
+/* 0.6.9（用户：「迷你日历不要农历这些啊」）：迷你格里不再有副文字行。
+   0.6.6 的副文字类、副文字颜色变体、选中态变体，以及「有副文字时圆点让到右上角」
+   的覆盖全部删除——单日圆点回到格内底部居中，与跨天点线共用同一条基线。 */
 .mini__cell.has-events::after {
   content: '';
   position: absolute;
@@ -731,12 +734,19 @@
 /* ---- Modal ------------------------------------------------------------ */
 .modal-scrim {
   position: fixed;
-  inset: 0;
+  /* 0.5.13：键盘弹出只抬弹窗，不抬日历界面。布局视口靠 viewport meta 的
+     interactive-widget=overlays-content 保持不动；这里改用可视视口定位：
+     --vv-offset-top / --vv-height 由 keyboard-inset.js 写入，键盘一开 scrim
+     只剩键盘上方的可见区，弹窗在其中重新居中，日历留在原位。
+     变量缺失（旧浏览器 / 无脚本）时退回 0px + 100dvh，即 0.5.12 的行为。 */
+  top: var(--vv-offset-top, 0px);
+  left: 0;
+  right: 0;
   /* Track the *visible* viewport (dvh), not the URL-bar-hidden large viewport a
      bare 100vh/inset:0 gives on mobile Safari — otherwise a tall modal is
      centered against an oversized area and its header/footer end up behind the
      browser toolbars. */
-  height: 100dvh;
+  height: var(--vv-height, 100dvh);
   background: var(--overlay-scrim);
   z-index: 100;
   display: flex;
@@ -1032,7 +1042,20 @@
   width: auto;
   height: auto;
   margin-top: 4px;
-  color: var(--text-3);
+  /* 0.6.11（用户：节日/节气各一套颜色，图标与文字同色）：详情卡的节日图标与世界
+     其它界面对齐成主题色；此前是 --text-3 灰，和月视图/全天条/日程列表不一致。 */
+  color: var(--accent);
+  background: none;
+  border-radius: 0;
+}
+/* 0.6.6：节气的详情卡与节日同形，只换太阳图标与节气色（tokens.css 两套主题）。
+   0.6.9（D，用户最终口径「节气颜色用主题色的反色」）：颜色走 --term-ink（主题色互补色）。 */
+.view__color--term {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  margin-top: 4px;
+  color: var(--term-ink);
   background: none;
   border-radius: 0;
 }

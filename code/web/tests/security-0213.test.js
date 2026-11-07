@@ -144,7 +144,9 @@ describe('安全设置：入口与权限', () => {
     if (handle && handle.close) handle.close();
   });
 
-  it('管理员打开后渲染状态摘要、4 页签与九个分区', async () => {
+  // 0.6.1：① 页新增「登录设备与接入」，4 个面板共 10 张卡。不是放宽断言，
+  // 是分区按功能增了一块（用户要求「我的安全」里能逐台管理登录设备与接入）。
+  it('管理员打开后渲染状态摘要、4 页签与十个分区', async () => {
     openAdmin();
     await flush();
     expect(mocks.getSecuritySettings).toHaveBeenCalledTimes(1);
@@ -154,10 +156,11 @@ describe('安全设置：入口与权限', () => {
     expect(status.textContent).toContain(t('security.status.https'));
     expect(status.textContent).toContain('2'); // 最近 24h 失败数
     const titles = [...modal.querySelectorAll('.security-section__title')].map((n) => n.textContent);
-    // 0.3.10（M13 §2.1）：4 个面板共 9 张卡——① 自己的两步验证 + 专用密码，
+    // 0.3.10（M13 §2.1）：① 自己的两步验证 + 专用密码；0.6.1 起中间插入登录设备与接入。
     // ② 登录活动/会话策略/反代/其他账号，③ HTTPS + 证书，④ 审计。
     expect(titles).toEqual([
       t('security.section.totp'),
+      t('security.section.devices'),
       t('security.section.dav'),
       t('security.section.activity'),
       t('security.section.policy'),
@@ -166,6 +169,8 @@ describe('安全设置：入口与权限', () => {
       t('security.section.https'),
       t('security.section.cert'),
       t('security.section.audit'),
+      // 0.6.4（用户 m00854）：④ 审计页的审计列表下方多一组「系统诊断」。
+      t('security.section.diag'),
     ]);
   });
 });

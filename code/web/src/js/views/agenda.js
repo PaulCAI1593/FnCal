@@ -5,7 +5,7 @@
 import { el } from '../dom.js';
 import { icon } from '../icons.js';
 import { colorHex, colorFg } from '../colors.js';
-import { emptyBlock, emptyButton } from './empty-state.js';
+import { emptyBlock, emptyButton, hiddenBuckets, hiddenTitle } from './empty-state.js';
 import { t } from '../../i18n/index.js';
 import {
   startOfDay,
@@ -100,32 +100,27 @@ export function renderAgenda(ctx) {
     // are behind the drawer. Counted only on this already-empty path, so the
     // common case pays nothing for it.
     const firstTo = segmentTo(1);
-    const hiddenEvents = store
-      .getEventsInRange(anchor, firstTo, { includeHidden: true })
-      .filter((ev) => !ev.readOnly).length;
-    // Tasks go through the same filter (getTasksInRange), so a list emptied
-    // by hiding the only color the tasks used needs the same explanation —
-    // and it should say "task", not call them events.
-    const hiddenTasks = store.getTasksInRange(anchor, firstTo, { includeHidden: true }).length;
-    const hiddenCount = hiddenEvents + hiddenTasks;
+    // 0.5.19：分类与日历分开数——两种原因给的按钮不同，混成一个数就会出现
+    // 「说被分类隐藏、按了没反应」（日历全关时点「显示全部分类」是空操作）。
+    const hidden = hiddenBuckets(store, anchor, firstTo);
+    const hiddenCount = hidden.total;
     const counted = (n, noun) => `${n} 个${noun}`;
     const hiddenWhat = [
-      hiddenEvents ? counted(hiddenEvents, '事件') : '',
-      hiddenTasks ? counted(hiddenTasks, '任务') : '',
+      hidden.events ? counted(hidden.events, '事件') : '',
+      hidden.tasks ? counted(hidden.tasks, '任务') : '',
     ]
       .filter(Boolean)
       .join('和 ');
     return emptyBlock({
-      title: t(hiddenCount ? 'empty.agendaHidden' : 'empty.agenda', {
-        what: hiddenWhat,
+      title: hiddenCount
+        ? hiddenTitle('agenda', hidden, hiddenWhat, WINDOW_DAYS)
         // 0.2.17（B3.3）：窗口天数只有一个来源（本文件的 WINDOW_DAYS），文案插值，
         // 不再在词条里硬编码 60——以后调窗口长度不用满仓库找「60 天」。
-        days: WINDOW_DAYS,
-      }),
+        : t('empty.agenda', { days: WINDOW_DAYS }),
       description: hiddenCount ? t('empty.hiddenHint') : t('empty.createHint'),
       button: emptyButton({
-        hiddenCount,
-        onShowAll: () => actions.showAllCategories(),
+        hidden,
+        onShow: () => actions.showHiddenFilters(hidden),
         onCreate: () => actions.createAt({ start: defaultTime(cursor) }),
       }),
     });
@@ -145,10 +140,10 @@ export function renderAgenda(ctx) {
     const holidayItems = all.filter((ev) => ev.readOnly);
     const events = all.filter((ev) => !ev.readOnly);
     const tasks = store.getTasksInRange(from, to);
-    const holidayOn = (dayStart, dayEnd) => {
-      const hit = holidayItems.find((ev) => ev.start < dayEnd && ev.end > dayStart);
-      return hit && hit.title ? String(hit.title) : '';
-    };
+    // 0.6.11（用户：日程列表 22 日「小雪」是主题蓝、且没有太阳图标）：这里要把
+    // 整个叠加项交出去，日期列才知道是节日还是节气——只回标题时只能一律画主题色。
+    const holidayAt = (dayStart, dayEnd) =>
+      holidayItems.find((ev) => ev.start < dayEnd && ev.end > dayStart) || null;
     // Group events and tasks together by day within this segment.
     const groups = new Map();
     const push = (key, item) => {
@@ -196,7 +191,8 @@ export function renderAgenda(ctx) {
             else list.append(buildRow(entry.item, key, ctx));
           });
 
-        const holidayName = holidayOn(key, addDays(day, 1).getTime());
+        const holidayHit = holidayAt(key, addDays(day, 1).getTime());
+        const holidayName = holidayHit?.title ? String(holidayHit.title) : '';
         const dateChildren = [
           el('div', {
             class: `agenda__date-num${isToday(day, now) ? ' is-today' : ''}`,
@@ -209,12 +205,26 @@ export function renderAgenda(ctx) {
           }),
         ];
         if (holidayName) {
+          // 0.6.11（用户四条口径：颜色按视图统一、节日/节气各自一套、排版统一、
+          // 图标与文字同色）：日期列也画「图标 + 名字」。节日 = flag + --accent，
+          // 节气 = sun + --term-ink；图标是 currentColor，所以颜色只写在容器上。
+          const isTerm = Boolean(holidayHit.term);
           dateChildren.push(
-            el('div', {
-              class: 'agenda__date-holiday',
-              title: holidayName,
-              text: holidayName,
-            }),
+            el(
+              'div',
+              {
+                class: `agenda__date-holiday${isTerm ? ' agenda__date-holiday--term' : ''}`,
+                title: holidayName,
+                'aria-label': `${t(isTerm ? 'agenda.solarTerm.kindTerm' : 'agenda.holiday.kindHoliday')}：${holidayName}`,
+              },
+              [
+                el('span', {
+                  class: 'agenda__date-holiday-icon',
+                  html: icon(isTerm ? 'sun' : 'flag'),
+                }),
+                el('span', { class: 'agenda__date-holiday-name', text: holidayName }),
+              ],
+            ),
           );
         }
         nodes.push(
@@ -629,11 +639,13 @@ function buildRow(event, dayStart, ctx) {
  * to edit or delete.
  */
 function buildHolidayRow(item, ctx) {
-  const kind = t('agenda.holiday.kindHoliday');
+  // 0.6.6：节气与节日同款外壳，只换类别名、图标（sun）与颜色修饰类。
+  const isTerm = Boolean(item.term);
+  const kind = t(isTerm ? 'agenda.solarTerm.kindTerm' : 'agenda.holiday.kindHoliday');
   const row = el(
     'div',
     {
-      class: 'agenda__event agenda__event--holiday',
+      class: 'agenda__event agenda__event--holiday' + (isTerm ? ' agenda__event--term' : ''),
       tabindex: '0',
       role: 'button',
       dataset: { focusKey: item.id },
@@ -641,9 +653,9 @@ function buildHolidayRow(item, ctx) {
       'aria-label': `${kind}：${item.title}`,
     },
     [
-      el('span', { class: 'agenda__event-icon', html: icon('flag', { size: 'sm' }), 'aria-hidden': 'true' }),
+      el('span', { class: 'agenda__event-icon', html: icon(isTerm ? 'sun' : 'flag', { size: 'sm' }), 'aria-hidden': 'true' }),
       // The time column names the kind, as "全天" would for an event.
-      el('span', { class: 'agenda__event-time', text: t('agenda.holiday.columnHoliday') }),
+      el('span', { class: 'agenda__event-time', text: t(isTerm ? 'agenda.solarTerm.columnTerm' : 'agenda.holiday.columnHoliday') }),
       el('span', { class: 'agenda__event-title', text: item.title }),
     ],
   );

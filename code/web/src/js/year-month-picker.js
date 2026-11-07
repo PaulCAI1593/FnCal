@@ -18,11 +18,27 @@ const YEAR_BACK = 50;
 const YEAR_FWD = 10;
 
 /**
+ * 0.6.6（§三点五）：同一时刻只允许一个年月弹窗。
+ * 之前每次调用都新建一个 `.popover.ym-popover` 挂到 body 上，连点同一标题 N 次
+ * 就叠 N 个（模糊与阴影叠成一片）。这里记下当前打开的那个，入口先关旧再开新。
+ */
+let activePicker = null;
+
+/**
  * @param {{ anchor: HTMLElement, year: number, month: number,
  *           onPick?: (value: { year: number, month: number }) => void }} opts
  * @returns {{ close: () => void }}
  */
 export function openYearMonthPicker({ anchor, year, month, onPick }) {
+  // 已开着一个：同一锚点再点 = 收起；换锚点 = 关旧开新。
+  // 先置空再 close()，避免 close() 里的自清逻辑与这里互相递归。
+  if (activePicker) {
+    const previous = activePicker;
+    const sameAnchor = previous.anchor === anchor;
+    activePicker = null;
+    previous.close();
+    if (sameAnchor) return { close() {} };
+  }
   const nowYear = new Date().getFullYear();
   const years = [];
   for (let y = nowYear - YEAR_BACK; y <= nowYear + YEAR_FWD; y += 1) years.push(y);
@@ -31,11 +47,16 @@ export function openYearMonthPicker({ anchor, year, month, onPick }) {
   let pickedYear = years.includes(year) ? year : nowYear;
   let pickedMonth = Math.min(11, Math.max(0, month));
 
+  let closed = false;
   function close() {
+    if (closed) return;
+    closed = true;
     document.removeEventListener('pointerdown', onOutside, true);
     document.removeEventListener('keydown', onKey, true);
     box.remove();
-    if (anchor && anchor.focus) anchor.focus();
+    // 自身仍是当前弹窗才置空（换锚点开新窗时 activePicker 已被入口置空）。
+    if (activePicker && activePicker.close === close) activePicker = null;
+    if (anchor && anchor.isConnected && anchor.focus) anchor.focus();
   }
 
   function onOutside(ev) {
@@ -208,5 +229,7 @@ export function openYearMonthPicker({ anchor, year, month, onPick }) {
   document.addEventListener('keydown', onKey, true);
   yearWheel.node.focus();
 
-  return { close };
+  // 0.6.6：登记为当前弹窗（Esc / 点外 / 取消 / 确定都走同一个 close()）。
+  activePicker = { anchor, close };
+  return activePicker;
 }

@@ -185,19 +185,22 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     await tick();
   }
 
-  it('五个页签：顺序是 一般 / 日历 / CalDAV / AI / 快捷键，文案不裁', () => {
+  it('四个页签：顺序是 一般 / CalDAV / AI / 快捷键，文案不裁', () => {
     const dialog = open();
     const buttons = [...dialog.querySelectorAll('.settings__tabs button')];
-    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', '日历', 'CalDAV', 'AI', '快捷键']);
+    // 0.6.2：删除「卡片」页签（卡片跟随 App 登录态，不再发令牌）；仍是五个页签。
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4；CalDAV 是第 2 枚。
+    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
+      // 其余页签不带 aria-label（可见文字即全称）
+    expect(buttons[3].getAttribute('aria-label')).toBe(null);
     expect(buttons.map((b) => b.id)).toEqual([
       'settings-tab-general',
-      'settings-tab-calendar',
       'settings-tab-account',
       'settings-tab-ai',
       'settings-tab-shortcuts',
     ]);
-    // 第 3 枚不再是「CalDAV 账户」（窄屏就是它把页签撑爆的）
-    expect(buttons[2].textContent).not.toContain('账户');
+    // 第 2 枚不再是「CalDAV 账户」（窄屏就是它把页签撑爆的）
+    expect(buttons[1].textContent).not.toContain('账户');
     // 页签与页一一对应
     buttons.forEach((button, i) => {
       const panelId = button.getAttribute('aria-controls');
@@ -215,8 +218,10 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     await openAiTab(dialog);
     expect(page.hidden).toBe(false);
     expect(dialog.querySelector('#settings-tab-ai').getAttribute('aria-selected')).toBe('true');
-    // 页内标题（规范 §1.1：页签写「AI」，页内标题写「AI 接入」）
-    expect(dialog.querySelector('.ai-page__title').textContent.trim()).toBe('AI 接入');
+    // 0.6.6（用户）：页签已写「AI」，页内大标题「AI 接入」语义重复，已删；
+    // 页面第一块直接是「服务」卡片（旧断言 `0.3.0 起` 要求标题文字为「AI 接入」）。
+    expect(dialog.querySelector('.ai-page__title')).toBe(null);
+    expect(page.firstElementChild.classList.contains('ai-section--service')).toBe(true);
   });
 
   it('AI 页只有两块：服务 / 凭据（提案队列与回收站小节都不在页里）', async () => {
@@ -589,6 +594,13 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     expect(editor.querySelector('.ai-approval__switch').closest('.ai-block').hidden).toBe(true);
     expect(editor.querySelector('.ai-pin').hidden).toBe(true);
 
+    // 0.6.5 起：未改动时保存灰显（canSave 要求 editorDirty），先改名称造一处改动；
+    // 归一化（agentApproval=false / clearPin=true）断言不变。
+    const name = editor.querySelector('.ai-editor__name');
+    name.value = `${name.value} `;
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await tick();
+
     editor.querySelector('.ai-editor__save').click();
     await tick();
     const payload = mocks.updateAiCredential.mock.calls[0][1];
@@ -726,7 +738,7 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     expect(hasKey('settings.ai.editor.name')).toBe(true);
   });
 
-  it('窄屏：五个页签仍单行等分不横滚，≤400px 才把内边距收到 6px', () => {
+  it('窄屏：四个页签仍单行等分不横滚，≤400px 才把内边距收到 6px', () => {
     const css = readSrc('../src/styles/calendar.css');
     // ≤720px 的等分规则不能被改成换行/横滚（回归 D9/E18 的既有口径）
     const start = css.indexOf('/* 0.2.3 B2：窄屏页签触控命中 >=44px');
@@ -876,10 +888,12 @@ describe('0.3.0 P4 · AI 页纯函数口径', () => {
     expect(DEFAULT_FIELD_MASK).toEqual({ location: true, description: false, attendees: false });
   });
 
-  it('页面工厂可直接构造：两块与标题都在，refresh() 只重拉服务与凭据', async () => {
+  it('页面工厂可直接构造：两块都在、页内大标题已删，refresh() 只重拉服务与凭据', async () => {
     mocks.getAiSettings.mockResolvedValue({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
     const built = createAiSettingsPage({ user: { role: 'admin' }, store: makeStore() });
-    expect(built.page.querySelector('.ai-page__title').textContent.trim()).toBe('AI 接入');
+    // 0.6.6（用户）：`.ai-page__title` 与页签重复，已删；第一块是「服务」。
+    expect(built.page.querySelector('.ai-page__title')).toBe(null);
+    expect(built.page.firstElementChild.classList.contains('ai-section--service')).toBe(true);
     expect(built.page.querySelectorAll('.ai-section')).toHaveLength(2);
     expect(built.page.querySelector('.ai-section--trash')).toBe(null);
     await built.refresh();

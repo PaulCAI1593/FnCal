@@ -45,9 +45,10 @@ vi.mock('../src/js/toast.js', () => ({ toast: mocks.toast }));
 const { openAccountDialog } = await import('../src/js/account-dialog.js');
 const { DEFAULT_SETTINGS } = await import('../src/js/store.js');
 
+// 0.6.9 起（用户 2026-11-08 03:56）：页脚链接改为指向 GitHub Pages 的项目介绍页，
+// 让用户看介绍而不是看代码；fnOS manifest 的 maintainer_url 仍指向仓库。
 const REPO = 'https://github.com/PaulCAI1593/FnCal';
-// 0.4.30 起口径（用户 2026-11-06 00:55 定：项目页面放到「发布者」链接，开发者仍是 GitHub 仓库）。
-const PROJECT_PAGE = 'https://paulcai1593.github.io/FnCal/';
+const INTRO = 'https://paulcai1593.github.io/FnCal/';
 const readSrc = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 function makeStore() {
@@ -67,7 +68,7 @@ function makeStore() {
   };
 }
 
-describe('0.2.44 设置页脚：开发者 · 项目仓库', () => {
+describe('0.2.44 设置页脚：开发者 · 项目介绍', () => {
   let opened = null;
 
   beforeEach(() => {
@@ -89,19 +90,20 @@ describe('0.2.44 设置页脚：开发者 · 项目仓库', () => {
     return opened.dialog;
   }
 
-  it('页脚关于区有「开发者 PaulCAI1593」与「项目仓库」两个信息', () => {
+  it('页脚关于区有「PaulCAI1593」与「项目介绍」两个信息', () => {
     const dialog = open();
     const meta = dialog.querySelector('.settings__about-meta');
     expect(meta).not.toBe(null);
-    expect(meta.textContent).toContain('开发者 PaulCAI1593');
-    expect(meta.textContent).toContain('项目仓库');
+    // 0.6.2 §A：页脚第二行去掉「开发者」二字，只留署名 —— 版式不变，不是放宽断言。
+    expect(meta.textContent).toContain('PaulCAI1593');
+    expect(meta.textContent).toContain('项目介绍');
   });
 
-  it('仓库是外链：地址、新标签页、noopener noreferrer、读屏说明', () => {
+  it('介绍页是外链：地址、新标签页、noopener noreferrer、读屏说明', () => {
     const dialog = open();
     const link = dialog.querySelector('.settings__about-meta a.settings__repo');
     expect(link).not.toBe(null);
-    expect(link.getAttribute('href')).toBe(REPO);
+    expect(link.getAttribute('href')).toBe(INTRO);
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toContain('noopener');
     expect(link.getAttribute('rel')).toContain('noreferrer');
@@ -113,13 +115,15 @@ describe('0.2.44 设置页脚：开发者 · 项目仓库', () => {
 
   it('版本号行不受影响：仍然只有版本，不含开发者与仓库字样', () => {
     const dialog = open();
-    const version = dialog.querySelector('.settings__about .settings__version');
+    // 0.5.22：关于区由 `.settings__about` 更名为 `.settings__foot-meta`（结构改两行小块），
+    // 内部顺序不变：版本号在上、开发者与仓库在下——不是放宽断言。
+    const version = dialog.querySelector('.settings__foot-meta .settings__version');
     expect(version).not.toBe(null);
     expect(version.textContent.trim()).toMatch(/^FnCal/);
     expect(version.textContent).not.toContain('开发者');
-    expect(version.textContent).not.toContain('项目仓库');
-    // 两行同属关于区，顺序是「版本号在上、开发者与仓库在下」
-    const about = dialog.querySelector('.settings__about');
+    expect(version.textContent).not.toContain('项目介绍');
+    // 两行同属关于小块，顺序是「版本号在上、开发者与仓库在下」
+    const about = dialog.querySelector('.settings__foot-meta');
     const kids = [...about.children];
     expect(kids.length).toBe(2);
     expect(kids[0].classList.contains('settings__version')).toBe(true);
@@ -131,31 +135,36 @@ describe('0.2.44 设置页脚：开发者 · 项目仓库', () => {
     expect(manifest).toContain('maintainer=PaulCAI1593');
     expect(manifest).toContain('distributor=PaulCAI1593');
     expect(manifest).toContain(`maintainer_url=${REPO}`);
-    // 0.4.30 起口径（用户 2026-11-06 00:55 定：项目页面放到「发布者」链接，开发者仍是 GitHub 仓库）。
-    expect(manifest).toContain(`distributor_url=${PROJECT_PAGE}`);
+    expect(manifest).toContain(`distributor_url=${INTRO}`);
   });
 
-  it('源码口径：仓库地址只写一次（REPO_URL），页脚把它交给外链', () => {
+  it('源码口径：介绍页地址只写一次（INTRO_URL），页脚把它交给外链', () => {
     const src = readSrc('../src/js/account-dialog.js');
-    expect(src).toContain(`const REPO_URL = '${REPO}';`);
-    expect(src).toContain("href: REPO_URL,");
+    expect(src).toContain(`const INTRO_URL = '${INTRO}';`);
+    expect(src).toContain("href: INTRO_URL,");
+    // 0.6.9：页脚不再用仓库地址
+    expect(src).not.toContain('github.com/PaulCAI1593/FnCal\'');
     expect(src).toContain("rel: 'noopener noreferrer',");
-    expect(src).toContain("el('div', { class: 'settings__about' }, [versionEl, aboutMeta])");
+    // 0.5.22：源码结构改为按钮行左侧两行小块（`.settings__foot-meta`）。
+    expect(src).toContain("el('div', { class: 'settings__foot-meta' }, [versionEl, aboutMeta])");
     // 地址不在 i18n 里重复出现（文案与地址分离，改地址只改一处）
     const i18n = readSrc('../src/i18n/zh-CN.js');
-    expect(i18n).not.toContain(REPO);
+    expect(i18n).not.toContain(INTRO);
   });
 
   it('i18n 三个新键齐备且非空', () => {
     const i18n = readSrc('../src/i18n/zh-CN.js');
-    expect(i18n).toContain("'settings.about.developer': '开发者 {name}',");
-    expect(i18n).toContain("'settings.about.repository': '项目仓库',");
-    expect(i18n).toContain('FnCal 项目仓库（在新标签页打开）');
+    // 0.6.2 §A：key 名不动，只把文本从「开发者 {name}」改成「{name}」。
+    expect(i18n).toContain("'settings.about.developer': '{name}',");
+    expect(i18n).toContain("'settings.about.repository': '项目介绍',");
+    expect(i18n).toContain('FnCal 项目介绍（在新标签页打开）');
   });
 
-  it('样式口径：页脚关于区两行右对齐、hover 下划线门控在精确指针', () => {
+  it('样式口径：关于小块左对齐两行、不折行，hover 下划线门控在精确指针', () => {
     const css = readSrc('../src/styles/calendar.css');
-    expect(css).toContain('.settings__about-meta {');
+    // 0.5.22：由右对齐单行改为按钮行左侧的「两行小块」（左对齐、不折行）。
+    expect(css).toContain('.settings__foot-meta {');
+    expect(css).toContain('align-items: flex-start;');
     expect(css).toContain('white-space: nowrap;');
     expect(css).toMatch(/@media \(hover: hover\) and \(pointer: fine\) \{[^}]*\.settings__about-meta \.settings__repo:hover/s);
   });

@@ -148,21 +148,27 @@ describe('0.2.8 CSS 锁（用户 5/6/3/4/1/10）', () => {
     expect(c).toMatch(/@media \(max-width: 720px\)[\s\S]{0,400}\.settings__tabs button[\s\S]{0,200}flex: 1 1 0/);
   });
 
-  it('0.2.10（1-7）底部行 CSS：固定不收缩、上分隔线、提示可换行、版本号右对齐', () => {
+  it('0.5.22 页脚 CSS：上分隔线、计数行单独一行、小块总高=按钮高、窄屏整块换行', () => {
     const c = calendarCss();
+    // 0.5.22（用户 m00535 / m00549）：旧「提示与版本号同行」结构已撤掉，
+    // 本条断言随新结构改写，不是放宽。
     const foot = c.slice(c.indexOf('.settings__foot {'));
     expect(foot.slice(0, 500)).toContain('flex: 0 0 auto');
     expect(foot.slice(0, 500)).toContain('border-top: 1px solid var(--border)');
-    expect(foot.slice(0, 500)).toContain('padding: 12px 16px');
-    // 提示与版本号同一行；提示可换行（窄屏），按钮不被挤压。
-    const hint = c.slice(c.indexOf('.settings__foot-hint {'));
-    expect(hint.slice(0, 400)).toContain('display: flex');
-    expect(hint.slice(0, 400)).toContain('flex-wrap: wrap');
-    expect(hint.slice(0, 400)).toContain('flex: 1 1 auto');
+    expect(c).toContain('.settings__pending-row {');
+    expect(c).toContain('.settings__pending-row[hidden] {');
+    const meta = c.slice(c.indexOf('.settings__foot-meta {'));
+    expect(meta.slice(0, 600)).toContain('height: var(--settings-meta-h)');
+    expect(meta.slice(0, 600)).toContain('line-height: calc(var(--settings-meta-h) / 2)');
+    expect(meta.slice(0, 600)).toContain('white-space: nowrap');
+    expect(c).toMatch(/@media \(pointer: coarse\)[\s\S]{0,400}--settings-meta-h: 44px/);
+    expect(c).toMatch(/@media \(max-width: 640px\)[\s\S]{0,400}order: -1/);
     const countRule = c.slice(c.indexOf('.settings__pending-count {'));
     expect(countRule.slice(0, 300)).toContain('font-weight: 600');
-    // 旧的独立提示条已并入底部行
-    expect(c).not.toContain('.settings__pending {');
+    // 旧结构规则删净，不留死样式
+    expect(c).not.toContain('.settings__foot-hint');
+    expect(c).not.toContain('.settings__pending-hint');
+    expect(c).not.toContain('.settings__about {');
   });
 
   it('0.2.9 设置/账号弹窗复选框跟主题色（accent-color: var(--accent)，无硬编码色值）', () => {
@@ -501,24 +507,26 @@ describe('0.2.8 ②⑦⑧ app 级行为', () => {
     expect(document.querySelector('#settings-page-general').hidden).toBe(false);
   });
 
-    it('⑨ 设置页签（标签页造型）：五个页签、点击切换、选中态跟随；五页共用 .settings__page', () => {
+    it('⑨ 设置页签（标签页造型）：五个页签、点击切换、选中态跟随；各页共用 .settings__page', () => {
     openApp();
     document.querySelector('button[aria-label="设置"]').click();
     const tabs = [...document.querySelectorAll('.settings__tabs [role="tab"]')];
     // 0.3.0（P4）：五个页签；CalDAV 文案收短、新增 AI
-    expect(tabs.map((b) => b.textContent)).toEqual(['一般', '日历', 'CalDAV', 'AI', '快捷键']);
+    // 0.6.2：删除「卡片」页签（卡片改用 App 会话），回到五个页签。
+    expect(tabs.map((b) => b.textContent)).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
     tabs[1].click();
     expect(tabs[1].getAttribute('aria-selected')).toBe('true');
     expect(tabs[0].getAttribute('aria-selected')).toBe('false');
-    expect(document.querySelector('#settings-page-calendar').hidden).toBe(false);
+    expect(document.querySelector('#settings-page-account').hidden).toBe(false);
     expect(document.querySelector('#settings-page-general').hidden).toBe(true);
     tabs[0].click();
     expect(document.querySelector('#settings-page-general').hidden).toBe(false);
     // 0.2.9（用户 7）：一般 / 日历 / CalDAV 账户三页都吃同一个 .settings__page（间距统一）。
     const pages = [...document.querySelectorAll('.settings__pages > .settings__page')];
     // 0.2.20（E14）：快捷键成为最后 1 个页签；0.3.0（P4）：五页共用 .settings__page
-    expect(pages.length).toBe(5);
+    // 0.6.2：删除「卡片」页（卡片改用 App 会话），页数回到 5。
+    expect(pages.length).toBe(4);
     for (const page of pages) expect(page.classList.contains('settings__page')).toBe(true);
     // 0.2.9（用户 8）：日历表格里的原生复选框在 .settings-modal 作用域内（accent-color 规则覆盖）。
     expect(document.querySelectorAll(".settings-modal input[type='checkbox']").length).toBeGreaterThan(0);

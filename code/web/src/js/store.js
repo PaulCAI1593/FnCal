@@ -25,6 +25,7 @@ import {
 } from './recurrence.js';
 import { startOfDay, endOfDay, addDays, MS_PER_DAY } from './date-utils.js';
 import { getHolidaysInRange } from './holidays.js';
+import { solarTermItemsInRange } from './lib/solar-terms.js';
 // 0.4.6：KV 写链诊断与「保存后回读」留痕（详见 kv-rest.js 顶部注释）。
 import { beginKvWriteTrace, endKvWriteTrace, recordSaveResult } from './kv-rest.js';
 
@@ -239,6 +240,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // 0.2.12 同时删除了「第二时区」设置（secondaryTz）：旧值留在 KV 里不报错，
   // 后端 normalizeSettings 会把它丢掉，前端也不再读。
   lunar: true,
+  // 0.6.6（用户）：「二十四节气」显示开关（默认开）。与节日互斥、节日优先：
+  // 同日有节日时只显示节日，节气由 store 的叠加项在取数时跳过。
+  solarTerms: true,
   // 0.2.0（需求 14 / B8）：中国法定节日显示开关（默认开）。多国数据已删除，
   // 不再有 holidayCountry；旧设置里的这个键留存但不再读取。
   holidaysEnabled: true,
@@ -1191,6 +1195,15 @@ export function createStore(backend) {
     if (includeHolidays && settings.holidaysEnabled !== false) {
       visible.push(...getHolidaysInRange(from, to));
       }
+    // 0.6.6：二十四节气与节日同属只读叠加项，同样绕过分类过滤。规则是
+    // 「节日与节气互斥、任何界面只留一个、节日优先」，所以同日已有节日的
+    // 日期不再产出节气（见 solar-terms.js 的 skipDays）。
+    if (includeHolidays && settings.solarTerms !== false) {
+      const holidayDays = new Set(
+        visible.filter((ev) => ev.holiday).map((ev) => startOfDay(new Date(ev.start)).getTime()),
+      );
+      visible.push(...solarTermItemsInRange(from, to, { skipDays: holidayDays }));
+    }
     return visible.sort(
       (a, b) =>
         Number(b.allDay) - Number(a.allDay) ||
@@ -1203,6 +1216,49 @@ export function createStore(backend) {
         Number(Boolean(b.holiday)) - Number(Boolean(a.holiday)) ||
         b.end - b.start - (a.end - a.start),
     );
+  }
+
+  /**
+   * 0.5.19：空态要把「被分类隐藏」和「被日历隐藏」分开说。
+   *
+   * 两个 get*InRange 用一个 includeHidden 开关同时放过两种隐藏原因；空态只拿
+   * 得到总数，于是「被日历筛选掏空」的月份也会说「被分类筛选隐藏了」，还给一个
+   * 只清 hiddenColors 的按钮——用户点完什么都没变，读起来就是「按钮没反应」。
+   * 这里按同一套过滤条件逐条分类（同一项两种都中时各计一次，total 只计一次），
+   * 让空态能按真实原因给文案与按钮。
+   */
+  function getHiddenInRange(from, to) {
+    const hidden = new Set(settings.hiddenColors);
+    const bucket = () => ({ total: 0, byColor: 0, byCalendar: 0 });
+    const eventsOut = bucket();
+    const tasksOut = bucket();
+    const add = (target, item, calendarId) => {
+      const byColor = hidden.has(item.color);
+      const byCalendar = !isCalendarVisible(calendarId);
+      if (!byColor && !byCalendar) return;
+      target.total += 1;
+      if (byColor) target.byColor += 1;
+      if (byCalendar) target.byCalendar += 1;
+    };
+    for (const ev of events.values()) {
+      if (ev.readOnly) continue;
+      if (ev.recurrence) {
+        for (const occ of expandOccurrences(ev, from, to)) add(eventsOut, occ, calendarIdOfEvent(occ));
+      } else if (eventInRange(ev, from, to)) {
+        add(eventsOut, ev, calendarIdOfEvent(ev));
+      }
+    }
+    for (const t of tasks.values()) {
+      if (t.due < from || t.due >= to) continue;
+      add(tasksOut, t, calendarIdOfTask(t));
+    }
+    return {
+      events: eventsOut.total,
+      tasks: tasksOut.total,
+      total: eventsOut.total + tasksOut.total,
+      byColor: eventsOut.byColor + tasksOut.byColor,
+      byCalendar: eventsOut.byCalendar + tasksOut.byCalendar,
+    };
   }
 
   /* ---- Persistence helpers -------------------------------------------- */
@@ -2201,6 +2257,7 @@ export function createStore(backend) {
     getAllEvents,
     getEvent,
     getEventsInRange,
+    getHiddenInRange,
     saveEvent,
     deleteEvent,
     importEvents,

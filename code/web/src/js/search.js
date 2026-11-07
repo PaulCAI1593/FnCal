@@ -10,6 +10,7 @@
  * or task back through `onPick`.
  */
 import { el, clear } from './dom.js';
+import { closeOnBackdrop } from './scrim.js';
 import { icon } from './icons.js';
 import { EVENT_COLORS, colorHex, colorFg, colorKeyOfHex, isValidColor } from './colors.js';
 import { describeRecurrence, occurrenceNear } from './recurrence.js';
@@ -86,6 +87,8 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
   let docked = false;
   let dockedInput = null;
   let dockedPanel = null;
+  // 0.6.6（§三）：常驻条模式的遮罩（与全屏搜索的 scrim 分开，层级不同）。
+  let dockedScrim = null;
   let filterHost = null; // 0.2.4：桌面常驻条里放「筛选」按钮的容器（由 header 提供）
   let filterHostInput = null; // 同一 header 的输入框：搜索未展开时点筛选先展开它
   let debounceTimer = null;
@@ -373,6 +376,8 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     repositionHandler = null;
     if (dockedPanel) dockedPanel.remove();
     dockedPanel = null;
+    if (dockedScrim) dockedScrim.remove();
+    dockedScrim = null;
     const btn = filterBtn;
     if (dockedInput) {
       dockedInput.removeEventListener('input', onDockedInput);
@@ -425,7 +430,14 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
       role: 'dialog',
       'aria-label': t('search.aria'),
     }, [filterPanel, listEl]);
-    document.body.append(dockedPanel);
+    // 0.6.6（§三）：先铺遮罩再挂面板。遮罩只压暗页面内容（z 低于顶栏与面板），
+    // 点它 = 收起（与点外部同一条路径）。
+    dockedScrim = el('div', {
+      class: 'search-scrim search-scrim--docked',
+      'aria-hidden': 'true',
+    });
+    dockedScrim.addEventListener('click', () => closeDocked());
+    document.body.append(dockedScrim, dockedPanel);
     input.setAttribute('role', 'combobox');
     input.setAttribute('aria-expanded', 'true');
     input.setAttribute('aria-controls', 'search-results');
@@ -625,9 +637,7 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     );
 
     scrim = el('div', { class: 'search-scrim' }, [panel]);
-    scrim.addEventListener('pointerdown', (e) => {
-      if (e.target === scrim) close();
-    });
+    closeOnBackdrop(scrim, close);
   }
 
   /** 渲染筛选区：日历 chip 多选、颜色 swatch 多选、时间范围、含任务开关。 */

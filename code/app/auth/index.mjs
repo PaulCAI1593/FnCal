@@ -18,6 +18,7 @@ import { parseBasicHeader, challengeHeaders } from './basic.mjs';
 import { SESSION_COOKIE, CSRF_COOKIE, SESSION_TTL_MS, PENDING_MFA_TTL_MS } from './session.mjs';
 import { rateLimitKey } from './rate-limit.mjs';
 import { DEFAULT_RESET_PASSWORD, needsRehash } from './accounts.mjs';
+import { newSessionId } from '../lib/session-store.mjs';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE', 'MKCOL', 'MKCALENDAR', 'PROPPATCH', 'MOVE', 'COPY']);
 
@@ -27,7 +28,23 @@ export function isMutatingMethod(method) {
 
 export { challengeHeaders };
 
-export function createAuthService({ config, accounts, session, limiter, audit, logger, security = null, proxy = null }) {
+export function createAuthService({
+  config,
+  accounts,
+  session,
+  limiter,
+  audit,
+  logger,
+  security = null,
+  proxy = null,
+  // 0.6.1（M5 §S1/S2）：服务端会话记录 + 接入汇总。省略时退回 0.6.0 的无状态行为
+  // （旧测试构造不传这些依赖，仍按原语义跑）。
+  // stores 是共享对象：装配顺序上 AI 存储晚于 auth 创建，server.mjs 在创建后
+  // 把 `stores.aiStore` 补进来（按引用读，不复制值）。0.6.2 起接入只剩 MCP 一类。
+  sessionStore = null,
+  stores = null,
+}) {
+  const aiStore = () => (stores && stores.aiStore) || null;
   // 0.2.37（S1/S2）：来源地址与外部协议统一走可信反代解析器。
   // 未传 resolver（旧测试）时退回 socket 地址，行为与 0.2.36 逐字相同。
   function sourceOf(req) {
@@ -56,15 +73,50 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
     return { idleMs: SESSION_TTL_MS, absoluteMs: SESSION_TTL_MS };
   }
 
-  function sessionCookieList(req, account, now = Date.now(), { mfaPending = false } = {}) {
+  function sessionCookieList(req, account, now = Date.now(), { mfaPending = false, sid = null } = {}) {
     const { idleMs, absoluteMs } = lifetimes();
     const maxAge = Math.floor((mfaPending ? PENDING_MFA_TTL_MS : absoluteMs) / 1000);
     const base = { maxAge, httpOnly: true, secure: secureCookie(req), sameSite: 'Lax', path: '/' };
-    const value = session.issue(account, now, mfaPending ? { idleMs, absoluteMs, mfaPending } : { idleMs, absoluteMs });
+    const value = session.issue(account, now, mfaPending ? { idleMs, absoluteMs, mfaPending } : { idleMs, absoluteMs, sid });
     return [
       serializeCookie(SESSION_COOKIE, value, base),
       serializeCookie(CSRF_COOKIE, session.csrfFor(account), { ...base, httpOnly: false }),
     ];
+  }
+
+  /**
+   * 0.6.1：正式会话登记一条服务端记录。失败只记日志、不阻断登录
+   * （下次校验会按「旧 cookie」再补登记一次），磁盘故障不该把人锁在门外。
+   */
+  async function registerSession(req, account, now = Date.now()) {
+    if (!sessionStore) return null;
+    const sid = newSessionId();
+    try {
+      await sessionStore.register(account.id, {
+        sid,
+        ua: (req.headers && req.headers['user-agent']) || '',
+        ip: clientAddress(req),
+        at: now,
+      });
+      return sid;
+    } catch (err) {
+      if (logger && typeof logger.event === 'function') {
+        logger.event('session-register-failed', { message: String((err && err.message) || err) });
+      }
+      return null;
+    }
+  }
+
+  async function forgetSession(account, sid) {
+    if (!sessionStore || !account || !sid) return false;
+    try {
+      return await sessionStore.remove(account.id, sid);
+    } catch (err) {
+      if (logger && typeof logger.event === 'function') {
+        logger.event('session-remove-failed', { message: String((err && err.message) || err) });
+      }
+      return false;
+    }
   }
 
   function clearCookieList(req) {
@@ -85,10 +137,29 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
     if (!account || account.disabled) return { invalid: true };
     if (Number(account.tokenVersion || 0) !== Number(payload.tv)) return { invalid: true };
     const mfaPending = Boolean(payload.mfa);
+    if (mfaPending) {
+      return { account, mfaPending: true, sid: null, refreshCookie: null };
+    }
+
+    let sid = typeof payload.sid === 'string' && payload.sid ? payload.sid : null;
+    let adopted = false;
+    if (sessionStore) {
+      if (sid) {
+        // 已被撤销 / 记录被清 → 这条 cookie 不再有效（401 session_revoked）。
+        const live = await sessionStore.touch(account.id, sid, { at: now });
+        if (!live) return { invalid: true, revoked: true };
+      } else {
+        // 升级前的旧 cookie：首次请求时补登记，并换发带 sid 的 cookie。
+        sid = await registerSession(req, account, now);
+        adopted = Boolean(sid);
+      }
+    }
+    const refresh = adopted || session.needsRefresh(payload, now);
     return {
       account,
-      mfaPending,
-      refreshCookie: !mfaPending && session.needsRefresh(payload, now) ? sessionCookieList(req, account, now)[0] : null,
+      mfaPending: false,
+      sid,
+      refreshCookie: refresh ? sessionCookieList(req, account, now, { sid })[0] : null,
     };
   }
 
@@ -107,6 +178,7 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
         ok: true,
         via: 'session',
         account: fromCookie.account,
+        sid: fromCookie.sid || null,
         mfaPending: Boolean(fromCookie.mfaPending),
         refreshCookie: fromCookie.refreshCookie,
       };
@@ -133,6 +205,7 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
       return { ok: true, via: 'basic', account };
     }
 
+    if (fromCookie && fromCookie.revoked) return { ok: false, reason: 'session_revoked' };
     return { ok: false, reason: fromCookie && fromCookie.invalid ? 'session_invalid' : 'no_credentials' };
   }
 
@@ -253,6 +326,8 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
       };
     }
 
+    // 0.6.1：正式会话先登记服务端记录，cookie 里带 sid。
+    const sid = await registerSession(req, account);
     return {
       ok: true,
       account,
@@ -260,7 +335,7 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
       mustChangePassword: false,
       totpRequired: false,
       mfaPending: false,
-      cookies: sessionCookieList(req, account),
+      cookies: sessionCookieList(req, account, Date.now(), { sid }),
       csrfToken: session.csrfFor(account),
     };
   }
@@ -337,13 +412,15 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
       };
     }
 
+    // 0.6.1：TOTP 通过后才是正式会话，此时登记 sid。
+    const sid = await registerSession(req, account);
     return {
       ok: true,
       account,
       user,
       mustChangePassword: false,
       mfaPending: false,
-      cookies: sessionCookieList(req, account),
+      cookies: sessionCookieList(req, account, Date.now(), { sid }),
       csrfToken: session.csrfFor(account),
     };
   }
@@ -351,6 +428,7 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
   async function logout({ req }) {
     const identity = await authenticate(req, { allowMfaPending: true });
     if (identity.ok && identity.account) {
+      if (identity.sid && sessionStore) await forgetSession(identity.account, identity.sid);
       audit.logout({ username: identity.account.username, id: identity.account.id, remoteAddress: clientAddress(req) });
     }
     return { ok: true, cookies: clearCookieList(req) };
@@ -368,8 +446,128 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
     if (identity.via !== 'session') return { ok: false, status: 403, reason: 'session_required' };
     if (!validateCsrf(req, identity.account)) return { ok: false, status: 403, reason: 'csrf_failed' };
     await accounts.bumpTokenVersion(identity.account.id, 'logout-all');
+    if (sessionStore) {
+      try {
+        await sessionStore.clear(identity.account.id);
+      } catch (err) {
+        if (logger && typeof logger.event === 'function') {
+          logger.event('session-clear-failed', { message: String((err && err.message) || err) });
+        }
+      }
+    }
     audit.logoutAll({ username: identity.account.username, id: identity.account.id, remoteAddress: clientAddress(req) });
     return { ok: true, cookies: clearCookieList(req) };
+  }
+
+  /* ------------------------------------------------ 0.6.1 登录设备与接入管理 */
+
+  const REVOKE_LIMIT = 30;
+  const REVOKE_WINDOW_MS = 60 * 1000;
+  const revokeWindows = new Map();
+
+  /** 撤销类接口：按账号 30 次/分钟（内存滑动窗，重启清零）。 */
+  function consumeRevokeBudget(userId, at = Date.now()) {
+    const hits = (revokeWindows.get(userId) || []).filter((ts) => at - ts < REVOKE_WINDOW_MS);
+    if (hits.length >= REVOKE_LIMIT) {
+      const oldest = hits[0];
+      return { limited: true, retryAfterSec: Math.max(1, Math.ceil((REVOKE_WINDOW_MS - (at - oldest)) / 1000)) };
+    }
+    hits.push(at);
+    revokeWindows.set(userId, hits);
+    return { limited: false };
+  }
+
+  async function requireSession(req) {
+    // 受限 mfa 会话只允许改密/验 TOTP，不能管理设备与接入。
+    const identity = await authenticate(req);
+    if (!identity.ok) return { ok: false, status: 401, reason: identity.reason };
+    if (identity.via !== 'session') return { ok: false, status: 403, reason: 'session_required' };
+    return { ok: true, identity };
+  }
+
+  async function listSessions({ req }) {
+    const gate = await requireSession(req);
+    if (!gate.ok) return gate;
+    if (!sessionStore) return { ok: true, sessions: [] };
+    const sessions = await sessionStore.list(gate.identity.account.id, { currentSid: gate.identity.sid });
+    return { ok: true, sessions };
+  }
+
+  async function revokeSession({ req, id }) {
+    const gate = await requireSession(req);
+    if (!gate.ok) return gate;
+    if (!validateCsrf(req, gate.identity.account)) return { ok: false, status: 403, reason: 'csrf_failed' };
+    const budget = consumeRevokeBudget(gate.identity.account.id);
+    if (budget.limited) return { ok: false, status: 429, reason: 'rate_limited', retryAfterSec: budget.retryAfterSec };
+    if (!sessionStore) return { ok: false, status: 404, reason: 'not_found' };
+    const sid = typeof id === 'string' ? id : '';
+    if (!sid) return { ok: false, status: 400, reason: 'invalid', field: 'id' };
+    const removed = await sessionStore.remove(gate.identity.account.id, sid);
+    if (!removed) return { ok: false, status: 404, reason: 'not_found' };
+    const current = sid === gate.identity.sid;
+    if (audit && typeof audit.write === 'function') {
+      audit.write({
+        type: 'security',
+        event: 'session.revoke',
+        actor: gate.identity.account.username,
+        username: gate.identity.account.username,
+        id: gate.identity.account.id,
+        current,
+        remoteAddress: clientAddress(req),
+      });
+    }
+    return { ok: true, current, cookies: current ? clearCookieList(req) : null };
+  }
+
+  function connectionRows(account, { aiCredentials = [] } = {}) {
+    const rows = [];
+    for (const credential of aiCredentials) {
+      if (!credential || credential.revokedAt) continue;
+      rows.push({
+        id: credential.id,
+        kind: 'mcp',
+        label: credential.label || '',
+        createdAt: credential.createdAt || null,
+        lastUsedAt: credential.lastUsedAt || null,
+        // 0.6.2：最近一次请求的 UA（ai-store 记，界面解析成机型/客户端；没有就是空串）。
+        ua: credential.lastUa || '',
+      });
+    }
+    return rows.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+  }
+
+  async function listConnections({ req }) {
+    const gate = await requireSession(req);
+    if (!gate.ok) return gate;
+    const userId = gate.identity.account.id;
+    const aiCredentials = aiStore() ? await aiStore().listCredentials(userId) : [];
+    return { ok: true, connections: connectionRows(gate.identity.account, { aiCredentials }) };
+  }
+
+  async function revokeConnection({ req, id }) {
+    const gate = await requireSession(req);
+    if (!gate.ok) return gate;
+    if (!validateCsrf(req, gate.identity.account)) return { ok: false, status: 403, reason: 'csrf_failed' };
+    const budget = consumeRevokeBudget(gate.identity.account.id);
+    if (budget.limited) return { ok: false, status: 429, reason: 'rate_limited', retryAfterSec: budget.retryAfterSec };
+    const target = typeof id === 'string' ? id : '';
+    if (!target) return { ok: false, status: 400, reason: 'invalid', field: 'id' };
+    const userId = gate.identity.account.id;
+    const removed = aiStore() ? await aiStore().deleteCredential(userId, target) : false;
+    if (!removed) return { ok: false, status: 404, reason: 'not_found' };
+    if (audit && typeof audit.write === 'function') {
+      audit.write({
+        type: 'security',
+        event: 'connection.revoke',
+        actor: gate.identity.account.username,
+        username: gate.identity.account.username,
+        id: userId,
+        connectionId: target,
+        connectionKind: 'mcp',
+        remoteAddress: clientAddress(req),
+      });
+    }
+    return { ok: true, kind: 'mcp' };
   }
 
   async function me({ req }) {
@@ -428,6 +626,7 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
 
     // 改密成功后若开了 2FA，先验 TOTP 再给正式会话（受限会话继续沿用）。
     if (totpEnabled) {
+      await forgetSession(fresh, identity.sid);
       return {
         ok: true,
         user,
@@ -440,12 +639,15 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
       };
     }
 
+    // 0.6.1：旧 sid 随改密作废；换发带新 sid 的正式会话。
+    await forgetSession(fresh, identity.sid);
+    const newSid = await registerSession(req, fresh);
     return {
       ok: true,
       user,
       mustChangePassword: false,
       totpRequired: false,
-      cookies: sessionCookieList(req, fresh),
+      cookies: sessionCookieList(req, fresh, Date.now(), { sid: newSid }),
       csrfToken: session.csrfFor(fresh),
     };
   }
@@ -514,6 +716,11 @@ export function createAuthService({ config, accounts, session, limiter, audit, l
     logout,
     logoutAll,
     me,
+    requireSession,
+    listSessions,
+    revokeSession,
+    listConnections,
+    revokeConnection,
     changePassword,
     updateProfile,
     lookupAccount,

@@ -14,6 +14,7 @@ import { el } from './dom.js';
 import { icon } from './icons.js';
 import { ownsEscape } from './time-field.js';
 import { ordinalLabel } from './recurrence.js';
+import { closeOnBackdrop } from './scrim.js';
 import { t } from '../i18n/index.js';
 import {
   toDateInputValue,
@@ -100,9 +101,7 @@ export function mountDialog(dialog, onClose) {
     }
   }
 
-  scrim.addEventListener('pointerdown', (e) => {
-    if (e.target === scrim) close();
-  });
+  closeOnBackdrop(scrim, close);
   document.addEventListener('keydown', onKey, true);
   document.body.append(scrim);
   return close;

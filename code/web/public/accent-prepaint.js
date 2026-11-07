@@ -95,6 +95,61 @@
     return out;
   }
 
+  /** RGB(0-255) → HSL（h 0-360，s/l 0-1）。 */
+  function rgbToHsl(rgb) {
+    var r = rgb[0] / 255;
+    var g = rgb[1] / 255;
+    var b = rgb[2] / 255;
+    var max = Math.max(r, g, b);
+    var min = Math.min(r, g, b);
+    var l = (max + min) / 2;
+    var d = max - min;
+    if (!d) return [0, 0, l];
+    var s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    var h;
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+    return [h, s, l];
+  }
+
+  /** HSL → HEX。 */
+  function hslToHex(h, s, l) {
+    var hue = ((h % 360) + 360) % 360;
+    var c = (1 - Math.abs(2 * l - 1)) * s;
+    var x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+    var m = l - c / 2;
+    var rgb;
+    if (hue < 60) rgb = [c, x, 0];
+    else if (hue < 120) rgb = [x, c, 0];
+    else if (hue < 180) rgb = [0, c, x];
+    else if (hue < 240) rgb = [0, x, c];
+    else if (hue < 300) rgb = [x, 0, c];
+    else rgb = [c, 0, x];
+    return rgbToHex([(rgb[0] + m) * 255, (rgb[1] + m) * 255, (rgb[2] + m) * 255]);
+  }
+
+  /**
+   * 0.6.9（D，用户最终口径：「节气颜色用主题色的反色」）：
+   * 主题色的**互补色**——色相转 180°、饱和度不变；亮度只按对比度兜底，
+   * 每次 0.02 往远离底色亮度的方向走，直到对 `surface` 达到 minContrast（默认 4.5:1）。
+   * 不靠透明度压对比度（透明会让同一令牌在不同底色上表现不一致）。
+   */
+  function complementInk(hex, surface, minContrast) {
+    var wanted = typeof minContrast === 'number' ? minContrast : 4.5;
+    var hsl = rgbToHsl(hexToRgb(hex));
+    var h = (hsl[0] + 180) % 360;
+    var s = hsl[1];
+    var l = hsl[2];
+    var out = hslToHex(h, s, l);
+    var onLight = luminance(surface) >= 0.5;
+    for (var i = 0; i < 50 && contrast(out, surface) < wanted; i += 1) {
+      l = Math.max(0, Math.min(1, onLight ? l - 0.02 : l + 0.02));
+      out = hslToHex(h, s, l);
+    }
+    return out;
+  }
+
   /**
    * 0.4.28（S1）：悬停/按下朝**远离文字色**的方向走。
    * 文字是深墨时按钮变亮，文字是白色时按钮变暗 —— 压暗深墨文字底会掉对比度
@@ -153,6 +208,7 @@
     var bg = isDark ? DARK_BG : '#ffffff';
     var accent = isDark ? ensureContrast(base, bg, 4.5) : base;
     var ink = inkFor(accent);
+    var termInk = complementInk(accent, bg, 4.5);
     return {
       base: base,
       mode: isDark ? 'dark' : 'light',
@@ -172,6 +228,8 @@
         '--accent-ink-on-soft': isDark ? lighten(accent, 0.12) : accent,
         '--ring': 'color-mix(in srgb, ' + accent + ' 45%, transparent)',
         '--today': accent,
+        // 0.6.9（D）：节气色 = 主题色互补色（色相 +180°），按当前底色过 4.5:1 兜底。
+        '--term-ink': termInk,
       },
     };
   }
@@ -275,6 +333,7 @@
     normalize: normalize,
     contrast: contrast,
     inkFor: inkFor,
+    complementInk: complementInk,
     palette: palette,
     cssFor: cssFor,
     apply: apply,

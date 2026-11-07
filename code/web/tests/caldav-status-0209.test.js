@@ -82,14 +82,15 @@ describe('0.2.9 CalDAV 同步自检状态', () => {
     expect(statusEl().textContent).toBe('共 3 个事件｜已同步 1｜未归属 0');
   });
 
-  it('有无法归属的数据：额外给出中文提示（指向导出诊断包）', async () => {
+  it('有无法归属的数据：状态行如实显示未归属数（0.6.4 起不再指路导出诊断包）', async () => {
     mocks.getCalDavSyncStatus.mockResolvedValue({ at: null, totalEvents: 3, synced: 2, missing: 0, unattributed: 1 });
     opened = open(makeStore());
     await flush();
     expect(statusEl().textContent).toBe('共 3 个事件｜已同步 2｜未归属 1');
-    const hint = document.querySelector('.account-hint--diag');
-    expect(hint.hidden).toBe(false);
-    expect(hint.textContent).toContain('无法归属');
+    // 0.6.4（用户 m00800 / m00854）：「导出诊断包」按钮与这句指路提示都从 CalDAV 页撤掉，
+    // 诊断包改到管理员「安全设置」④ 审计页；未归属数仍在状态行如实显示，不是放宽断言。
+    expect(document.querySelector('.account-hint--diag')).toBeNull();
+    expect(document.querySelector('#settings-page-account').textContent).not.toContain('导出诊断包');
   });
 
   it('接口无结果：显示「暂无结果」而不是空白/报错', async () => {

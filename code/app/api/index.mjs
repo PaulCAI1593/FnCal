@@ -21,7 +21,7 @@
 
 import { currentContext } from '../lib/request-context.mjs';
 import { NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
-import { checkForUpdate, normalizeUpdateSource } from '../lib/update-check.mjs';
+import { checkForUpdate } from '../lib/update-check.mjs';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -38,6 +38,41 @@ function sendJson(res, status, body, extraHeaders = {}) {
 
 function setCookies(res, cookies) {
   if (Array.isArray(cookies) && cookies.length) res.setHeader('Set-Cookie', cookies);
+}
+
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(String(value || ''));
+  } catch {
+    return String(value || '');
+  }
+}
+
+/** 0.6.1：登录设备/接入接口的错误映射（会话、CSRF、限流、404）。 */
+function authFailure(res, result) {
+  const reason = (result && result.reason) || 'unauthorized';
+  const status = (result && result.status) || 401;
+  const headers = {};
+  if (result && result.retryAfterSec) headers['Retry-After'] = String(result.retryAfterSec);
+  if (reason === 'csrf_failed') {
+    return sendJson(res, 403, { ok: false, code: 'csrf', message: 'CSRF 校验失败，请刷新后重试' }, headers);
+  }
+  if (reason === 'session_required') {
+    return sendJson(res, 403, { ok: false, code: 'session_required', message: '该操作需要登录会话' }, headers);
+  }
+  if (reason === 'rate_limited') {
+    return sendJson(res, 429, { ok: false, code: 'rate_limited', message: '操作过于频繁，请稍后再试' }, headers);
+  }
+  if (reason === 'not_found') {
+    return sendJson(res, 404, { ok: false, code: 'not_found', message: '记录不存在或已被撤销' }, headers);
+  }
+  if (reason === 'invalid') {
+    return sendJson(res, 400, { ok: false, code: 'invalid', field: result.field || null, message: '参数不合法' }, headers);
+  }
+  if (reason === 'session_revoked') {
+    return sendJson(res, 401, { ok: false, code: 'session_revoked', message: '登录状态已失效，请重新登录' }, headers);
+  }
+  return sendJson(res, status, { ok: false, code: 'unauthorized', error: reason, message: '请先登录' }, headers);
 }
 
 function readJsonBody(req) {
@@ -68,7 +103,7 @@ function readJsonBody(req) {
   });
 }
 
-export function createApiHandler({ version, auth, kv, admin, data, calendars, ai = null, aiRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
+export function createApiHandler({ version, auth, kv, admin, data, calendars, ai = null, aiRest = null, widgetRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
   async function handleAuth(req, res, pathnameIn) {
     const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
     // M2 §6.2 paths are `/api/v1/auth/*`; the M3.2 implementation used
@@ -207,10 +242,49 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
       return sendJson(res, 200, { ok: true });
     }
 
+    // 0.6.1（M5 §S2）：「我的安全」→ 登录设备与接入。
+    // 两个前缀都可达（`/api/auth/*` 与 `/api/v1/auth/*`，上面已归一）。
+    if (pathname === '/api/auth/sessions') {
+      if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      const result = await auth.listSessions({ req });
+      if (!result.ok) return authFailure(res, result);
+      return sendJson(res, 200, { ok: true, sessions: result.sessions });
+    }
+
+    if (pathname.startsWith('/api/auth/sessions/')) {
+      if (req.method !== 'DELETE') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      const id = safeDecode(pathname.slice('/api/auth/sessions/'.length));
+      const result = await auth.revokeSession({ req, id });
+      if (!result.ok) return authFailure(res, result);
+      if (result.cookies) setCookies(res, result.cookies);
+      return sendJson(res, 200, { ok: true, current: Boolean(result.current) });
+    }
+
+    if (pathname === '/api/auth/connections') {
+      if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      const result = await auth.listConnections({ req });
+      if (!result.ok) return authFailure(res, result);
+      return sendJson(res, 200, { ok: true, connections: result.connections });
+    }
+
+    if (pathname.startsWith('/api/auth/connections/')) {
+      if (req.method !== 'DELETE') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+      const id = safeDecode(pathname.slice('/api/auth/connections/'.length));
+      const result = await auth.revokeConnection({ req, id });
+      if (!result.ok) return authFailure(res, result);
+      return sendJson(res, 200, { ok: true, kind: result.kind });
+    }
+
     if (pathname === '/api/auth/me') {
       if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
       const result = await auth.me({ req });
-      if (!result.ok) return sendJson(res, 401, { ok: false, error: result.reason });
+      if (!result.ok) {
+        // 0.6.1：设备被撤销后，旧 cookie 立刻失效并给出可识别的 code。
+        if (result.reason === 'session_revoked') {
+          return sendJson(res, 401, { ok: false, code: 'session_revoked', error: 'session_revoked', message: '登录状态已失效，请重新登录' });
+        }
+        return sendJson(res, 401, { ok: false, error: result.reason });
+      }
       if (result.refreshCookie) setCookies(res, [result.refreshCookie]);
       return sendJson(res, 200, {
         ok: true,
@@ -324,6 +398,13 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
       });
     }
 
+    // 0.6.2（M5 §F）：桌面卡片只读摘要（/api/widget/v1/*）现在认会话 Cookie，
+    // 与网页同一套登录态；只读 GET、不要 CSRF。未装配时按「不存在」处理。
+    if (pathname === '/api/widget' || pathname.startsWith('/api/widget/')) {
+      if (!widgetRest) return sendJson(res, 404, { ok: false, code: 'not_found' });
+      return widgetRest.handleRead(req, res, url);
+    }
+
     // 0.2.8：被要求改密的账号，改密前只放行认证类接口（上面已处理）与身份读取
     // （GET /api/v1/me，前端用它刷新会话）；其余业务 API 一律 403 + 中文。
     const identityRead = pathname === '/api/v1/me' || pathname === '/api/me';
@@ -344,29 +425,18 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
     }
 
     // 0.4.14（用户 2026-11-04 需求）：头像菜单「检查更新」。只读、仅登录会话；
-    // 结果由 lib/update-check.mjs 代请求（前端 CSP connect-src 'self'），
-    // `?source=mirror|github` 选更新源（缺省 mirror，mirror 失败自动回退 github），
-    // 失败也回 200 + ok:false + code，不通传原始响应体。
+    // 结果由 lib/update-check.mjs 代请求（前端 CSP connect-src 'self'）。
+    // 0.6.8（用户 2026-11-08）：「gitee、github 就两个源」——Gitee API 与 GitHub API 并行查，
+    // 取版本号最大的那个源；返回 `sources[]` 供前端按「哪个源真有这一版」生成下载入口。
+    // 不再有 `?source=` 参数与代理前缀。失败也回 200 + ok:false + code，不透传原始响应体。
     if (pathname === '/api/v1/update/check') {
       if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
       const identity = await auth.authenticate(req);
       if (!identity.ok || !identity.account) {
         return sendJson(res, 401, { ok: false, code: 'unauthorized', message: '请先登录' });
       }
-      const rawSource = url.searchParams.get('source');
-      const source = rawSource === null || rawSource === ''
-        ? 'mirror'
-        : normalizeUpdateSource(rawSource);
-      if (!source) {
-        return sendJson(res, 400, {
-          ok: false,
-          code: 'invalid',
-          field: 'source',
-          message: 'source 只能是 mirror 或 github',
-        });
-      }
       try {
-        return sendJson(res, 200, await checkForUpdate({ current: version, source }));
+        return sendJson(res, 200, await checkForUpdate({ current: version }));
       } catch (err) {
         return sendJson(res, 200, {
           ok: false,
@@ -374,9 +444,11 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
           latest: null,
           updateAvailable: false,
           url: null,
+          gitee: null,
+          sources: [],
           publishedAt: null,
           checkedAt: new Date().toISOString(),
-          via: source,
+          via: 'gitee',
           code: 'bad_response',
         });
       }

@@ -96,6 +96,10 @@ describe('the stylesheet consumes the ink instead of hardcoding white', () => {
   it('no fill rule hardcodes white ink or leans on the text-shadow crutch', () => {
     expect(css).not.toMatch(/^\s*color: #fff;$/m);
     expect(css).not.toContain('text-shadow: 0 1px 2px');
-    expect(css).toContain('var(--ev-fg, #fff)');
+    // 0.6.2 起：兜底墨色由白改成深墨 #101216。浅色底（#F8BBD0 / #E8A0BF）上白字
+    // 只有 2.06:1，深墨 9.12:1；正常路径仍由 colors.js 的 inkForFill() 写入 --ev-fg，
+    // 这里只验证样式表不自己写死白色，不是放宽对比度要求。
+    expect(css).toContain('var(--ev-fg, #101216)');
+    expect(css).not.toContain('var(--ev-fg, #fff)');
   });
 });

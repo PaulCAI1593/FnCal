@@ -707,6 +707,29 @@ export function revokeAiCredential(id) {
   return apiRequest(`${AI_BASE}/credentials/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
 }
 
+/* ---- 登录设备与接入（0.6.1）：「我的安全」用的会话 / 接入管理 ---- */
+/* 契约见 `code/app/auth/index.mjs`（§S1–S2）：读要会话，写要会话 + CSRF。 */
+
+const AUTH_BASE = '/api/v1/auth';
+
+export function listAuthSessions() {
+  return apiRequest(`${AUTH_BASE}/sessions`);
+}
+
+/** 撤销一台登录设备；撤自己时后端会同时清 Cookie（等同退出）。 */
+export function revokeAuthSession(id) {
+  return apiRequest(`${AUTH_BASE}/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function listAuthConnections() {
+  return apiRequest(`${AUTH_BASE}/connections`);
+}
+
+/** 撤销一个接入（MCP 凭据或桌面卡片令牌）。 */
+export function revokeAuthConnection(id) {
+  return apiRequest(`${AUTH_BASE}/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
 export function listAiProposals({ status = 'pending' } = {}) {
   const query = status ? `?status=${encodeURIComponent(status)}` : '';
   return apiRequest(`${AI_BASE}/proposals${query}`);
@@ -757,11 +780,12 @@ export function clearAiTrash() {
 /* ---- 0.4.14（M22 §4）：检查更新。走服务端，前端 CSP 只允许同源 ---- */
 
 /**
- * 检查更新：`source` = `mirror` | `github`（缺省 mirror）。
- * 回 `{ ok, current, latest, updateAvailable, url, publishedAt, checkedAt, via }`；
+ * 检查更新（0.6.8：两源，无 `source` 参数）。
+ * 回 `{ ok, current, latest, updateAvailable, url, gitee, publishedAt, checkedAt, via }`；
+ * `url` 是 GitHub 发布页，`gitee` 是 Gitee 镜像发布页，前端并排给两个下载入口。
  * 失败也是 200 + `ok:false` + `code`（network / timeout / rate_limited / bad_response），
  * 原始响应体不透传；失败码由弹窗翻成中文，别在别处再映射一遍。
  */
-export function checkForUpdate(source = 'mirror') {
-  return apiRequest(`${BASE}/update/check?source=` + encodeURIComponent(source));
+export function checkForUpdate() {
+  return apiRequest(`${BASE}/update/check`);
 }

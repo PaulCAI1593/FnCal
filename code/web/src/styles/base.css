@@ -16,6 +16,32 @@ body,
   height: 100%;
 }
 
+/* 0.5.14：键盘打开期间，keyboard-inset.js 把整壳高度钉在「无键盘时的整页高度」，
+   并按视觉视口平移量下移同样的量。这样浏览器用 resizes-content 压矮布局视口、
+   或为露出输入框平移视觉视口时，背后的日历都不重排、不跟着走。
+   变量缺失（无脚本 / 没键盘）时退回原来的 100%，即 0.5.12 行为。 */
+#app {
+  height: var(--app-h, 100%);
+  margin-top: var(--app-shift, 0px);
+}
+
+/* `?kbdebug=1` 诊断条：默认不生成，只有 keyboard-inset.js 主动插入才出现。 */
+#kb-debug {
+  position: fixed;
+  right: 8px;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 9999;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 78%);
+  color: #fff;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.3;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: var(--fs-base);
@@ -143,6 +169,16 @@ a {
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+/* 0.6.5（M5 §二·补2）：禁用态要一眼看出「不能点」，同时文字对比度 ≥3:1。
+   全局 0.5 透明度在深色 accent 上把深墨压到约 2.1:1，且 0.75 时仍像可点的主按钮；
+   改为浅/深色统一的中性灰底 + --text-3 文字（实测 4.54 / 4.90:1）。 */
+.btn.ai-editor__save:disabled {
+  opacity: 1;
+  background: var(--surface-3);
+  border-color: transparent;
+  color: var(--text-3);
+  box-shadow: none;
 }
 
 .btn--primary {

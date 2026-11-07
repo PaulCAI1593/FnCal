@@ -32,6 +32,8 @@ const READS = [
   'getAllEvents',
   'getEvent',
   'getEventsInRange',
+  // 0.5.19：只读分桶（空态按「分类/日历」分开数被隐藏的项），不写任何数据。
+  'getHiddenInRange',
   'getAllTasks',
   'getTask',
   'getTasksInRange',

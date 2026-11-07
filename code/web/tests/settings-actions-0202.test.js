@@ -41,8 +41,9 @@ describe('⑥ 设置→日历表格的动作（0.2.2）', () => {
   });
 
   const openCalendarTab = (extra = {}) => {
-    opened = openAccountDialog({ user: { username: 'admin', role: 'admin' }, store, tab: 'calendar', ...extra });
-    return opened.dialog.querySelector('#settings-page-calendar');
+    // 0.6.4（用户 m00800）：日历表格并入 CalDAV 页（页签 5→4），这里改开 account。
+    opened = openAccountDialog({ user: { username: 'admin', role: 'admin' }, store, tab: 'account', ...extra });
+    return opened.dialog.querySelector('#settings-page-account');
   };
   const toolbarBtn = (label) =>
     [...opened.dialog.querySelectorAll('.cal-table__toolbar button')].find((b) => b.textContent === label);
@@ -76,7 +77,7 @@ describe('⑥ 设置→日历表格的动作（0.2.2）', () => {
     opened = openAccountDialog({
       user: { username: 'admin', role: 'admin' },
       store,
-      tab: 'calendar',
+      tab: 'account',
       onExportCalendar: (cal) => exported.push(cal.id),
     });
     rowByName('工作').querySelector('.cal-table__name').click();

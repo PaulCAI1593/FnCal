@@ -99,7 +99,9 @@ describe('0.5.10 S5：节日文字统一主题色', () => {
   it('月视图：节日名与旗子用 --accent；其它月格仍是灰', () => {
     const css = rule(viewsCss, '.month__holiday');
     expect(css).toContain('color: var(--accent)');
-    expect(rule(viewsCss, '.month__holiday-icon')).toContain('color: var(--accent)');
+    // 0.6.11 起：图标不写死色值，改为 currentColor 跟随容器（节日 --accent / 节气
+    // --term-ink / 其它月格 --gray-400），保证「图标什么颜色，文字就什么颜色」。
+    expect(rule(viewsCss, '.month__holiday-icon')).toContain('color: currentColor');
     expect(viewsCss).toMatch(
       /\.month__cell\.is-othermonth \.month__holiday[^{]*\{[^}]*var\(--gray-400\)/,
     );
@@ -113,10 +115,11 @@ describe('0.5.10 S5：节日文字统一主题色', () => {
     expect(css).toContain('color: var(--accent)');
     expect(css).toContain('background: var(--surface-3)');
     // 0.5.11（S2，用户）：「小旗子图标和节日一样是主题色」。
-    expect(rule(viewsCss, '.chip__holiday-icon')).toContain('color: var(--accent)');
+    // 0.6.11 起：图标改 currentColor 跟随容器文字，节日仍由容器给 --accent。
+    expect(rule(viewsCss, '.chip__holiday-icon')).toContain('color: currentColor');
     expect(
       rule(viewsCss, '.allday-chip.allday-chip--holiday .allday-chip__icon'),
-    ).toContain('color: var(--accent)');
+    ).toContain('color: currentColor');
   });
 
   it('日程：节日行文字与旗子都用 --accent（时间 / 标题 / 整行 / 图标）', () => {
@@ -128,8 +131,9 @@ describe('0.5.10 S5：节日文字统一主题色', () => {
       '.agenda__event--holiday .agenda__event-time,\n.agenda__event--holiday .agenda__event-title',
     );
     expect(line).toContain('color: var(--accent)');
+    // 0.6.11 起：图标与文字同色（currentColor），节气行因此自动拿到 --term-ink。
     expect(rule(viewsCss, '.agenda__event--holiday .agenda__event-icon')).toContain(
-      'color: var(--accent)',
+      'color: currentColor',
     );
   });
 });
@@ -172,7 +176,8 @@ describe('0.5.10 S6：日程日期头下加节日', () => {
     const second = heads.find((h) => h.num === '2');
     expect(second).toBeUndefined();
     // 日期头顺序：日号 → 周X · M月 → 节日
-    expect(agendaJs).toMatch(/class: 'agenda__date-holiday'/);
+    // 0.6.11 起：日期列是「图标 + 名字」，类名带节气修饰符。
+    expect(agendaJs).toMatch(/class: `agenda__date-holiday\$\{isTerm \?/);
     expect(agendaJs).toMatch(/title: holidayName/);
   });
 
@@ -207,8 +212,11 @@ describe('0.5.10 S6：日程日期头下加节日', () => {
     const css = rule(viewsCss, '.agenda__date-holiday');
     expect(css).toContain('color: var(--accent)');
     expect(css).toContain('white-space: nowrap');
-    expect(css).toContain('text-overflow: ellipsis');
     expect(css).toContain('font-size: 10px');
+    // 0.6.11 起：省略号落在名字节点上（图标不能参与省略），容器只负责不换行。
+    const name = rule(viewsCss, '.agenda__date-holiday-name');
+    expect(name).toContain('text-overflow: ellipsis');
+    expect(name).toContain('white-space: nowrap');
   });
 });
 

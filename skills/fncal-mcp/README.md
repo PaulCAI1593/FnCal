@@ -26,9 +26,8 @@ README.md             本文件
 
 技能包随 FnCal 发布，源文件在仓库 `skills/fncal-mcp/`。用户说「升级技能包」「立即更新」「拉最新 skill」时，AI 按下面顺序取 `SKILL.md`，读 frontmatter `version` 与本地副本比较，取高者：
 
-1. `https://gh-proxy.com/https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md`
-2. `https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/skills/fncal-mcp/SKILL.md`
-3. `https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md`
+1. `https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md`（Gitee 镜像）
+2. `https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md`（GitHub 直连）
 
 三个地址都失败就说明未拉取到、先用本地版本，不阻塞对话。拉取是 AI 客户端发起的网络请求，FnCal 服务端自身不联网（零云不变）。
 

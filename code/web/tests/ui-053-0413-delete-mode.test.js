@@ -239,6 +239,11 @@ describe('0.4.13 · 凭据编辑器「操作方式」两组（M21 §2 第 2 版�
     expect(dialog()).toBeNull();
     expect(checkedValue(row)).toBe(t('settings.ai.writeMode.proposal'));
     expect(mocks.updateAiCredential).not.toHaveBeenCalled();
+    // 0.6.5 起：未改动时保存灰显。取消回滚后草稿与原档一致，先改名称造一处改动再保存。
+    const name = root.querySelector('.ai-editor__name');
+    name.value = `${name.value} `;
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
     root.querySelector('.ai-editor__save').click();
     await flush();
     expect(mocks.updateAiCredential).toHaveBeenCalledWith('cred-1', expect.objectContaining({ writeMode: 'proposal' }));
@@ -298,6 +303,11 @@ describe('0.4.13 · 凭据编辑器「操作方式」两组（M21 §2 第 2 版�
     await flush();
     expect(checkedValue(row)).toBe(t('settings.ai.deleteMode.proposal'));
     expect(mocks.updateAiCredential).not.toHaveBeenCalled();
+    // 0.6.5 起：未改动时保存灰显。取消回滚后草稿与原档一致，先改名称造一处改动再保存。
+    const name = root.querySelector('.ai-editor__name');
+    name.value = `${name.value} `;
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
     root.querySelector('.ai-editor__save').click();
     await flush();
     expect(mocks.updateAiCredential).toHaveBeenCalledWith('cred-1', expect.objectContaining({ deleteMode: 'proposal' }));

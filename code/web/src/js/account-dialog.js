@@ -14,7 +14,7 @@ import { el } from './dom.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
 import { mountDialog } from './recurrence-dialog.js';
-import { changePassword, logoutAll, updateProfile, ApiError, getCalDavSyncStatus, exportDiagnostics, fixCalDavDavAccess } from './api-client.js';
+import { changePassword, logoutAll, updateProfile, ApiError, getCalDavSyncStatus, fixCalDavDavAccess } from './api-client.js';
 import { t } from '../i18n/index.js';
 import { colorHex, customColorSwatch } from './colors.js';
 import { openCalendarSettings } from './calendar-dialog.js';
@@ -321,6 +321,15 @@ export function openAccountDialog({
       t('settings.lunar'),
       switchToggle(settings.lunar !== false, t('settings.lunar'), (on) => saveSetting({ lunar: on })),
     ),
+    // 0.6.6（用户）：「二十四节气」显示开关，位置按派单放在农历之后、中国法定节日之前。
+    settingRow(
+      t('settings.solarTerms'),
+      switchToggle(
+        settings.solarTerms !== false,
+        t('settings.solarTerms'),
+        (on) => saveSetting({ solarTerms: on }),
+      ),
+    ),
     settingRow(
       t('settings.holidays'),
       switchToggle(settings.holidaysEnabled !== false, t('settings.holidays'), (on) => saveSetting({ holidaysEnabled: on })),
@@ -352,9 +361,10 @@ export function openAccountDialog({
   // 「有 N 项未应用」只在 N>0 显示；预留最小高度避免布局跳动。
   // 0.2.10（1-7）：提示与版本号同行（提示左、版本右），按钮紧随其下——不再用一条
   // 58px 高的常驻条占一行空白。「有 N 项未应用」仍只在 N>0 时出现。
+  // 0.5.22（用户 m00535/m00549）：「有 N 项未应用」独占页脚上方一行，N=0 时整行
+  // 不渲染、不占高度；常驻句 settings.applyHint 不再渲染（key 保留，见 i18n）。
   const pendingCountEl = el('span', { class: 'settings__pending-count', hidden: true });
-  const footHint = el('p', { class: 'settings__hint settings__pending-hint', text: t('settings.applyHint') });
-  const footHintWrap = el('div', { class: 'settings__foot-hint' }, [pendingCountEl, footHint]);
+  const pendingRow = el('div', { class: 'settings__pending-row', hidden: true }, [pendingCountEl]);
   const editBtn = el('button', { class: 'btn', type: 'button', text: t('settings.action.edit'), disabled: true, on: { click: () => editSelected() } });
   // 0.2.3：系统日历（我的日历/任务）不可删，按钮位改为「清空」（内容清空、日历保留）。
   // 0.2.15（D12）：编辑/删除/导出/清空四按钮统一「圆角描边」——删除与清空都是危险色
@@ -393,7 +403,9 @@ export function openAccountDialog({
     type: 'button',
     'aria-label': t('settings.refresh'),
     title: t('settings.refresh'),
-    html: icon('refresh', { size: 'sm' }),
+    // 0.6.4：`icon('refresh')` 没有对应图形（icons.js 只定义了 `sync`），
+    // 窄屏取消二层裁剪后这枚按钮暴露成空白方块；改用同义的 `sync`。
+    html: icon('sync', { size: 'sm' }),
     on: {
       click: () => {
         Promise.resolve(store.refreshCalendars ? store.refreshCalendars() : null)
@@ -435,6 +447,7 @@ export function openAccountDialog({
     countLabel.textContent = t('settings.countLabel', { count: visibleCount });
     pendingCountEl.textContent = n ? t('settings.unsavedCount', { count: n }) : '';
     pendingCountEl.hidden = n === 0;
+    pendingRow.hidden = n === 0;
   }
 
   function selectRow(calId) {
@@ -626,7 +639,9 @@ export function openAccountDialog({
     applyBtn.disabled = pending.size === 0;
   }
 
-  const calendarPage = el('div', { class: 'settings__page settings__page--calendar', role: 'tabpanel', 'aria-labelledby': 'settings-tab-calendar', hidden: true }, [
+  // 0.6.4（用户 m00800）：日历页签收进 CalDAV 页——表格整块搬到地址之前，
+  // 不再单独占一枚页签；滚动交给 .settings__pages 一层（原页面内的第二层滚动撤掉）。
+  const calendarBlock = el('div', { class: 'settings__cal-table' }, [
     // 0.2.10（1-6）：工具条常驻不滚动，右侧显示「共 N 个项目」；原来的底部
     // 「N 个项目 + 刷新」整行删除（刷新按钮并入工具条右侧），表格自己滚。
     el('div', { class: 'cal-table__toolbar' }, [
@@ -634,12 +649,15 @@ export function openAccountDialog({
       deleteBtn,
       exportBtn,
       el('div', { class: 'spacer' }),
-      countLabel,
-      refreshBtn,
+      // 0.6.4：计数与刷新包成一组——窄屏整组换到第二行并靠右，不会出现
+      // 「计数在第一行、刷新单独掉到第二行左端」的错位。
+      el('div', { class: 'cal-table__meta' }, [countLabel, refreshBtn]),
     ]),
     tableBody,
     // 0.2.10（批 1）：系统日历 CalDAV 权限的边界说明（「不可见」已禁用、「只读」可写）。
     el('p', { class: 'account-hint cal-table__dav-hint', text: t('settings.davAccess.systemHint') }),
+    // 0.6.5（用户 m01273）：再补一句两套权限互相独立，紧跟在表格说明之后。
+    el('p', { class: 'permission-hint', text: t('settings.davAccess.independentHint') }),
   ]);
 
   /* ---- CalDAV 账户页（0.2.2 ⑦：只保留 CalDAV 地址） ---- */
@@ -675,36 +693,8 @@ export function openAccountDialog({
 
   // 0.2.9（发布阻断）：设置 → CalDAV 账户页显示同步自检状态（读启动自愈结果 + 当前缺失）。
   const syncStatusEl = el('p', { class: 'account-hint account-hint--sync', role: 'status' });
-  // 0.2.10（阻断）：三段数字 + 未归属提示 + 导出诊断包（只含结构信息）。
-  const diagHintEl = el('p', { class: 'account-hint account-hint--diag', role: 'status', hidden: true });
-  const diagBtn = el('button', {
-    class: 'btn btn--ghost',
-    type: 'button',
-    text: t('settings.diagnostic.export'),
-    on: {
-      click: async () => {
-        diagBtn.disabled = true;
-        try {
-          const diagnostic = await exportDiagnostics();
-          if (!diagnostic) throw new Error('empty diagnostic');
-          const blob = new Blob([JSON.stringify(diagnostic, null, 2)], { type: 'application/json' });
-          const url = URL.createObjectURL(blob);
-          const stamp = new Date().toISOString().slice(0, 10);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `FnCal-diagnostic-${stamp}.json`;
-          document.body.append(a);
-          a.click();
-          a.remove();
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch {
-          toast(t('settings.diagnostic.exportFailed'), { variant: 'danger' });
-        } finally {
-          diagBtn.disabled = false;
-        }
-      },
-    },
-  });
+  // 0.6.4（用户 m00800）：诊断包从 CalDAV 页撤掉，移到「我的安全 / 安全设置」① 页的
+  // 「诊断」组（`security-settings.js`）；这里不再有「导出诊断包」按钮与提示句。
   // 0.2.10（1-17）：默认日历 CalDAV 权限不是 rw 时的中文告警 + 「修复为可读写」按钮。
   const davFixHintEl = el('p', { class: 'account-hint account-hint--warn', role: 'status', hidden: true });
   const davFixBtn = el('button', {
@@ -732,7 +722,6 @@ export function openAccountDialog({
   function renderSyncStatus(status) {
     if (!status) {
       syncStatusEl.textContent = t('settings.reconcile.unknown');
-      diagHintEl.hidden = true;
       davFixHintEl.hidden = true;
       davFixBtn.hidden = true;
       return;
@@ -743,13 +732,6 @@ export function openAccountDialog({
       synced: Number(status.synced || 0),
       unattributed: Number(status.unattributed || 0),
     });
-    const unattributed = Number(status.unattributed || 0);
-    if (unattributed > 0) {
-      diagHintEl.hidden = false;
-      diagHintEl.textContent = t('settings.reconcile.unattributedHint', { count: unattributed });
-    } else {
-      diagHintEl.hidden = true;
-    }
     // 0.2.10（1-17）：启动不静默纠正 davAccess，但自检行必须把问题摆出来，
     // 由用户点「修复为可读写」才 PATCH（审计 calendar-dav-access-fixed）。
     const dav = status.davAccess;
@@ -771,14 +753,10 @@ export function openAccountDialog({
   }
 
   const accountPage = el('div', { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-account', hidden: true }, [
-    el('div', { class: 'settings__account' }, [
-      el('span', { class: 'settings__avatar', 'aria-hidden': 'true', text: ((user && (user.displayName || user.username)) || '?').slice(0, 1) }),
-      el('div', { class: 'settings__account-meta' }, [
-        el('span', { class: 'settings__account-name', 'data-account-name': '', text: (user && (user.displayName || user.username)) || '' }),
-        el('span', { class: 'settings__account-username', text: username }),
-      ]),
-    ]),
+    // 0.6.4（用户 m00800）：「日历」页签删除，原日历表格整块搬到 CalDAV 页最上面。
+    calendarBlock,
     // 0.2.2（⑦）：显示名 / 改密 / 登录状态已移到账号菜单的「账号与安全」对话框。
+    // 0.6.4：页首头像与显示名小块删除（用户「头像不需要」），页内直接从日历设置开始。
     el('section', { class: 'account-section' }, [
       el('h3', { class: 'account-section__title', text: t('settings.caldavAddress') }),
       el('div', { class: 'settings__inline' }, [addressInput, copyBtn]),
@@ -789,8 +767,7 @@ export function openAccountDialog({
       syncStatusEl,
       // 0.2.10（1-17）：davAccess 告警 + 修复按钮（仅检测到非 rw 时显示）。
       davFixHintEl,
-      diagHintEl,
-      el('div', { class: 'settings__inline settings__inline--diagnostic' }, [davFixBtn, diagBtn]),
+      el('div', { class: 'settings__inline' }, [davFixBtn]),
     ]),
     // 0.2.15（D2）：设置页**不再**提供任何「安全设置 / 两步验证」入口——
     // 用户口径是「设置里的安全设置可以删除了」，0.2.13 的 TOTP、专用密码、锁定、
@@ -813,9 +790,10 @@ export function openAccountDialog({
 
   const tabs = [
     { id: 'general', label: t('settings.tab.general'), page: generalPage },
-    { id: 'calendar', label: t('settings.tab.calendar'), page: calendarPage },
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV——页签由 5 枚回到 4 枚。
     { id: 'account', label: t('settings.tab.account'), page: accountPage },
     { id: 'ai', label: t('settings.tab.ai'), page: aiPage.page },
+    // 0.6.2：桌面卡片改为跟随 App 登录态，不再单独发令牌 —— 设置里的「卡片」页签随之删除。
     // 0.2.20（E14）：快捷键成为最后 1 个页签。
     { id: 'shortcuts', label: t('settings.tab.shortcuts'), page: shortcutsPage },
   ];
@@ -831,6 +809,8 @@ export function openAccountDialog({
       text: tabDef.label,
       on: { click: () => selectTab(tabDef.id) },
     });
+    // 0.6.0：可见文案收短时，读屏仍要念全称。
+    if (tabDef.ariaLabel) btn.setAttribute('aria-label', tabDef.ariaLabel);
     tabbar.append(btn);
     return btn;
   });
@@ -843,7 +823,7 @@ export function openAccountDialog({
       tabDef.page.id = `settings-page-${tabDef.id}`;
       tabButtons[i].setAttribute('aria-selected', String(active));
       tabButtons[i].tabIndex = active ? 0 : -1;
-      if (tabDef.id === 'calendar' && active) renderTable();
+      if (tabDef.id === 'account' && active) renderTable();
       // AI 页每次切入都重新拉一次（服务开关/凭据/提案都可能被其它会话改过）。
       // 0.3.7：列表拉完再补一次红点计数——用户可能正好停在 AI 页看着队列，
       // 受理/驳回后这里也要跟着灭掉（ai-settings.js 里已经直接刷过一次）。
@@ -925,15 +905,16 @@ export function openAccountDialog({
     versionEl.textContent = `${t('settings.version', { version: frontendVersion })}${t('settings.needReload')}`;
   });
 
-  // 0.2.44：页脚再补一行「开发者 / 项目仓库」——fnOS 应用中心里的 maintainer / distributor
-  // 与界面上这一行都指向同一个仓库地址，两处必须同源（另一处在 code/fnos/manifest）。
-  const REPO_URL = 'https://github.com/PaulCAI1593/FnCal';
+  // 0.2.44：页脚再补一行「开发者 / 项目介绍」——fnOS 应用中心里的 maintainer / distributor
+  // 仍指向仓库（另一处在 code/fnos/manifest）；界面这一行指向 GitHub Pages 的项目介绍页
+  // （0.6.9 用户要求：让用户看介绍，而不是看代码）。
+  const INTRO_URL = 'https://paulcai1593.github.io/FnCal/';
   const aboutMeta = el('div', { class: 'settings__about-meta' }, [
     el('span', { text: t('settings.about.developer', { name: 'PaulCAI1593' }) }),
     el('span', { class: 'settings__about-dot', 'aria-hidden': 'true', text: '·' }),
     el('a', {
       class: 'settings__repo',
-      href: REPO_URL,
+      href: INTRO_URL,
       target: '_blank',
       rel: 'noopener noreferrer',
       text: t('settings.about.repository'),
@@ -959,22 +940,22 @@ export function openAccountDialog({
     ]),
     el('div', { class: 'modal__body settings__body' }, [
       tabbar,
-      el('div', { class: 'settings__pages' }, [generalPage, calendarPage, accountPage, aiPage.page, shortcutsPage]),
+      el('div', { class: 'settings__pages' }, [generalPage, accountPage, aiPage.page, shortcutsPage]),
     ]),
-    // 0.2.9（用户 9）/ 0.2.10（1-7）：常驻底部，不参与 .modal__body 滚动；
-    // 提示与版本号同一行，按钮紧跟其下。
+    // 0.5.22（用户 m00535 / m00549）：页脚收成「按钮行 + 左侧两行小块」。
+    // 上面一行只放「有 N 项未应用」（N=0 时整行不渲染）；按钮行左侧小块两行：
+    // 「FnCal <版本>」/「开发者 PaulCAI1593 · 项目介绍」，总高 = 同一行按钮的实际渲染高
+    // （精确指针 36px、触屏 44px），两行行高各取按钮高的一半；窄屏整块换到按钮上方。
+    // 0.2.8（用户追加）：应用失败时留在弹窗内给中文错误（不只是 toast）。
     el('div', { class: 'settings__foot' }, [
-      footHintWrap,
-      // 0.2.4（真机 P0-8）：HTTPS 明文提示只在「CalDAV 账户」页出现一次。
-      // 0.2.24（I3）：版本号一行（前端内嵌版本，见上），不再有指纹行。
-      el('div', { class: 'settings__about' }, [versionEl, aboutMeta]),
-    ]),
-    el('div', { class: 'modal__foot settings__actions' }, [
-      // 0.2.8（用户追加）：应用失败时留在弹窗内给中文错误（不只是 toast）。
-      applyErrorEl,
-      el('div', { class: 'spacer' }),
-      cancelBtn,
-      applyBtn,
+      pendingRow,
+      el('div', { class: 'modal__foot settings__actions' }, [
+        applyErrorEl,
+        el('div', { class: 'settings__foot-meta' }, [versionEl, aboutMeta]),
+        el('div', { class: 'spacer' }),
+        cancelBtn,
+        applyBtn,
+      ]),
     ]),
   ]);
 
@@ -993,6 +974,10 @@ export function openAccountDialog({
     removeEscGuard();
   });
   selectTab(tab);
+  // 0.6.4：日历表格并入 CalDAV 页后没有「切到日历页才渲染」的时机，开窗先建一次；
+  // 切到 CalDAV 页时 selectTab 会再建一次（store 可能已被其它入口刷新）。
+  // 没有 store 的调用方（只测版式/页脚的用例）跳过，避免开窗即抛错。
+  if (store) renderTable();
   void refreshSyncStatus();
   return { dialog, close: closeDialog };
 }
@@ -1023,8 +1008,8 @@ export function openAccountSecurityDialog({ user, onSignOut, onSignOutAll, onNam
         try {
           await updateProfile(name);
           if (user) user.displayName = name;
-          const nameEl = dialog && dialog.querySelector('[data-account-name]');
-          if (nameEl) nameEl.textContent = name;
+          // 0.6.4：账号与安全页首的头像 / 显示名小块删除（用户「头像不需要」），
+          // 保存后不再回写页首节点；输入框保留新值即是最新状态。
           toast(t('settings.toast.nameSaved'), { variant: 'success' });
           if (typeof onNameSaved === 'function') onNameSaved(name);
         } catch (err) {
@@ -1133,13 +1118,7 @@ export function openAccountSecurityDialog({ user, onSignOut, onSignOutAll, onNam
       }),
     ]),
     el('div', { class: 'modal__body settings__body' }, [
-      el('div', { class: 'settings__account' }, [
-        el('span', { class: 'settings__avatar', 'aria-hidden': 'true', text: ((user && (user.displayName || user.username)) || '?').slice(0, 1) }),
-        el('div', { class: 'settings__account-meta' }, [
-          el('span', { class: 'settings__account-name', 'data-account-name': '', text: (user && (user.displayName || user.username)) || '' }),
-          el('span', { class: 'settings__account-username', text: (user && user.username) || '' }),
-        ]),
-      ]),
+      // 0.6.4：页首头像 / 显示名小块删除（两处 `.settings__account` 都撤掉，DOM 里不再有）。
       el('section', { class: 'account-section' }, [
         el('h3', { class: 'account-section__title', text: t('settings.displayName') }),
         el('div', { class: 'settings__inline' }, [displayNameInput, saveNameBtn]),

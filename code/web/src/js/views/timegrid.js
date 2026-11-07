@@ -43,6 +43,119 @@ const MINUTES_PER_DAY = 24 * 60;
 // roughly one chip-height at HOUR_H — the visual footprint we want to de-conflict.
 const TASK_SPAN_MS = 30 * 60_000;
 
+/* 0.6.3（B，用户 m01078）：「周/四日/日卡片里，有空间就换行显示，优先级名称、时间、
+   地点，但先确保都有至少一行的空间」。行数与行高不再写死档位，而是从 CSS 读内距与
+   各行 line-height，再按可用高度分配；`--tevent-lines-*` 交给 CSS 的 line-clamp。
+   无布局环境（jsdom / 首次绘制前）读不到 computed style 时用下面这组回退值——它们
+   是 views.css 的实测值：内距 3/3、间距 1、标题 12px×1.3 = 15.6、时间与地点 13。 */
+export const TEVENT_METRICS_FALLBACK = {
+  padTop: 3,
+  padBottom: 3,
+  gap: 1,
+  titleLh: 15.6,
+  timeLh: 13,
+  locLh: 13,
+};
+/* 各字段的行数上限：名称 3、时间 1、地点 2（0.6.3 实测取整，见记录 §B）。 */
+const TEVENT_MAX_LINES = { title: 3, time: 1, loc: 2 };
+let teventMetricsCache = null;
+
+/** 读一次 `.tevent` 的盒模型常量；读不到（无布局）就回退。 */
+export function readTeventMetrics() {
+  if (teventMetricsCache) return teventMetricsCache;
+  let metrics = TEVENT_METRICS_FALLBACK;
+  try {
+    const probe = document.createElement('div');
+    probe.className = 'tevent';
+    probe.style.cssText =
+      'position:absolute;left:-9999px;top:0;width:160px;visibility:hidden;pointer-events:none;';
+    const title = document.createElement('span');
+    title.className = 'tevent__title';
+    title.textContent = '测';
+    const time = document.createElement('span');
+    time.className = 'tevent__time';
+    time.textContent = '09:00';
+    const loc = document.createElement('span');
+    loc.className = 'tevent__loc';
+    loc.textContent = '测';
+    probe.append(title, time, loc);
+    document.body.append(probe);
+    const box = getComputedStyle(probe);
+    const lineHeight = (n) => {
+      const raw = getComputedStyle(n).lineHeight;
+      const px = parseFloat(raw);
+      if (Number.isFinite(px) && px > 0) return px;
+      // Chrome 对 `line-height: 1.3` 会算出 px；看不到时就按字号 × 1.3 兜底。
+      const fs = parseFloat(getComputedStyle(n).fontSize);
+      return Number.isFinite(fs) && fs > 0 ? fs * 1.3 : 0;
+    };
+    const padTop = parseFloat(box.paddingTop);
+    const padBottom = parseFloat(box.paddingBottom);
+    const gap = parseFloat(box.rowGap || box.gap);
+    const titleLh = lineHeight(title);
+    const timeLh = lineHeight(time);
+    const locLh = lineHeight(loc);
+    if ([padTop, padBottom, titleLh, timeLh, locLh].every((v) => Number.isFinite(v) && v >= 0) && titleLh > 0) {
+      metrics = {
+        padTop,
+        padBottom,
+        gap: Number.isFinite(gap) ? gap : TEVENT_METRICS_FALLBACK.gap,
+        titleLh,
+        timeLh: timeLh > 0 ? timeLh : TEVENT_METRICS_FALLBACK.timeLh,
+        locLh: locLh > 0 ? locLh : TEVENT_METRICS_FALLBACK.locLh,
+      };
+    }
+    probe.remove();
+  } catch {
+    /* 非浏览器环境：保持回退值。 */
+  }
+  teventMetricsCache = metrics;
+  return metrics;
+}
+
+/**
+ * 按可用高度给三个字段分行。
+ * - 先各给 1 行（名称 → 时间 → 地点，装不下就停在够得着的那一层）；
+ * - 再把剩余高度按同一优先级补满上限；
+ * - 只有名称到不了 1 行时才会出现「无名称」，没有行数就不生成节点（调用方负责）。
+ * @returns {{title:number,time:number,loc:number,short:boolean}}
+ */
+export function allocateTeventLines(height, metrics = null, hasLoc = false) {
+  const m = metrics || TEVENT_METRICS_FALLBACK;
+  const padTop = Number.isFinite(m.padTop) ? m.padTop : TEVENT_METRICS_FALLBACK.padTop;
+  const padBottom = Number.isFinite(m.padBottom) ? m.padBottom : TEVENT_METRICS_FALLBACK.padBottom;
+  const gap = Number.isFinite(m.gap) ? m.gap : TEVENT_METRICS_FALLBACK.gap;
+  const price = {
+    title: m.titleLh > 0 ? m.titleLh : TEVENT_METRICS_FALLBACK.titleLh,
+    time: m.timeLh > 0 ? m.timeLh : TEVENT_METRICS_FALLBACK.timeLh,
+    loc: m.locLh > 0 ? m.locLh : TEVENT_METRICS_FALLBACK.locLh,
+  };
+  if (height < 34) return { title: 1, time: 1, loc: 0, short: true };
+  let budget = height - padTop - padBottom;
+  const counts = { title: 0, time: 0, loc: 0 };
+  const used = () => counts.title + counts.time + counts.loc;
+  const add = (field) => {
+    const cost = price[field] + (used() > 0 ? gap : 0);
+    if (cost > budget) return false;
+    budget -= cost;
+    counts[field] += 1;
+    return true;
+  };
+  add('title');
+  add('time');
+  if (hasLoc) add('loc');
+  while (counts.title < TEVENT_MAX_LINES.title && add('title')) {}
+  while (hasLoc && counts.loc < TEVENT_MAX_LINES.loc && add('loc')) {}
+  return { ...counts, short: false };
+}
+
+/*
+ * 0.6.3（B）备注：列宽 <108px 时不生成地点行的问题交给 CSS 容器查询
+ * （`@container (max-width: 108px) .tevent__loc { display: none }`）处理，
+ * 与 0.3.5 的注释同源：列宽由布局算出、JS 拿不到，测量还会触发重排。
+ * 地点被隐藏时不占行、不影响名称与时间的行数，所以不需要在渲染后重算。
+ */
+
 /**
  * Wall-clock minutes from a day's local midnight (`dayStartMs`). The hour axis,
  * now-line and click-to-create are all wall-clock, so event geometry and the
@@ -304,7 +417,7 @@ export function renderTimeGrid(days, ctx) {
   const cols = el('div', { class: 'timegrid__cols' });
   // Geometry shared with the drag handler — resolved lazily at drag time, so
   // it's safe that the columns are still being appended in this loop.
-  const grid = { cols, days, hourH: HOUR_H };
+  const grid = { cols, days, hourH: HOUR_H, teventMetrics: readTeventMetrics() };
   perDay.forEach(({ day, dayStart, dayEnd, timed, timedTasks }) => {
     const col = el('div', {
       class: `timegrid__col${isToday(day, now) ? ' is-today' : ''}`,
@@ -543,11 +656,11 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
   const top = (startMin / 60) * HOUR_H;
   const height = Math.max((durMin / 60) * HOUR_H, MIN_EVENT_H);
   const isShort = height < 34;
-  // 0.3.5（M10 §1）：三档按渲染块高判定——A(<34) 单行横排、B(34≤h<50) 两行、
-  // C(≥50) 三行含地点。三行内容预算 49.6px，1 小时块 52px 刚好进 C 档。
-  const isTall = height >= 50;
-  // 0.3.5（M10 §4）：空地点 / 只有空格按「无地点」处理，不留空行（同 agenda.js:337）。
+  // 0.6.3（B）：行预算按可用高度分配，不再用 <34 / 34–50 / ≥50 三档写死。
+  // 空地点 / 只有空格按「无地点」处理，不留空行（同 agenda.js:337）。
   const location = String(source.location || '').trim();
+  const metrics = (grid && grid.teventMetrics) || readTeventMetrics();
+  const alloc = allocateTeventLines(height, metrics, Boolean(location));
 
   const hex = colorHex(source.color);
   const node = el('div', {
@@ -559,36 +672,37 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
       width: `calc(${(1 / colCount) * 100}% - 4px)`,
       '--ev-fill': hex,
       '--ev-fg': colorFg(source.color),
+      // 每块自己的行数上限；CSS 的 line-clamp 读这三个变量。
+      '--tevent-lines-title': String(alloc.title),
+      '--tevent-lines-time': String(alloc.time),
+      '--tevent-lines-loc': String(alloc.loc),
     },
     tabindex: '0',
     role: 'button',
-    dataset: { focusKey: `ev:${source.id}` },
+    dataset: { focusKey: `ev:${source.id}`, hasLoc: alloc.loc > 0 ? '1' : '0' },
     title: source.title || t('agenda.event.untitled'),
     'aria-label': `${source.title || t('agenda.event.untitledAria')}，${formatTimeRange(new Date(source.start), new Date(source.end), { hour12: ctx.settings.hour12 })}${location ? '，' + location : ''}`,
   });
 
-  node.append(el('span', { class: 'tevent__title', text: source.title || t('agenda.event.untitled') }));
-  if (!isShort) {
+  // 没有行数就不生成节点（不靠 CSS 隐藏）。
+  if (alloc.title > 0) {
+    node.append(el('span', { class: 'tevent__title', text: source.title || t('agenda.event.untitled') }));
+  }
+  if (alloc.time > 0) {
     node.append(
       el('span', {
         class: 'tevent__time',
-        text: formatTimeRange(new Date(source.start), new Date(source.end), {
-          hour12: ctx.settings.hour12,
-        }),
-      }),
-    );
-  } else {
-    node.append(
-      el('span', {
-        class: 'tevent__time',
-        text: formatTime(new Date(source.start), { hour12: ctx.settings.hour12 }),
+        text: isShort
+          ? formatTime(new Date(source.start), { hour12: ctx.settings.hour12 })
+          : formatTimeRange(new Date(source.start), new Date(source.end), {
+              hour12: ctx.settings.hour12,
+            }),
       }),
     );
   }
-  // 0.3.5（M10 §3）：C 档且地点非空才生成第三行。A/B 档不生成节点（不靠 CSS 隐藏）。
-  // 窄块（容器宽 <108px）由 views.css 的容器查询隐藏——列宽是 CSS 布局结果，
-  // 渲染期拿不到，也不该为它测量重排。
-  if (isTall && location) {
+  // 窄列（<108px）时地点让位给名称+时间：由 CSS 容器查询隐藏（display:none 不占行，
+  // 名称与时间的行数不受影响），JS 不做二次测量。见文件上方 0.6.3（B）备注。
+  if (alloc.loc > 0 && location) {
     node.append(el('span', { class: 'tevent__loc', text: location }));
   }
 
@@ -1016,11 +1130,13 @@ function fitCompactHolidayChips(root) {
 }
 
 function buildOverlayChip(item, ctx) {
-  const kind = t('agenda.holiday.kindHoliday');
+  // 0.6.6：节气沿用节日全天条的外壳与裁字逻辑，只换类别名、图标与颜色修饰类。
+  const isTerm = Boolean(item.term);
+  const kind = t(isTerm ? 'agenda.solarTerm.kindTerm' : 'agenda.holiday.kindHoliday');
   const node = el(
     'div',
     {
-      class: 'allday-chip allday-chip--holiday',
+      class: 'allday-chip allday-chip--holiday' + (isTerm ? ' allday-chip--term' : ''),
       tabindex: '0',
       role: 'button',
       dataset: { focusKey: item.id },
@@ -1028,7 +1144,7 @@ function buildOverlayChip(item, ctx) {
       'aria-label': `${kind}：${item.title}`,
     },
     [
-      el('span', { class: 'allday-chip__icon', html: icon('flag', { size: 'sm' }), 'aria-hidden': 'true' }),
+      el('span', { class: 'allday-chip__icon', html: icon(isTerm ? 'sun' : 'flag', { size: 'sm' }), 'aria-hidden': 'true' }),
       el('span', { class: 'allday-chip__title', text: item.title }),
     ],
   );

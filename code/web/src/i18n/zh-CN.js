@@ -180,6 +180,9 @@ export const zhCN = {
   // 0.2.17（B3.3）：窗口天数走 {days} 插值，唯一定义在 views/agenda.js 的 WINDOW_DAYS。
   'empty.agenda': '接下来 {days} 天内没有事件。',
   'empty.agendaHidden': '接下来 {days} 天内，{what}被分类筛选隐藏了。',
+  // 0.5.19：日历筛选同样能把视图掏空；只说「分类」会让按钮点不动（清分类是空操作）。
+  'empty.agendaHiddenCalendars': '接下来 {days} 天内，{what}被日历筛选隐藏了。',
+  'empty.agendaHiddenBoth': '接下来 {days} 天内，{what}被分类与日历筛选隐藏了。',
   // 0.2.17（B3.1）：结论行（14px）保持原口径，新增 12px 引导行——先说什么事，
   // 再说下一步；引导行只在有明确下一步时出现。
   'empty.createHint': '点下面的「新建事件」开始安排。',
@@ -188,9 +191,13 @@ export const zhCN = {
   'empty.week': '本周还没有事件。点击空白处即可新建事件。',
   'empty.day': '这一天还没有安排。点击空白处即可新建事件。',
   'empty.rangeHidden': '当前范围内，{what}被分类筛选隐藏了。',
+  'empty.rangeHiddenCalendars': '当前范围内，{what}被日历筛选隐藏了。',
+  'empty.rangeHiddenBoth': '当前范围内，{what}被分类与日历筛选隐藏了。',
   'empty.search': '搜索事件与任务。',
   'empty.noResults': '没有匹配「{query}」的事件。',
   'empty.newEvent': '新建事件',
+  'empty.showAll': '全部显示',
+  'empty.showAllCalendars': '显示全部日历',
   'empty.showAllCategories': '显示全部分类',
 
   /* ---- 错误提示（三段式：发生了什么。原因。怎么办。） ---- */
@@ -374,6 +381,8 @@ export const zhCN = {
   'editor.restoreAttendance': '恢复出席',
   'editor.restoredDraft': '已恢复你未保存的修改',
   'editor.holiday': '公共假日',
+  'editor.solarTerm': '节气',
+  'editor.solarTermSource': '二十四节气 · 按太阳黄经计算',
   'editor.holidaySource': '中国法定节日',
   'editor.holidayBuiltin': '内置于日历 · 不可编辑',
   'editor.holidayBridged': '两个假日之间的工作日，因此也按假日处理。',
@@ -506,6 +515,9 @@ export const zhCN = {
   'agenda.loadEarlierError': '加载更早失败，请重试',
   'agenda.holiday.kindHoliday': '公共假日',
   'agenda.holiday.columnHoliday': '节假日',
+  // 0.6.6：二十四节气与节日同款外壳，只换类别名与图标。
+  'agenda.solarTerm.kindTerm': '节气',
+  'agenda.solarTerm.columnTerm': '节气',
   'agenda.task.todo': '不限时间',
   'agenda.task.untitled': '（未命名任务）',
   'agenda.task.ariaPrefix': '任务：',
@@ -630,15 +642,15 @@ export const zhCN = {
   /* ---- 设置三页（0.2.0 B3） ---- */
   'settings.title': '设置',
   'settings.version': 'FnCal {version}',
-  // 0.2.44：页脚「开发者 · 项目仓库」；仓库地址与 fnOS manifest 的 maintainer_url / distributor_url 同源。
-  'settings.about.developer': '开发者 {name}',
-  'settings.about.repository': '项目仓库',
-  'settings.about.repositoryAria': 'FnCal 项目仓库（在新标签页打开）',
+  // 0.2.44：页脚「开发者 · 项目介绍」；0.6.9 起链接指向 GitHub Pages 介绍页，不再指向仓库。
+  'settings.about.developer': '{name}',
+  'settings.about.repository': '项目介绍',
+  'settings.about.repositoryAria': 'FnCal 项目介绍（在新标签页打开）',
   // 0.2.24（I3）：页脚版本号显示**前端内嵌版本**；与后端版本不一致时在后面补这四个字。
   // 原 `settings.build`（前端指纹行）按用户 m00780「不要这行」撤掉，不留孤儿键。
   'settings.needReload': ' · 需刷新',
   'settings.tab.general': '一般',
-  'settings.tab.calendar': '日历',
+  // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV，`settings.tab.calendar` 键随之删除。
   // 0.3.0（P4）：页签 5 枚，第 3 枚文案由「CalDAV 账户」收短为「CalDAV」（规范 §1.1：
   // 窄屏就是它把页签撑爆的），第 4 枚新增「AI」。
   'settings.tab.account': 'CalDAV',
@@ -667,6 +679,8 @@ export const zhCN = {
   'settings.ai.retry': '重试',
   'settings.ai.refresh': '刷新',
   'settings.ai.credentials': 'AI 凭据',
+  // 0.6.5（用户 m01273）：AI 凭据与 CalDAV 专用密码的权限互相独立。
+  'settings.ai.credentials.independentHint': 'AI 凭据的权限与 CalDAV 专用密码互相独立：这里改不影响 CalDAV 客户端；要给客户端权限，到「我的安全」单独设置。',
   'settings.ai.new': '新建凭据',
   'settings.ai.empty': '还没有 AI 凭据。新建后把令牌配置到 AI 客户端。',
   'settings.ai.noVisibleWarn': '当前没有任何日历对 AI 可见，新建后 AI 也读不到任何数据。仍要新建？',
@@ -727,6 +741,8 @@ export const zhCN = {
   'settings.ai.field.attendees': '参与者',
   'settings.ai.editor.fieldsHint': '关闭的字段不会出现在 AI 的返回里',
   'settings.ai.editor.save': '保存',
+  // 0.6.5（总监 m01026）：未改动时保存灰显，悬停说明原因。
+  'settings.ai.editor.noChanges': '没有改动，不需要保存',
   'settings.ai.editor.saving': '保存中…',
   'settings.ai.token.title': '令牌只显示这一次',
   'settings.ai.token.text': '关闭后无法再次查看，请立即保存到 AI 客户端。',
@@ -945,6 +961,8 @@ export const zhCN = {
   'settings.hour24': '24 小时制',
   // 0.2.12（C11-1）：删除「第二时区」，新增「农历」显示开关。
   'settings.lunar': '农历',
+  // 0.6.6（用户）：「二十四节气」显示开关，默认开；与节日互斥、节日优先。
+  'settings.solarTerms': '二十四节气',
   'settings.holidays': '中国法定节日',
   'settings.col.name': '名称',
   'settings.col.visible': '显示',
@@ -970,6 +988,8 @@ export const zhCN = {
   'settings.davAccess.hidden': '不可见',
   /* 0.2.10（批 1）：系统日历的 CalDAV 权限边界 + 自检行修复入口。 */
   'settings.davAccess.systemHint': '系统日历不可设为「不可见」；「只读」时客户端只能读取，不能写入或修改。',
+  // 0.6.5（用户 m01273）：CalDAV 权限只作用于客户端，与 AI 凭据无关。
+  'settings.davAccess.independentHint': '这里的权限只对 CalDAV 客户端生效，与 AI 凭据无关。',
   'settings.davAccess.fix': '修复为可读写',
   'settings.davAccess.fixHint': '检测到系统日历的 CalDAV 权限不是「可读写」：{names}。客户端会因此看不到或写不进这些日历。',
   'settings.davAccess.fixed': '已将系统日历修复为可读写',
@@ -1146,6 +1166,9 @@ export const zhCN = {
   'security.section.policy': '会话、登录保护与访问控制',
   'security.section.totp': '两步验证（TOTP）',
   'security.section.audit': '安全审计',
+  // 0.6.4（用户 m00854）：诊断包 = 系统诊断日志，放在管理员 ④ 审计页审计列表下方。
+  'security.section.diag': '系统诊断',
+  'security.diag.hint': '诊断包是系统诊断日志，只含版本、配置结构与计数，不含日程内容与密钥；排查问题时导出后发给开发者。',
   'security.section.dav': 'CalDAV 专用密码',
   // 0.3.10（M13 §2.1/§6）：管理员「安全设置」分 4 页；② 的账号区只放其他账号。
   'security.tabs.self': '我的安全',
@@ -1293,6 +1316,49 @@ export const zhCN = {
   'security.dav.revoke': '撤销',
   'security.dav.empty': '还没有专用密码。',
   'security.dav.selfHint': '开启两步验证后，CalDAV 客户端必须用专用密码登录（主密码会返回 401）。',
+  // 0.6.5（用户 m01273）：CalDAV 专用密码只管客户端，AI 凭据是另一套权限。
+  'security.dav.independentHint': 'CalDAV 专用密码只管 CalDAV 客户端。AI 凭据的权限是另一套，两边要分别设置，改一边不影响另一边。',
+  // 0.6.1（M5 §S3）／0.6.2：登录设备与接入。两组分开，设备行两行明细
+  // （设备 / 系统 + 客户端 / IP / 最近使用）；0.6.2 起卡片不再单独发凭据，接入只剩 MCP。
+  'security.section.devices': '登录设备与接入',
+  'security.devices.group': '登录设备',
+  'security.devices.hint': '这里列出正在使用你账号的浏览器与手机。撤销后，那台设备要重新登录。',
+  'security.devices.current': '本机',
+  'security.devices.selfHint': '当前设备不能在这里撤销；要退出当前设备，请用右上角退出。',
+  'security.devices.empty': '只有当前设备在登录',
+  'security.devices.loadFailed': '登录设备暂时读取失败，稍后重试。',
+  'security.devices.line1': '设备：{device} · {os}',
+  'security.devices.line2': '客户端：{client} · {ip} · 最近使用 {time}',
+  'security.devices.legacy': '设备信息不可用（此会话创建于 0.6.2 之前）',
+  'security.devices.revoke': '撤销',
+  'security.devices.revokeConfirm': '撤销「{name}」这台设备？它需要重新登录才能继续使用。',
+  'security.devices.revoked': '已撤销',
+  'security.devices.revokedSelf': '当前设备已退出，请重新登录',
+  'security.connections.group': '接入',
+  'security.connections.hint': 'MCP 凭据；撤销后它立即失效。',
+  // 0.6.5（用户 m01273）：接入凭据与 CalDAV 专用密码各自独立。
+  'security.connections.independentHint': '接入凭据和 CalDAV 专用密码互相独立，权限各自设置。',
+  'security.connections.empty': '还没有 MCP 接入。',
+  'security.connections.loadFailed': '接入列表暂时读取失败，稍后重试。',
+  'security.connections.mcp': 'MCP 接入 · {name}',
+  'security.connections.untitled': '未命名',
+  'security.connections.line2': '客户端：{client} · 最近使用 {time}',
+  'security.connections.renameHint': '此连接的名称可改，建议写成助手名字。',
+  'security.connections.rename': '改名',
+  'security.connections.renameLabel': '新的接入名称',
+  'security.connections.renamed': '已改名',
+  'security.connections.renameFailed': '改名失败，请稍后重试。',
+  'security.connections.revoke': '撤销',
+  'security.connections.revokeConfirm': '撤销接入「{name}」？撤销后它立即失效。',
+  'security.connections.revoked': '已撤销',
+  'security.meta.unknown': '未知',
+  'security.meta.created': '创建 {time}',
+  'security.meta.lastUsed': '最近使用 {time}',
+  'security.meta.neverUsed': '从未使用',
+  'security.time.justNow': '刚刚',
+  'security.time.minutesAgo': '{n} 分钟前',
+  'security.time.hoursAgo': '{n} 小时前',
+  'security.time.daysAgo': '{n} 天前',
   'security.account.adminTag': '（管理员）',
   'security.account.totpOn': '已开启两步验证',
   'security.audit.usernamePlaceholder': '按账号筛选（留空=全部）',
@@ -1331,14 +1397,11 @@ export const zhCN = {
   'update.available': '发现新版本 {version}',
   'update.failed': '无法连接到更新服务，请检查网络后重试',
   'update.rateLimited': '请求过于频繁，请稍后再试',
-  'update.source.label': '更新源',
-  'update.source.mirror': '国内加速（推荐）',
-  'update.source.github': 'GitHub 直连',
+  'update.sources.label': '下载入口',
+  'update.open.gitee': 'Gitee 镜像（国内更快）',
+  'update.open.github': 'GitHub',
   'update.recheck': '重新检查',
-  'update.open': '打开下载页',
-  'update.via.mirror': '国内加速',
-  'update.via.github': 'GitHub 直连',
-  'update.hint.proxy': '国内加速由第三方代理提供，可能随时失效，失败会自动回退到 GitHub 直连。',
+  'update.hint.sources': 'Gitee 镜像在国内更快；GitHub 是官方发布页，两边内容相同。',
   'update.hint.sha': '安装前请核对 SHA-256。',
 };
 

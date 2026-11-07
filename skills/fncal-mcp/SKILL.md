@@ -1,7 +1,7 @@
 ---
 name: fncal-mcp
 description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.5.12
+version: 0.6.11
 user-invocable: true
 license: MIT
 ---
@@ -14,9 +14,8 @@ FnCal is the user's own calendar (self-hosted on their NAS, local-first, no clou
 
 This file ships with FnCal but lives in the repository, so it can be updated on its own. When the user asks to upgrade the skill (「升级技能包」「立即更新技能」「拉最新 skill」), or when a tool behaves differently from this document, fetch the current copy and use it:
 
-1. `https://gh-proxy.com/https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md`
-2. `https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/skills/fncal-mcp/SKILL.md`
-3. `https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md` (last resort; unreachable from some networks)
+1. `https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md`（Gitee 镜像）
+2. `https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md`（GitHub；部分网络不可达）
 
 Compare the fetched frontmatter `version` with the local one; use the higher version for the rest of the conversation, and tell the user which address answered and which version you got. Fetch the sibling files the same way when needed: `reference/tools.md`, `reference/setup.md`, `reference/examples.md`. If all three addresses fail, say plainly that the latest skill could not be fetched and carry on with the local copy — never block the conversation.
 

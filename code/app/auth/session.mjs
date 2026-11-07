@@ -7,6 +7,8 @@
 //   exp  absolute expiry, epoch ms（0.2.13：默认 7 天，管理端可配）
 //   idle idle expiry, epoch ms（0.2.13：默认 12 小时无操作即失效）
 //   mfa  1 = 已通过密码、尚未通过 TOTP 的受限会话（仅允许改密与验证 TOTP）
+//   sid  0.6.1：服务端会话记录 id（`lib/session-store.mjs`）；撤销后校验直接 401。
+//        受限 mfa 会话不带 sid（尚未成为正式会话）。
 // 旧版 cookie 没有 iat/idle/mfa 字段：读取时按 exp 兜底，升级不掉线。
 //
 // CSRF token: deterministic HMAC over `csrf:<uid>:<tv>`; it is delivered in a
@@ -69,8 +71,9 @@ export function createSessionCodec({ secret, ttlMs = SESSION_TTL_MS, refreshAfte
   /**
    * @param {object} account
    * @param {number} now
-   * @param {{idleMs?:number, absoluteMs?:number, mfaPending?:boolean}} options
+   * @param {{idleMs?:number, absoluteMs?:number, mfaPending?:boolean, sid?:string}} options
    *        idleMs/absoluteMs 来自安全设置；省略时沿用旧版 30 天滑窗。
+   *        sid 由 `lib/session-store.mjs` 生成并登记；mfa 受限会话不传。
    */
   function issue(account, now = Date.now(), options = {}) {
     const absoluteMs = Math.max(60 * 1000, Math.trunc(Number(options.absoluteMs) || ttlMs));
@@ -86,6 +89,7 @@ export function createSessionCodec({ secret, ttlMs = SESSION_TTL_MS, refreshAfte
       idle: now + idleLifetime,
     };
     if (pending) payload.mfa = 1;
+    else if (typeof options.sid === 'string' && options.sid) payload.sid = options.sid;
     const body = b64url(JSON.stringify(payload));
     return `v1.${body}.${sign(`v1.${body}`)}`;
   }

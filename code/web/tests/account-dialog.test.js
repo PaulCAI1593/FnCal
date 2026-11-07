@@ -96,7 +96,7 @@ describe('设置对话框', () => {
     document.body.replaceChildren();
   });
 
-  it('五个页签的标题正确；默认停在「一般」；不显示角色', () => {
+  it('四个页签的标题正确；默认停在「一般」；不显示角色', () => {
     opened = openAccountDialog({
       user: { username: 'alice', displayName: 'Alice', role: 'user' },
       store,
@@ -104,9 +104,13 @@ describe('设置对话框', () => {
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')].map((n) => n.textContent);
     // 0.3.0（P4）：第 3 枚文案收短为「CalDAV」，第 4 枚新增「AI」。
-    expect(tabs).toEqual(['一般', '日历', 'CalDAV', 'AI', '快捷键']);
+    // 0.6.2：桌面卡片改为跟随 App 登录态，0.6.0 的第 5 枚「卡片」页签删除。
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4，快捷键仍是最后。
+    expect(tabs).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(false);
-    expect(dialog.querySelector('#settings-page-calendar').hidden).toBe(true);
+    expect(dialog.querySelector('#settings-page-account').hidden).toBe(true);
+    expect(dialog.querySelector('.settings__page--calendar')).toBeNull();
+    expect(dialog.querySelector('.settings__account')).toBeNull();
     expect(dialog.textContent).not.toContain('普通用户');
     expect(dialog.querySelector('[data-action="manage-users"]')).toBe(null);
     expect(document.querySelectorAll('.dialog-scrim').length).toBe(1);
@@ -118,13 +122,13 @@ describe('设置对话框', () => {
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
     tabs[1].click();
     expect(tabs[1].getAttribute('aria-selected')).toBe('true');
-    expect(dialog.querySelector('#settings-page-calendar').hidden).toBe(false);
+    expect(dialog.querySelector('#settings-page-account').hidden).toBe(false);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(true);
-    // 方向键右移
+    // 方向键右移：0.6.4 起 CalDAV 之后是 AI
     tabs[1].focus();
     tabs[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     expect(tabs[2].getAttribute('aria-selected')).toBe('true');
-    expect(dialog.querySelector('#settings-page-account').hidden).toBe(false);
+    expect(dialog.querySelector('#settings-page-ai').hidden).toBe(false);
   });
 
   it('一般页：不再显示默认提醒项（#16 提醒已移除）', () => {
@@ -239,7 +243,8 @@ describe('设置对话框', () => {
 
   it('CalDAV 账户页只保留地址；显示名/改密/登录状态已移到账号菜单（0.2.2 ⑦）', () => {
     opened = openAccountDialog({ user: { username: 'alice', displayName: 'Alice', role: 'user' }, store });
-    [...opened.dialog.querySelectorAll('[role="tab"]')][2].click();
+    // 0.6.4：页签 5→4，CalDAV 现在是第 2 枚。
+    [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
     const page = opened.dialog.querySelector('#settings-page-account');
     expect(page.querySelector('input[readonly]')).toBeTruthy();
     expect(page.querySelector('input[name="current-password"]')).toBeNull();
@@ -252,7 +257,8 @@ describe('设置对话框', () => {
     const writeText = vi.fn(async () => {});
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
-    [...opened.dialog.querySelectorAll('[role="tab"]')][2].click();
+    // 0.6.4：页签 5→4，CalDAV 现在是第 2 枚。
+    [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
     const page = opened.dialog.querySelector('#settings-page-account');
     const inputs = [...page.querySelectorAll('.settings__inline .input')];
     const address = inputs[inputs.length - 1];
@@ -270,13 +276,19 @@ describe('设置对话框', () => {
       user: { username: 'admin', displayName: '管理员', role: 'admin' },
       store,
     });
-    [...opened.dialog.querySelectorAll('[role="tab"]')][2].click();
+    [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
     const adminPage = opened.dialog.querySelector('#settings-page-account');
-    expect(adminPage.textContent).toContain('管理员');
+    // 0.6.4（用户 m00800）：页首头像/显示名小块删除，页内不再出现「管理员」字样。
+    expect(adminPage.textContent).not.toContain('管理员');
+    expect(adminPage.querySelector('.settings__account')).toBeNull();
     const adminButtons = [...adminPage.querySelectorAll('button')].map((b) => b.textContent);
     // 0.2.19（D4）：账号管理唯一入口 = 头像菜单，设置页这个按钮删掉
     expect(adminButtons).not.toContain('账号管理');
-    expect(adminButtons).toEqual(['复制', '修复为可读写', '导出诊断包']);
+    // 0.6.4（用户 m00800）：日历表格并入本页，按钮里还有编辑/删除/导出与日历名快捷项；
+    // 这里只钉地址区两枚与「导出诊断包」的去向（m00854 起在管理员安全设置 ④ 审计页）。
+    expect(adminButtons).toContain('复制');
+    expect(adminButtons).toContain('修复为可读写');
+    expect(adminButtons).not.toContain('导出诊断包');
     // 0.2.15 D2（用户原话「用户账户里面的安全设置本身也不需要了」）
     expect(adminButtons).not.toContain('安全设置');
     expect(adminPage.textContent).not.toContain('我的安全');
@@ -284,7 +296,7 @@ describe('设置对话框', () => {
 
     opened.close();
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
-    [...opened.dialog.querySelectorAll('[role="tab"]')][2].click();
+    [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
     const userPage = opened.dialog.querySelector('#settings-page-account');
     expect(userPage.textContent).not.toContain('账号管理');
     expect(userPage.textContent).not.toContain('安全设置');
@@ -294,7 +306,8 @@ describe('设置对话框', () => {
   it('日历表格（1-6 结构）：工具条固定、右侧「共 N 个项目」、无底部计数行', () => {
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
-    const page = opened.dialog.querySelector('#settings-page-calendar');
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页；表格节点仍在，位于 CalDAV 页最上面。
+    const page = opened.dialog.querySelector('#settings-page-account');
     const toolbar = [...page.querySelectorAll('.cal-table__toolbar button')].map((b) => b.textContent);
     // 编辑/删除/导出在左，计数与刷新在右（同一工具条，不随表格滚动）。
     expect(toolbar.slice(0, 3)).toEqual(['编辑', '删除', '导出']);
@@ -315,7 +328,8 @@ describe('设置对话框', () => {
   it('0.2.10（1-17）：系统日历「不可见」禁用、自定义日历仍三态、有权限说明', () => {
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
-    const page = opened.dialog.querySelector('#settings-page-calendar');
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页；表格节点仍在，位于 CalDAV 页最上面。
+    const page = opened.dialog.querySelector('#settings-page-account');
     const rows = [...page.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')];
     const byId = {};
     for (const row of rows) {
@@ -337,7 +351,8 @@ describe('设置对话框', () => {
   it('日历表格：勾选先暂存，点「应用」才批量保存（#6）', async () => {
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
-    const page = opened.dialog.querySelector('#settings-page-calendar');
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页；表格节点仍在，位于 CalDAV 页最上面。
+    const page = opened.dialog.querySelector('#settings-page-account');
     const apply = [...opened.dialog.querySelectorAll('.modal__foot button')].find((b) => b.textContent === '应用');
     expect(apply.disabled).toBe(true);
     const firstCheck = page.querySelector('.cal-table__row:not(.cal-table__row--head) .cal-table__checkbox');

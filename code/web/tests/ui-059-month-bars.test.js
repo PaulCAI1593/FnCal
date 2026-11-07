@@ -112,24 +112,31 @@ describe('0.5.9 S2 手机月视图：长条不折叠、单日仍 2 条上限、�
   });
 });
 
-describe('0.5.9 S3（B-07）：打开下载页任何状态都可点', () => {
-  it('链接设置集中在一处：href 优先 detail.url，否则按当前源回落 FALLBACK_URLS', () => {
-    expect(updateJs).toMatch(/function setOpenLink\(url\)/);
-    expect(updateJs).toMatch(/setOpenLink\(detail\.url \|\| FALLBACK_URLS\[via\]\)/);
-    expect(updateJs).toContain("openEl.setAttribute('target', '_blank')");
-    expect(updateJs).toContain("openEl.setAttribute('rel', 'noopener noreferrer')");
+describe('0.6.8 两源：下载入口按真实来源生成', () => {
+  /* 0.6.8 起（用户「gitee、github 就两个源」）：旧的 B-07「任何状态都可点、按当前源回落」
+   * 作废 —— 没有结果时不再拼地址，避免出现指向 404 的空按钮。这里改锁新事实。 */
+  it('入口集中在一处：按 sources[] 生成，assetUrl 优先、否则 releaseUrl', () => {
+    expect(updateJs).toMatch(/function buildSourceLinks\(sources\)/);
+    expect(updateJs).toMatch(/href: item\.assetUrl \|\| item\.releaseUrl/);
+    expect(updateJs).toContain("target: '_blank'");
+    expect(updateJs).toContain("rel: 'noopener noreferrer'");
+    expect(updateJs).not.toMatch(/FALLBACK_URLS/);
+    expect(updateJs).not.toMatch(/gh-proxy/);
   });
 
-  it('检查中也可点：按用户当前选的源回落', () => {
-    expect(updateJs).toMatch(/setOpenLink\(FALLBACK_URLS\[currentVia\]\)/);
-    expect(updateJs).toMatch(/const currentVia = source === 'github' \? 'github' : 'mirror'/);
+  it('Gitee 排在前、文案标国内更快；只有 GitHub 时不出现空的 Gitee 按钮', () => {
+    expect(updateJs).toMatch(/left\.name === 'gitee' \? -1/);
+    expect(updateJs).toContain("t('update.open.gitee')");
+    expect(updateJs).toContain("t('update.open.github')");
+    expect(updateJs).toMatch(/paintSources\(\[\]\)/);
   });
 
-  it('失败且结果没带 via 时，也按当前源回落（不默认 mirror）', () => {
-    expect(updateJs).toMatch(/detail\.via === 'github' \|\| \(!detail\.via && source === 'github'\)/);
+  it('没有结果时整行隐藏（检查中 / 失败 / sources 为空）', () => {
+    expect(updateJs).toMatch(/sourcesRow\.setAttribute\('hidden', 'hidden'\)/);
+    expect(updateJs).toMatch(/sourcesRow\.removeAttribute\('hidden'\)/);
   });
 
-  it('状态文案与检查逻辑不动（只改链接可用性）', () => {
+  it('状态文案与检查逻辑不动', () => {
     expect(updateJs).toContain("t('update.upToDate')");
     expect(updateJs).toContain("t('update.failed')");
     expect(updateJs).toContain("t('update.rateLimited')");
@@ -160,13 +167,15 @@ describe('0.5.9 S4：大屏看得见的信息，手机也要看得见（不许�
     // 旗子 + 全名」口径作废——节日名与农历共用日号行左侧，日号仍靠右。
     // 0.5.11（用户 m02171）：节日名一律不显示省略号，窄格先缩字号、再减到 1 个完整汉字。
     expect(bigBlock).toMatch(/\.month__dayhead {[^}]*flex-wrap:\s*nowrap/);
-    expect(bigBlock).toMatch(/\.month__holiday {[^}]*flex:\s*0 1 auto/);
+    // 0.5.18（W3）口径变更：承载盒宽度由 month.js 写成「自然宽 × scale」（布局宽 = 视觉宽），
+    // 所以承载盒不能再参与 flex 收缩（旧 flex: 0 1 auto / 1 1 auto 会把盒压窄 → 末字被裁）。
+    expect(bigBlock).toMatch(/\.month__holiday {[^}]*flex:\s*0 0 auto/);
     expect(bigBlock).toMatch(/\.month__holiday-icon {\s*display:\s*none;/);
     expect(bigBlock).toMatch(/\.month__holiday-name {[^}]*text-overflow:\s*clip/);
     expect(bigBlock).not.toMatch(/\.month__holiday-name {[^}]*text-overflow:\s*ellipsis/);
     expect(bigBlock).toMatch(/\.month__holiday-name {[^}]*white-space:\s*nowrap/);
-    // 农历并进日号行（左），日号行仍是整格宽、只有一行
-    expect(bigBlock).toMatch(/\.month__lunar--inline {[^}]*flex:\s*1 1 auto/);
+    // 农历并进日号行（左），日号行仍是整格宽、只有一行；同样不收缩
+    expect(bigBlock).toMatch(/\.month__lunar--inline {[^}]*flex:\s*0 0 auto/);
     expect(bigBlock).toMatch(/\.month__dayhead {[^}]*width:\s*100%[^}]*max-width:\s*100%/);
   });
 
@@ -263,5 +272,115 @@ describe('0.5.9（F1/F2）：手机档时间显示不被切字、不在词内断
     expect(monthJs).toMatch(/const compactChip = isCompactScreen\(\);/);
     expect(agendaJs).toMatch(/if \(isCompactAgenda\(\) && !event\.allDay\)/);
     expect(agendaJs).toMatch(/function isCompactAgenda\(\) \{[\s\S]{0,260}max-width: 520px/);
+  });
+});
+
+/* ------------------------------------------------------- 0.5.18 W2 */
+
+describe('0.5.18 / 0.5.21 W2：跨天条名称按整条展开，末端才省略', () => {
+  const compactCss = mediaBlock(viewsCss, '@media (max-width: 520px) {', '.chip--span-start');
+
+  it('承担标题的段各带一个标记：桌面 data-bar-label、≤520 data-bar-seg + 全名', () => {
+    // showTitle = showLabel || ends.contBefore：标题只渲染一次（首段或行首段）。
+    expect(monthJs).toMatch(/const showTitle = showLabel \|\| ends\.contBefore;/);
+    // 桌面保留 0.5.18 的 max-width 路径；≤520 改成网格级标签层，段上只带全名。
+    expect(monthJs).toMatch(/span && showTitle && !compactChip \? \{ barLabel: '1' \} : \{\}\)/);
+    expect(monthJs).toMatch(/span && compactChip \? \{ barSeg: '1', barTitle: chipTitle \} : \{\}\)/);
+    expect(monthJs.match(/barLabel: '1'/g)).toHaveLength(1);
+  });
+
+  it('桌面几何第二遍：标题右界取本行最后一段的右缘，只写 max-width', () => {
+    expect(monthJs).toMatch(/if \(bar\.dataset\.barLabel === '1'\) rowLabelBars\.push\(\{ bar, lastBox \}\);/);
+    // 所有段宽写完后再量标题左缘（顺序不能反：先量会拿到旧布局）
+    const pushAt = monthJs.indexOf('rowLabelBars.push(');
+    const writeAt = monthJs.indexOf("title.style.maxWidth = `${Math.max(0, right - titleLeft).toFixed(1)}px`;");
+    expect(pushAt).toBeGreaterThan(-1);
+    expect(writeAt).toBeGreaterThan(pushAt);
+    expect(monthJs).toMatch(/title\.style\.removeProperty\('max-width'\);/);
+    expect(monthJs).toMatch(/const right = origin \+ entry\.lastBox\.left \+ entry\.lastBox\.width;/);
+    // 不改列宽口径、不把段改成绝对定位：段只写 marginLeft/width/圆角
+    expect(monthJs).not.toMatch(/bar\.style\.position\s*=/);
+  });
+
+  it('CSS：桌面旧规则保留；手机档改用标签层（0.6.2 起规则提到全局）', () => {
+    // 桌面名称靠 data-bar-label + 整条右缘的 max-width 伸到后续段之上；
+    // 0.6.2 把这条规则从 520 媒体块提到全局——手机档不再给标题挂 data-bar-label
+    // （改用 .month__bar-labels 逐行段画），规则留在媒体块里手机/桌面都读不到。
+    expect(viewsCss).toMatch(
+      /\.chip\[data-bar-label='1'\] \{[^}]*position:\s*relative;[^}]*z-index:\s*2;[^}]*overflow:\s*visible;/
+    );
+    expect(viewsCss).toMatch(
+      /\.chip\[data-bar-label='1'\] \.chip__title \{[^}]*flex:\s*0 0 auto;[^}]*width:\s*max-content;[^}]*max-width:\s*100%;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/
+    );
+    // 标题伸到后续段之上，但不能吃掉后续段的点击/长按/拖拽命中区
+    expect(viewsCss).toMatch(/\.chip\[data-bar-label='1'\] \.chip__title \{[^}]*pointer-events:\s*none;/);
+    // 旧选择器（.chip--bar-label）从不匹配 data-bar-label，必须彻底消失
+    expect(viewsCss).not.toContain('.chip--bar-label');
+    // 手机档的段不带 data-bar-label，只带 barSeg + 全名
+    expect(monthJs).toMatch(/span && showTitle && !compactChip \? \{ barLabel: '1' \} : \{\}\)/);
+    expect(monthJs).toMatch(/span && compactChip \? \{ barSeg: '1', barTitle: chipTitle \} : \{\}\)/);
+  });
+
+  it('段间无断口、命中区不变：段宽/边距仍由 monthBarBoxes 一套几何写', () => {
+    expect(compactCss).toMatch(/\.month__events \{[\s\S]{0,180}flex-direction: column;[\s\S]{0,180}overflow: visible;/);
+    // 跨天段仍是块级命中区（标题 pointer-events:none 只是让点击穿透到段本身）
+    expect(compactCss).toMatch(/\.chip \{[\s\S]{0,220}border-radius: var\(--r-xs\);/);
+    expect(monthJs).toMatch(/bar\.style\.marginLeft = `\$\{delta\}px`;/);
+    expect(monthJs).toMatch(/bar\.style\.width = `\$\{Math\.max\(0, box\.width\)\}px`;/);
+  });
+});
+
+/* ------------------------------------------------------- 0.5.21 W2 */
+
+describe('0.6.2 W2：每个行段各自显示名称，多窄都渲染（1 个字 + …）', () => {
+  const layerCss = mediaBlock(viewsCss, '@media (max-width: 520px) {', '.month__bar-labels');
+
+  it('每个行内段各挂一次名称：不再全局挑「最宽的一段」', () => {
+    expect(monthJs).toMatch(/function applyRowBarLabels\(gridEl, gridRect, runs\)/);
+    // 重算时先删旧层，避免叠出第二份名称
+    expect(monthJs).toMatch(/gridEl\.querySelector\('\.month__bar-labels'\)[\s\S]{0,60}previous\.remove\(\)/);
+    expect(monthJs.match(/class: 'month__bar-label'/g)).toHaveLength(1);
+    // 循环在 runs 上逐个建标签：没有 chosen/最段选择
+    expect(monthJs).toMatch(/for \(const run of runs\) \{/);
+    expect(monthJs).not.toMatch(/chosen\.get\(run\.key\)/);
+    // 标签层在行循环之后按整页 runs 建
+    const callAt = monthJs.indexOf('if (compact) applyRowBarLabels(gridEl, gridRect, barRuns);');
+    const pushAt = monthJs.indexOf('barRuns.push(...rowRuns);');
+    expect(callAt).toBeGreaterThan(pushAt);
+  });
+
+  it('行内段按「同事件 + 相邻日号」合并，跨行不会被拼成一段', () => {
+    expect(monthJs).toMatch(/run\.endDay \+ 1 !== dayIndex/);
+    expect(monthJs).toMatch(/rowRunByKey\.get\(key\)/);
+  });
+
+  it('不设整名门槛：宽度多小都渲染，由省略号收成「1 个字 + …」', () => {
+    // 不再用 max-content 量自然宽、也不再因放不下把标签移出 DOM
+    expect(monthJs).not.toMatch(/label\.style\.width = 'max-content';/);
+    expect(monthJs).not.toMatch(/const natural = label\.scrollWidth/);
+    expect(monthJs).not.toMatch(/if \(natural > avail \+ 0\.5\)/);
+    // 宽度 = 本段标题起点 → 本行最后一段右缘（行末「>」再留 12px）
+    expect(monthJs).toMatch(/const tail = lastBar\.classList\.contains\('chip--cont-after'\) \? 12 : 0;/);
+    expect(monthJs).toMatch(/const avail = Math\.max\(0, run\.right - tail - left\);/);
+    expect(monthJs).toMatch(/label\.style\.width = `\$\{avail\.toFixed\(1\)\}px`;/);
+    // 位置相对网格；字体从段内标题复制，保证与原 chip 一致
+    expect(monthJs).toMatch(/left - gridRect\.left/);
+    expect(monthJs).toMatch(/label\.style\.fontSize = style\.fontSize;/);
+  });
+
+  it('不再隐藏整段标题，也不整段隐藏时间（只留零宽占位避免重画）', () => {
+    expect(monthJs).not.toMatch(/visibility = 'hidden'/);
+    expect(monthJs).not.toMatch(/time\.style\.display = 'none'/);
+    expect(monthJs).toMatch(/title\.textContent = '\\u200b';/);
+    expect(monthJs).toMatch(/title\.setAttribute\('aria-hidden', 'true'\);/);
+  });
+
+  it('CSS：网格是定位容器；标签层绝对铺满、不吃指针事件，单条超长在末端省略', () => {
+    expect(viewsCss).toMatch(/\.month__grid \{[^}]*position:\s*relative;/);
+    expect(layerCss).toBeTruthy();
+    expect(layerCss).toMatch(/\.month__bar-labels \{[^}]*position:\s*absolute;[^}]*inset:\s*0;[^}]*z-index:\s*3;[^}]*pointer-events:\s*none;/);
+    expect(layerCss).toMatch(
+      /\.month__bar-label \{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;[^}]*pointer-events:\s*none;/
+    );
   });
 });

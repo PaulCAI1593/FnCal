@@ -450,10 +450,12 @@ describe('0.2.23 H4 前端构建指纹自证', () => {
     expect(accountDialogJs).toContain("t('settings.needReload')");
     expect(i18n).not.toContain("'settings.build'");
     expect(i18n).toContain("'settings.needReload'");
-    const about = rule(calendarCss, '.settings__about');
-    expect(about).toContain('flex-direction: column');
-    expect(about).toContain('align-items: flex-end');
-    expect(rule(calendarCss, '.settings__about .settings__version')).toContain('margin-left: 0');
+    // 0.5.22：页脚关于区由「右对齐单行版本号」改为按钮行左侧两行小块，
+    // 版本号仍是单独一行、链接仍在其下一行——断言随结构改写，不是放宽。
+    const meta = rule(calendarCss, '.settings__foot-meta');
+    expect(meta).toContain('flex-direction: column');
+    expect(meta).toContain('align-items: flex-start');
+    expect(rule(calendarCss, '.settings__foot-meta .settings__version')).toContain('margin-left: 0');
     expect(calendarCss).not.toContain('.settings__build');
   });
 

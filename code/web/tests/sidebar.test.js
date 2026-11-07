@@ -69,9 +69,10 @@ describe('sidebar — mini calendar states', () => {
     const node = renderSidebar(ctx);
     const current = [...node.querySelectorAll('[aria-current="date"]')];
     expect(current).toHaveLength(1);
-    expect(current[0].textContent).toBe('20');
+    // 0.6.6 起：迷你格多了一行副文字（节日 > 节气 > 农历），日号本身仍在 .mini__num。
+    expect(current[0].querySelector('.mini__num').textContent).toBe('20');
     const selected = node.querySelector('.mini__cell.is-selected, .is-selected');
-    expect(selected.textContent).toBe('8');
+    expect(selected.querySelector('.mini__num').textContent).toBe('8');
     expect(selected.getAttribute('aria-label')).toMatch(/已选中$/);
     expect(selected.hasAttribute('aria-current')).toBe(false);
   });

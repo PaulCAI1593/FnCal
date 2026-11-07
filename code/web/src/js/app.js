@@ -13,6 +13,9 @@ import { getProfile } from './api-client.js';
 import { clearSnapshot } from './offline-store.js';
 import { isBlocked, isOfflineError } from './offline.js';
 import { createEventModal } from './modal.js';
+// 0.5.16：键盘弹出把布局视口压矮会触发 window resize；此时重建视图会让月视图重排
+// 一帧，看起来就是「抖一下」。守卫要用焦点信号（比 resize 早）判断。
+import { keyboardState, isEditableFocused, onKeyboardChange } from './keyboard-inset.js';
 import { createSearch, attachSearchClear } from './search.js';
 // 0.2.40：日期弹层挂在 document.body 下（不在搜索条 DOM 子树里），常驻搜索条的
 // 「点外面就收起」判定必须显式问它，否则在弹层里点日期会被当成点外面。
@@ -104,6 +107,13 @@ export function createApp(root, { store, user }) {
   };
 
   applyTheme(store.getSettings().theme);
+
+  // 0.3.0（§A3）：桌面卡片点进来时带 `#fncal-view=month&fncal-date=2026-11-07`。
+  // 只改这一次显示的视图与日期，不写 defaultView——点卡片看某天，不该改用户的默认视图。
+  applyViewHash(state, window.location.hash);
+  window.addEventListener('hashchange', () => {
+    if (applyViewHash(state, window.location.hash)) render();
+  });
 
   // No `onChange` render hook: every store mutation emit()s and the subscription
   // below re-renders, so passing render here too would fire a second, redundant
@@ -213,6 +223,28 @@ export function createApp(root, { store, user }) {
       Promise.resolve(store.saveSettings({ hiddenColors: [] })).catch(
         reportWriteFailure(t('app.error.updateCategoryFilter')),
       );
+    },
+    // 0.5.19：日历可见性有两个落点——显式集合 `visibleCalendarIds` 与各日历
+    // 自身的 `visible`。集合只要非空就「显式集合优先」，日历自己的 visible 被
+    // 完全盖住，所以先清集合，再逐个打开仍被自己的 visible 关掉的日历。
+    // 空态里把日历全关掉时，只有这一条能让事件回来。
+    showAllCalendars: () => {
+      const run = async () => {
+        if ((store.getSettings().visibleCalendarIds || []).length) {
+          await store.saveSettings({ visibleCalendarIds: [] });
+        }
+        for (const cal of store.getCalendars()) {
+          if (!store.isCalendarVisible(cal.id)) await store.setCalendarVisible(cal.id, true);
+        }
+      };
+      Promise.resolve(run()).catch(
+        reportWriteFailure(t('app.error.updateCategoryFilter')),
+      );
+    },
+    // 空态按钮的唯一入口：按被隐藏的原因清对应的筛选，两种都有就都清。
+    showHiddenFilters: (hidden) => {
+      if (hidden && hidden.byColor > 0) actions.showAllCategories();
+      if (hidden && hidden.byCalendar > 0) actions.showAllCalendars();
     },
     // ---- 0.2.1 多日历（侧栏「日历」区块与 ⋯ 菜单，#10–#12） ----
     calendarAddMenu: (evt) =>
@@ -945,24 +977,8 @@ export function createApp(root, { store, user }) {
   });
 
   // 0.1.2：账号与设置入口；0.2.0（B3）扩展为「一般 / 日历 / CalDAV 账户」三页。
-  // 0.5.3（S4）：≤520 顶栏空间不足，齿轮按钮由 CSS 隐藏（`.header__settings`），
-  // 同一个打开动作同时挂到头像菜单的「设置」项，窄屏仍能进设置；宽屏齿轮还在，
-  // 菜单不重复这一项（菜单项数量与顺序因此仍按宽屏口径）。
-  const narrowHeaderQuery = window.matchMedia ? window.matchMedia('(max-width: 520px)') : null;
-  const settingsEntry = () =>
-    narrowHeaderQuery && narrowHeaderQuery.matches
-      ? el('button', {
-          class: 'menu-item popover__settings',
-          type: 'button',
-          html: icon('settings', { size: 'sm' }) + `<span>${t('toolbar.settings')}</span>`,
-          on: {
-            click: () => {
-              closeUserMenu();
-              openSettings();
-            },
-          },
-        })
-      : null;
+  // 0.6.3（用户）：手机顶栏放得下设置图标了，齿轮全档常驻、头像菜单不再有「设置」项。
+  // 0.5.3（S4）的「≤520 隐齿轮 + 菜单补一项」双入口随之删除，避免同一动作两处出现。
   const openSettings = () =>
     openAccountDialog({
       user,
@@ -1895,8 +1911,7 @@ export function createApp(root, { store, user }) {
           },
         },
       }),
-      // 0.5.3（S4）：≤520 顶栏齿轮隐藏后从头像菜单进设置（宽屏为 null，不占位）。
-      settingsEntry(),
+      // 0.6.3（用户）：设置入口只在顶栏齿轮，菜单不再重复这一项。
       // 0.4.14（M22 §1，用户 2026-11-04）：「立即同步」之后、「登出」之前。
       // 点开只打开弹窗（弹窗内自己检查），这里不改菜单其他项。
       el('button', {
@@ -2230,6 +2245,20 @@ export function createApp(root, { store, user }) {
   };
   const unsubDragEnd = onDragEnd(flushPending);
   const unsubMenuClose = onContextMenuClose(flushPending);
+  // 0.5.16：键盘开合期间推迟的重建，在键盘收起（或输入框失焦）后补一次。
+  // 用 requestAnimationFrame 落帧，让 layout.css 的 --app-h / --app-shift 先复位。
+  const flushAfterKeyboard = () => {
+    if (!renderPending) return;
+    requestAnimationFrame(() => {
+      if (keyboardHoldsLayout()) return;
+      flushPending();
+    });
+  };
+  const unsubKeyboard = onKeyboardChange((next) => {
+    if (!next.open) flushAfterKeyboard();
+  });
+  const onFocusOutForRender = () => flushAfterKeyboard();
+  document.addEventListener('focusout', onFocusOutForRender, true);
   document.addEventListener('keydown', onKeydown);
 
   // A re-render clears and rebuilds the view; doing so mid-drag would detach the
@@ -2242,8 +2271,19 @@ export function createApp(root, { store, user }) {
   });
 
   let resizeRaf = null;
+  // 0.5.16：键盘引起的 resize 不能重建视图。安卓上键盘弹出时布局视口先矮一帧，
+  // resize 一到就重建月视图，格子按临时高度重排一次再恢复——用户看到的就是抖动。
+  // 判据用「键盘已打开」或「焦点在可输入控件上」（后者在键盘打开前就成立）。
+  const keyboardHoldsLayout = () => {
+    const kb = keyboardState();
+    return Boolean(kb.available) && (kb.open || isEditableFocused());
+  };
   const onResize = () => {
     if (isDragging()) return;
+    if (keyboardHoldsLayout()) {
+      renderPending = true;
+      return;
+    }
     // The account popover is anchored to the avatar's rect at open time; a resize
     // would leave it floating out of place, so dismiss it (mirrors the context
     // menu, which closes on resize).
@@ -2256,6 +2296,12 @@ export function createApp(root, { store, user }) {
     // 菜单开着时不重建视图（推迟到它自己关闭后由 flushPending 补一次），让
     // context-menu 的 resize 护栏去判断「是不是真的变尺寸」。
     resizeRaf = requestAnimationFrame(() => {
+      // 键盘开合的 rAF 排在 resize 队列里更早的位置：到这里 keyboardState() 已是
+      // 最新值。键盘打开/焦点在输入框时不重建，等收起后由 flushAfterKeyboard 补。
+      if (keyboardHoldsLayout()) {
+        renderPending = true;
+        return;
+      }
       if (isContextMenuOpen()) {
         renderPending = true;
         return;
@@ -2316,6 +2362,8 @@ export function createApp(root, { store, user }) {
       unsub();
       unsubDragEnd();
       unsubMenuClose();
+      unsubKeyboard();
+      document.removeEventListener('focusout', onFocusOutForRender, true);
       clearInterval(tick);
       if (resizeRaf) cancelAnimationFrame(resizeRaf);
       document.removeEventListener('keydown', onKeydown);
@@ -2335,6 +2383,43 @@ export function createApp(root, { store, user }) {
 
 function normalizeView(v) {
   return VIEWS.some((x) => x.key === v) ? v : 'week';
+}
+
+/**
+ * 0.3.0（§A3）：解析桌面卡片深链，只对这一次生效。
+ *
+ * `#fncal-view=month&fncal-date=2026-11-07`；参数缺省或非法就保持当前状态。
+ * 不调用 saveSettings({defaultView})：卡片只是打开某个视图/日期，不是改偏好。
+ */
+export function applyViewHash(target, hash) {
+  const raw = String(hash || '').replace(/^#/, '');
+  if (!raw) return false;
+  let params;
+  try {
+    params = new URLSearchParams(raw);
+  } catch (e) {
+    return false;
+  }
+  let changed = false;
+  const view = params.get('fncal-view');
+  if (view && VIEWS.some((v) => v.key === view)) {
+    target.view = view;
+    changed = true;
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(params.get('fncal-date') || '');
+  if (match) {
+    const day = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    // 2 月 31 日这类会被 Date 顺延；回读三段确认用户给的确实是合法日期。
+    const valid = day.getFullYear() === Number(match[1])
+      && day.getMonth() === Number(match[2]) - 1
+      && day.getDate() === Number(match[3]);
+    if (valid) {
+      target.cursor = startOfDay(day);
+      target.miniCursor = startOfMonth(day);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function tabIcon(key) {

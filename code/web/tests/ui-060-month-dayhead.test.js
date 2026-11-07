@@ -4,8 +4,10 @@
  *      的节日名（无旗子），单行不换行；
  *   S2 事件区（chip / 跨天长条 /「还有 N 个」）顶边不得被农历行拉上去（不给
  *      `.month__events` 加负 margin）；
- *   S3 ≤520 空白格**短按什么都不做**、长按 ≥500ms 且位移 <8px 才弹两项菜单
- *      （新建事件 / 新建任务，没有「新建全天事件」）；桌面点格子与右键不变。
+ *   S3 ≤520 空白格**短按直接新建事件**（0.5.17 用户 2026-11-07：「手机月视图短按
+ *      直接弹出新建事件窗口，和其他端操作逻辑上一致」），长按 ≥500ms 且位移 <8px
+ *      仍弹两项菜单（新建事件 / 新建任务，没有「新建全天事件」）；一次手势只出一
+ *      个结果；桌面点格子与右键不变。
  *
  * 断言取向：S1/S2 看渲染出的 DOM 与 ≤520 CSS 段；S3 用 jsdom 指针事件 + 假计时器
  * 验证短按 / 长按 / 位移超限 / 日号 / 桌面五条路径。
@@ -223,7 +225,7 @@ describe('0.5.10 S1：≤520 农历与日号同一行；节日只留名字', () 
     }
   });
 
-  it('CSS：≤520 日号行 nowrap + 节日名省略、旗子隐藏；农历内层按 0.8 基准缩放', () => {
+  it('CSS：≤520 日号行 nowrap；农历与节日名共用 10px 基准 + --dayhead-scale；承载盒不再参与 flex 收缩', () => {
     const block = mediaBlock(viewsCss, '@media (max-width: 520px) {', '.month__dayhead');
     expect(block).toMatch(/\.month__dayhead \{[\s\S]*?flex-wrap: nowrap/);
     expect(block).toMatch(/\.month__dayhead \{[\s\S]*?width: 100%/);
@@ -231,11 +233,23 @@ describe('0.5.10 S1：≤520 农历与日号同一行；节日只留名字', () 
     // 0.5.11（用户）：「节日名一律不显示省略号」——手机档节日名改为 clip，不再画「…」。
     expect(block).toMatch(/\.month__holiday-name \{[\s\S]*?text-overflow: clip/);
     expect(block).toMatch(/\.month__holiday-name \{[\s\S]*?white-space: nowrap/);
-    // S1 细则：节日名与农历都不许折行；节日名也按实测比例缩放（基准 1、下限由 JS 钳）。
-    expect(block).toMatch(/\.month__holiday-name \{[\s\S]*?transform: scale\(var\(--holiday-scale, 1\)\)/);
-    expect(block).toMatch(/\.month__lunar--inline \{[\s\S]*?flex: 1 1 auto/);
+    // 0.5.18（W3）口径变更：旧的两套变量（农历 12px×--lunar-scale 0.8、节日 10px×--holiday-scale 1）
+    // 让同一格的农历与节日字号对不上（用户：字体不统一）。改为统一 10px 基准 + 同一个 --dayhead-scale，
+    // 由 month.js 一格写一个值。旧变量在手机档必须彻底消失，防止两套口径并存再次漂移。
+    expect(block).toMatch(
+      /\.month__holiday-name \{[\s\S]*?font-size: 10px[\s\S]*?transform: scale\(var\(--dayhead-scale, 1\)\)/
+    );
+    expect(block).toMatch(
+      /\.month__lunar-text \{[\s\S]*?font-size: 10px[\s\S]*?transform: scale\(var\(--dayhead-scale, 1\)\)/
+    );
+    expect(block).not.toMatch(/--holiday-scale/);
+    expect(block).not.toMatch(/--lunar-scale/);
+    // 0.5.18（W3）：承载盒宽度由 JS 写成「自然宽 × scale」（布局宽 = 视觉宽）。
+    // 若承载盒仍可被 flex 压窄（旧 flex: 0 1 auto / 1 1 auto），布局宽会小于视觉宽 → 末字被裁，
+    // 所以两处都必须是 0 0 auto（不放大、不收缩）。
+    expect(block).toMatch(/\.month__holiday \{[\s\S]*?flex: 0 0 auto/);
+    expect(block).toMatch(/\.month__lunar--inline \{[\s\S]*?flex: 0 0 auto/);
     expect(block).toMatch(/\.month__lunar-text \{[\s\S]*?white-space: nowrap/);
-    expect(block).toMatch(/scale\(var\(--lunar-scale, 0\.8\)\)/);
     // 旧 hack（内层 width:125%）撤掉：缩放比改由 JS 用实测宽度写，自然宽直接可量。
     expect(block).not.toMatch(/\.month__lunar--inline \.month__lunar-text \{[^}]*width: 125%/);
     expect(block).toMatch(/\.month__lunar--inline \.month__lunar-text \{[\s\S]*?flex: 0 0 auto/);
@@ -279,82 +293,203 @@ function stubHeadGeometry(head, daynum, label, { headW, numW, naturalW }) {
 }
 
 describe('0.5.10 S1 细则：窄格优先缩字号（不折行、不省略）', () => {
-  it('农历：按实测可用宽写 --lunar-scale（基准 0.8，窄档更小）', () => {
+  it('农历：按实测可用宽写 --dayhead-scale，并把「自然宽 × scale」写进承载盒', () => {
     const { node, restore, afterMount } = render();
     try {
       const cell = cellAt(node, 8);
       const head = cell.querySelector('.month__dayhead');
+      const host = head.querySelector('.month__lunar--inline');
       const label = head.querySelector('.month__lunar--inline .month__lunar-text');
       const daynum = head.querySelector('.month__daynum');
-      // 45.7 − 14 − 2 = 29.7 可用；自然宽 48 → 0.619（小于基准 0.8）
+      // 45.7 − 14 − 2 = 29.7 可用；扣掉 0.6.7 的 1px 保护边后 28.7，28.7 / 48 = 0.598
       stubHeadGeometry(head, daynum, label, { headW: 45.7, numW: 14, naturalW: 48 });
       afterMount();
-      expect(label.style.getPropertyValue('--lunar-scale')).toBe('0.619');
-      // 更窄的一格必然更小：可用 29.7 / 自然 60 = 0.495 → 触底 0.5，并切到省略模式
+      // 0.5.18（W3）口径变更：scale 写在日号行容器上（一格一个值，农历与节日名共用），
+      // 不再写在文字节点上、也不再分 --lunar-scale / --holiday-scale 两套。
+      expect(head.style.getPropertyValue('--dayhead-scale')).toBe('0.598');
+      expect(label.style.getPropertyValue('--dayhead-scale')).toBe('');
+      // 0.6.10 起（真机 393 DPR 2.75 裁掉末字）：承载盒按**缩放前**的自然宽给宽，
+      // 上限 = 可用宽 ÷ scale；48 自然宽 → min(49, 49) = 49，缩放后 29.3，仍 ≤ 可用 29.7。
+      expect(host.style.width).toBe('49px');
+      expect(Math.abs(parseFloat(host.style.width) * 0.598 - 48 * 0.598)).toBeLessThanOrEqual(2);
+      // 更窄的一格必然更小：可用 28.7 / 自然 60 = 0.478 → 触底 0.5，并切到省略模式
       stubHeadGeometry(head, daynum, label, { headW: 45.7, numW: 14, naturalW: 60 });
       afterMount();
-      expect(label.style.getPropertyValue('--lunar-scale')).toBe('0.500');
+      expect(head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
       expect(label.classList.contains('is-truncated')).toBe(true);
-      expect(label.style.width).toBe('59.4px');
+      // 文字布局宽 = 可用宽 ÷ 0.5，缩放后正好铺满承载盒（28.7/0.5 = 57.4）
+      expect(label.style.width).toBe('57.4px');
+      // 0.6.10 起：承载盒同按缩放前坐标给宽（可用宽 ÷ 0.5 + 1px），否则盒会先把文字裁一刀。
+      expect(host.style.width).toBe('58px');
+      expect(parseFloat(host.style.width) * 0.5).toBeCloseTo(parseFloat(label.style.width) * 0.5, 0);
     } finally {
       restore();
     }
   });
 
-  it('农历：宽格回到基准 0.8，不会被算大', () => {
+  it('农历：宽格不放大（10px 基准，scale 上限 1），不写内联变量与宽度', () => {
     const { node, restore, afterMount } = render();
     try {
       const cell = cellAt(node, 8);
       const head = cell.querySelector('.month__dayhead');
+      const host = head.querySelector('.month__lunar--inline');
       const label = head.querySelector('.month__lunar--inline .month__lunar-text');
       const daynum = head.querySelector('.month__daynum');
-      // 可用 60 / 自然 40 = 1.5，但基准是 0.8
+      // 可用 60、扣保护边后 59 / 自然 40 = 1.475 → 上限 1（0.5.18 起基准是 10px，不再回落到 0.8）
       stubHeadGeometry(head, daynum, label, { headW: 76, numW: 14, naturalW: 40 });
       afterMount();
-      expect(label.style.getPropertyValue('--lunar-scale')).toBe('0.800');
-    } finally {
-      restore();
-    }
-  });
-
-  it('节日名：同样按实测宽缩放（基准 1，下限 0.5，放不下减到 1 个完整汉字）', () => {
-    const { node, restore, afterMount } = render({ events: [holiday('国庆节', 1)] });
-    try {
-      const head = cellAt(node, 1).querySelector('.month__dayhead');
-      const label = head.querySelector('.month__holiday-name');
-      const daynum = head.querySelector('.month__daynum');
-      // 可用 29.7 / 自然 36 = 0.825
-      stubHeadGeometry(head, daynum, label, { headW: 45.7, numW: 14, naturalW: 36 });
-      afterMount();
-      expect(label.style.getPropertyValue('--holiday-scale')).toBe('0.825');
-      expect(label.textContent).toBe('国庆');
-      // 0.5.11（用户）：「节日名一律不显示省略号」——可用 29.7 / 自然 120 = 0.2475
-      // 低于 0.5 下限时不再画省略号，而是减到 1 个完整汉字（单字宽 60 → 0.495）。
-      stubHeadGeometry(head, daynum, label, { headW: 45.7, numW: 14, naturalW: 120 });
-      afterMount();
-      expect(label.textContent).toBe('国');
-      expect(label.style.getPropertyValue('--holiday-scale')).toBe('0.495');
+      expect(head.style.getPropertyValue('--dayhead-scale')).toBe('');
+      // 0.6.7 起：宽格也写承载盒宽 = 自然宽 + 1px 保护边（旧实现到上限不写宽度，
+      // 真机字体略宽时右缘正好压住裁切边）。
+      expect(host.style.width).toBe('41px');
       expect(label.classList.contains('is-truncated')).toBe(false);
     } finally {
       restore();
     }
   });
 
-  it('JS：先缩字号、再交给省略号；无实测宽度（未布局）时不动变量', () => {
+  it('节日名：同样按实测宽缩放（基准 1，下限 0.5；下限仍放不下带省略号）', () => {
+    const { node, restore, afterMount } = render({ events: [holiday('国庆节', 1)] });
+    try {
+      const head = cellAt(node, 1).querySelector('.month__dayhead');
+      const host = head.querySelector('.month__holiday');
+      const label = head.querySelector('.month__holiday-name');
+      const daynum = head.querySelector('.month__daynum');
+      // 可用 29.7、扣保护边后 28.7 / 自然 36 = 0.797
+      stubHeadGeometry(head, daynum, label, { headW: 45.7, numW: 14, naturalW: 36 });
+      afterMount();
+      expect(head.style.getPropertyValue('--dayhead-scale')).toBe('0.797');
+      // 0.6.10 起：承载盒 = min(ceil(36) + 1, 可用宽 ÷ 0.797 + 1) = 37。
+      expect(host.style.width).toBe('37px');
+      expect(label.textContent).toBe('国庆');
+      // 0.6.9 起（用户：390 档「立冬」只显「立」、「小雪」只显「小」）：删掉
+      // 「缩到 0.5 仍放不下就只留 1 个完整汉字、不画省略号」的中间态。可用 28.7 /
+      // 自然 80 = 0.359 低于下限时，文字保持全名、加 is-truncated，宽度写成
+      // 可用宽 ÷ 0.5 = 57.4，缩放后铺满承载盒，最后可见字后面显示省略号。
+      stubHeadGeometry(head, daynum, label, { headW: 45.7, numW: 14, naturalW: 80 });
+      afterMount();
+      expect(label.textContent).toBe('国庆');
+      expect(head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
+      expect(label.classList.contains('is-truncated')).toBe(true);
+      expect(label.style.width).toBe('57.4px');
+      expect(host.style.width).toBe('58px');
+    } finally {
+      restore();
+    }
+  });
+
+  it('JS：同一格的农历与节日名取同一个 scale；无实测宽度（未布局）时不动变量', () => {
+    const { node, restore, afterMount } = render({ events: [holiday('国庆节', 1)] });
+    try {
+      const lunarCell = cellAt(node, 8);
+      const lunarHead = lunarCell.querySelector('.month__dayhead');
+      const lunarText = lunarHead.querySelector('.month__lunar--inline .month__lunar-text');
+      stubHeadGeometry(lunarHead, lunarHead.querySelector('.month__daynum'), lunarText, {
+        headW: 45.7,
+        numW: 14,
+        naturalW: 36,
+      });
+      const holidayHead = cellAt(node, 1).querySelector('.month__dayhead');
+      const holidayText = holidayHead.querySelector('.month__holiday-name');
+      stubHeadGeometry(holidayHead, holidayHead.querySelector('.month__daynum'), holidayText, {
+        headW: 45.7,
+        numW: 14,
+        naturalW: 36,
+      });
+      afterMount();
+      // 同几何、同自然宽 → 两种类型必须同值（用户：农历和节日的字体要统一）
+      expect(lunarHead.style.getPropertyValue('--dayhead-scale')).toBe('0.797');
+      expect(holidayHead.style.getPropertyValue('--dayhead-scale')).toBe(
+        lunarHead.style.getPropertyValue('--dayhead-scale')
+      );
+      // 未布局（headW 0）：早退，不许写任何内联几何
+      stubHeadGeometry(lunarHead, lunarHead.querySelector('.month__daynum'), lunarText, {
+        headW: 0,
+        numW: 14,
+        naturalW: 48,
+      });
+      afterMount();
+      expect(lunarHead.style.getPropertyValue('--dayhead-scale')).toBe('');
+      // 源码层：fitCompactDayheads 只在 compact 里跑；下限 0.5 硬编码；宽度写「自然宽 × scale」
+      expect(monthJs).toMatch(/function fitCompactDayheads\(root\)/);
+      // 0.5.21（W1）：先算整页统一值，再统一写入；不再逐格各用各的 scale。
+      expect(monthJs).toMatch(/const uniform = Math\.min\(/);
+      expect(monthJs).toMatch(/const scale = Math\.max\(0\.5, Math\.min\(1, uniform\)\);/);
+      // 0.6.7 起了 1px 保护边；0.6.10 起承载盒按缩放前的自然宽给宽，上限 = usable ÷ scale。
+      expect(monthJs).toMatch(/Math\.ceil\(entry\.natural\) \+ DAYHEAD_SLACK/);
+      expect(monthJs).toMatch(/Math\.floor\(entry\.usable \/ scale\) \+ DAYHEAD_SLACK/);
+      expect(monthJs).toMatch(/const DAYHEAD_SLACK = 1;/);
+      expect(monthJs).toMatch(/if \(compact\) fitCompactDayheads\(root\);/);
+    } finally {
+      restore();
+    }
+  });
+});
+
+/**
+ * 0.5.21（W1，用户：「月视图的农历字体大小，一页还是没有统一」）：
+ * 一页只用同一个缩放值——取所有可见格「可用宽 / 自然宽」的最小值，上限 1、下限 0.5。
+ */
+describe('0.5.21 W1：整页日号行取同一个缩放值', () => {
+  function headOf(node, day) {
+    const head = cellAt(node, day).querySelector('.month__dayhead');
+    return {
+      head,
+      host: head.querySelector('.month__lunar--inline'),
+      label: head.querySelector('.month__lunar--inline .month__lunar-text'),
+      daynum: head.querySelector('.month__daynum'),
+    };
+  }
+
+  it('统一值取全屏最小值：宽格跟着窄格一起缩，不再出现「1 号大、17 号小」', () => {
     const { node, restore, afterMount } = render();
     try {
-      const cell = cellAt(node, 8);
-      const head = cell.querySelector('.month__dayhead');
-      const label = head.querySelector('.month__lunar--inline .month__lunar-text');
-      const daynum = head.querySelector('.month__daynum');
-      stubHeadGeometry(head, daynum, label, { headW: 0, numW: 14, naturalW: 48 });
+      const narrow = headOf(node, 8); // 可用 28.7（已扣 1px 保护边）/ 自然 48 = 0.598
+      const wide = headOf(node, 17); // 可用 59 / 自然 40 = 1.475（上限）
+      stubHeadGeometry(narrow.head, narrow.daynum, narrow.label, {
+        headW: 45.7,
+        numW: 14,
+        naturalW: 48,
+      });
+      stubHeadGeometry(wide.head, wide.daynum, wide.label, {
+        headW: 76,
+        numW: 14,
+        naturalW: 40,
+      });
       afterMount();
-      expect(label.style.getPropertyValue('--lunar-scale')).toBe('');
-      // 源码层：fitCompactDayheads 只在 compact 里跑，且下限硬编码 0.5
-      expect(monthJs).toMatch(/function fitCompactDayheads\(root\)/);
-      expect(monthJs).toMatch(/const raw = avail \/ natural;/);
-      expect(monthJs).toMatch(/Math\.max\(0\.5, Math\.min\(base, raw\)\)/);
-      expect(monthJs).toMatch(/if \(compact\) fitCompactDayheads\(root\);/);
+      expect(narrow.head.style.getPropertyValue('--dayhead-scale')).toBe('0.598');
+      expect(wide.head.style.getPropertyValue('--dayhead-scale')).toBe('0.598');
+      // 0.6.10 起：承载盒按缩放前的自然宽给宽 = 40 + 1 = 41（视觉宽 41 × 0.598 = 24.5）
+      expect(wide.host.style.width).toBe('41px');
+      expect(wide.label.classList.contains('is-truncated')).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it('统一值到 0.5 仍放不下的格才减字 / 省略，其余格保持 0.5', () => {
+    const { node, restore, afterMount } = render();
+    try {
+      const tooNarrow = headOf(node, 8); // 可用 29.7 / 自然 100 = 0.297 → 触底
+      const normal = headOf(node, 9); // 可用 59.7 / 自然 40 → 本可放大
+      stubHeadGeometry(tooNarrow.head, tooNarrow.daynum, tooNarrow.label, {
+        headW: 45.7,
+        numW: 14,
+        naturalW: 100,
+      });
+      stubHeadGeometry(normal.head, normal.daynum, normal.label, {
+        headW: 75.7,
+        numW: 14,
+        naturalW: 40,
+      });
+      afterMount();
+      // 整页统一 0.500；只有放不下的那一格进入省略模式。
+      expect(tooNarrow.head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
+      expect(tooNarrow.label.classList.contains('is-truncated')).toBe(true);
+      expect(normal.head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
+      expect(normal.label.classList.contains('is-truncated')).toBe(false);
+      // 0.6.10 起：放得下就按缩放前自然宽给盒（40 + 1），不再写 40 × 0.5 + 1。
+      expect(normal.host.style.width).toBe('41px');
     } finally {
       restore();
     }
@@ -385,16 +520,23 @@ describe('0.5.10 S2：事件区顶边不被日号行上提', () => {
 
 /* ------------------------------------------------------------------ S3 */
 
-describe('0.5.10 S3：≤520 空白格短按无操作，长按两项菜单', () => {
-  it('短按：不弹菜单、不新建事件、不跳日视图、不弹 toast', () => {
+describe('0.5.10 S3 / 0.5.17：≤520 空白格短按新建事件，长按两项菜单', () => {
+  // 0.5.17（用户 2026-11-07）：旧断言「≤520 短按什么都不做」是 0.5.10 口径，已被
+  // 用户新要求推翻——短按改为与桌面同一路径 `actions.createAt`。只改这一条断言，
+  // 长按 / 位移 / 日号 / 桌面各条保持原样。
+  it('短按：直接打开新建事件（与桌面同一路径），不弹菜单、不弹 toast', () => {
     const { node, actions, restore } = render();
     try {
       const cell = cellAt(node, 8);
       pointer('pointerdown', cell, { clientX: 40, clientY: 80 });
       pointer('pointerup', cell, { clientX: 40, clientY: 80 });
       cell.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 80 }));
+      expect(actions.createAt).toHaveBeenCalledTimes(1);
+      expect(actions.createAt.mock.calls[0][0]).toEqual({
+        start: startOfDay(new Date(2026, 9, 8)).getTime() + 9 * 3600_000,
+        allDay: false,
+      });
       expect(document.querySelector('.ctx-menu')).toBeNull();
-      expect(actions.createAt).not.toHaveBeenCalled();
       expect(actions.createTask).not.toHaveBeenCalled();
       expect(actions.gotoDayView).not.toHaveBeenCalled();
       expect(mocks.toast).not.toHaveBeenCalled();
@@ -562,5 +704,107 @@ describe('0.5.10 S3：≤520 空白格短按无操作，长按两项菜单', () 
     expect(appJs).not.toContain('newAllDayEvent');
     // 时间网格右键也走同一个槽位动作（改一处两边都两项）
     expect(timegridJs).toMatch(/actions\.slotContextMenu\(e, timeFromPointer/);
+  });
+});
+
+/* ------------------------------------------------ 0.5.17 短按与长按互斥 */
+
+describe('0.5.17：手机短按新建事件，一次手势只出一个结果', () => {
+  it('长按 600ms 开菜单后松手：click 不再打开新建事件（A1-3）', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { node, actions, restore } = render();
+    try {
+      const cell = cellAt(node, 8);
+      pointer('pointerdown', cell, { clientX: 40, clientY: 80 });
+      vi.advanceTimersByTime(600);
+      expect(actions.slotContextMenu).toHaveBeenCalledTimes(1);
+      pointer('pointerup', cell, { clientX: 40, clientY: 80 });
+      cell.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 80 }));
+      expect(actions.createAt).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('原生 contextmenu 开菜单后松手：click 不再打开新建事件（A1-3 系统补发分支）', () => {
+    const { node, actions, restore } = render();
+    try {
+      const cell = cellAt(node, 8);
+      pointer('pointerdown', cell, { clientX: 44, clientY: 90 });
+      cell.dispatchEvent(
+        new window.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 44, clientY: 90 }),
+      );
+      expect(actions.slotContextMenu).toHaveBeenCalledTimes(1);
+      pointer('pointerup', cell, { clientX: 44, clientY: 90 });
+      cell.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientX: 44, clientY: 90 }));
+      expect(actions.createAt).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('位移 20px（滚动 / 横滑）后松手：click 不新建、也不弹菜单（A2-4）', () => {
+    const { node, actions, restore } = render();
+    try {
+      const cell = cellAt(node, 8);
+      pointer('pointerdown', cell, { clientX: 40, clientY: 80 });
+      pointer('pointermove', cell, { clientX: 60, clientY: 80 });
+      pointer('pointerup', cell, { clientX: 60, clientY: 80 });
+      cell.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientX: 60, clientY: 80 }));
+      expect(actions.createAt).not.toHaveBeenCalled();
+      expect(actions.slotContextMenu).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('被吞掉一次后，下一次短按仍能正常新建（抑制只影响当次手势）', () => {
+    const { node, actions, restore } = render();
+    try {
+      const cell = cellAt(node, 8);
+      pointer('pointerdown', cell, { clientX: 40, clientY: 80 });
+      pointer('pointermove', cell, { clientX: 70, clientY: 80 });
+      pointer('pointerup', cell, { clientX: 70, clientY: 80 });
+      cell.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientX: 70, clientY: 80 }));
+      expect(actions.createAt).not.toHaveBeenCalled();
+      pointer('pointerdown', cell, { clientX: 40, clientY: 80 });
+      pointer('pointerup', cell, { clientX: 40, clientY: 80 });
+      cell.dispatchEvent(new window.MouseEvent('click', { bubbles: true, clientX: 40, clientY: 80 }));
+      expect(actions.createAt).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+    }
+  });
+
+  it('点事件条：打开事件详情，不落回格子新建（A2-1）', () => {
+    const day = startOfDay(new Date(2026, 9, 8)).getTime();
+    const evt = {
+      id: 'e-0517',
+      title: '评审会',
+      start: day + 9 * 3600_000,
+      end: day + 10 * 3600_000,
+      allDay: false,
+      readOnly: false,
+      color: 'blue',
+      reminders: [],
+    };
+    const { node, actions, restore } = render({ events: [evt] });
+    try {
+      const chip = cellAt(node, 8).querySelector('.chip');
+      expect(chip).toBeTruthy();
+      chip.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      expect(actions.openEvent).toHaveBeenCalledTimes(1);
+      expect(actions.createAt).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it('源码：「还有 N 个」仍在格子 click 入口被拦下（A2-1 另一半，溢出时才有该节点）', () => {
+    const at = monthJs.indexOf('click: (e) => {');
+    expect(at).toBeGreaterThan(-1);
+    const block = monthJs.slice(at, at + 400);
+    expect(block).toContain("e.target.closest('.chip')");
+    expect(block).toContain("e.target.closest('.month__more')");
   });
 });

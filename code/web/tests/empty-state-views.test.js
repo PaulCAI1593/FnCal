@@ -38,8 +38,14 @@ function inRange(item, from, to) {
   return start < to && end > from;
 }
 
-function makeStore({ visibleEvents = [], hiddenEvents = [], visibleTasks = [], hiddenTasks = [] } = {}) {
-  return {
+function makeStore({
+  visibleEvents = [],
+  hiddenEvents = [],
+  visibleTasks = [],
+  hiddenTasks = [],
+  hiddenBreakdown = null,
+} = {}) {
+  const store = {
     getSettings: () => ({ ...DEFAULT_SETTINGS }),
     getEventsInRange: (from, to, options = {}) => {
       const events = options.includeHidden ? [...visibleEvents, ...hiddenEvents] : visibleEvents;
@@ -52,9 +58,39 @@ function makeStore({ visibleEvents = [], hiddenEvents = [], visibleTasks = [], h
     getEvent: (id) => [...visibleEvents, ...hiddenEvents].find((event) => event.id === id) || null,
     getTask: () => null,
   };
+  // 0.5.19：真实 store 会区分「分类隐藏」与「日历隐藏」；测试桩按需注入分桶。
+  if (hiddenBreakdown) store.getHiddenInRange = () => ({ ...hiddenBreakdown });
+  return store;
 }
 
-function makeCtx(storeOverrides = {}, calls = { createAt: [], showAllCategories: 0 }) {
+function makeCtx(
+  storeOverrides = {},
+  calls = { createAt: [], showAllCategories: 0, showAllCalendars: 0 },
+) {
+  const actions = {
+    createAt: (arg) => calls.createAt.push(arg),
+    showAllCategories: () => {
+      calls.showAllCategories += 1;
+    },
+    showAllCalendars: () => {
+      calls.showAllCalendars += 1;
+    },
+    // 0.5.19：空态按钮只走这一个入口，由它按分桶决定清哪一种筛选。
+    showHiddenFilters: (hidden) => {
+      if (hidden.byColor > 0) actions.showAllCategories();
+      if (hidden.byCalendar > 0) actions.showAllCalendars();
+    },
+    gotoDayView() {},
+    slotContextMenu() {},
+    openEvent() {},
+    openTask() {},
+    toggleTask() {},
+    eventContextMenu() {},
+    taskContextMenu() {},
+    moveEvent() {},
+    moveTask() {},
+    edgePage() {},
+  };
   return {
     calls,
     store: makeStore(storeOverrides),
@@ -62,22 +98,7 @@ function makeCtx(storeOverrides = {}, calls = { createAt: [], showAllCategories:
     cursor: DAY,
     miniCursor: DAY,
     now: DAY,
-    actions: {
-      createAt: (arg) => calls.createAt.push(arg),
-      showAllCategories: () => {
-        calls.showAllCategories += 1;
-      },
-      gotoDayView() {},
-      slotContextMenu() {},
-      openEvent() {},
-      openTask() {},
-      toggleTask() {},
-      eventContextMenu() {},
-      taskContextMenu() {},
-      moveEvent() {},
-      moveTask() {},
-      edgePage() {},
-    },
+    actions,
   };
 }
 
@@ -153,6 +174,69 @@ describe('月视图空态', () => {
     const buttonRule = /\.empty\.empty--overlay > \.btn\s*\{([^}]*)\}/.exec(layoutCss);
     expect(buttonRule).toBeTruthy();
     expect(buttonRule[1]).toMatch(/pointer-events:\s*auto/);
+  });
+});
+
+describe('0.5.19：空态按钮只清真正挡路的那一种筛选', () => {
+  // 用户原话：「在手机上点它没反应」。日历被全部关掉时，视图同样被掏空，但
+  // 空态一律说「被分类筛选隐藏」并只清 hiddenColors——按了当然什么都不变。
+  const breakdown = (over) => ({
+    events: 1, tasks: 0, total: 1, byColor: 0, byCalendar: 1, ...over,
+  });
+
+  it('只有日历被隐藏 → 文案说日历，按钮给「显示全部日历」', () => {
+    const ctx = makeCtx(
+      { hiddenEvents: [EVENT], hiddenBreakdown: breakdown({}) },
+      { createAt: [], showAllCategories: 0, showAllCalendars: 0 },
+    );
+    const { node } = renderMonth(ctx);
+    expect(textOf(node)).toBe('当前范围内，1 个事件被日历筛选隐藏了。');
+    const button = buttonOf(node);
+    expect(button.textContent).toContain('显示全部日历');
+    expect(button.textContent).not.toContain('显示全部分类');
+    button.click();
+    expect(ctx.calls.showAllCalendars).toBe(1);
+    expect(ctx.calls.showAllCategories).toBe(0);
+  });
+
+  it('两种筛选都在 → 文案并列，按钮「全部显示」并两种都清', () => {
+    const ctx = makeCtx(
+      { hiddenEvents: [EVENT], hiddenBreakdown: breakdown({ byColor: 1 }) },
+      { createAt: [], showAllCategories: 0, showAllCalendars: 0 },
+    );
+    const { node } = renderMonth(ctx);
+    expect(textOf(node)).toBe('当前范围内，1 个事件被分类与日历筛选隐藏了。');
+    const button = buttonOf(node);
+    expect(button.textContent).toContain('全部显示');
+    button.click();
+    expect(ctx.calls.showAllCategories).toBe(1);
+    expect(ctx.calls.showAllCalendars).toBe(1);
+  });
+
+  it('只有分类被隐藏 → 文案与按钮保持 0.5.18 口径', () => {
+    const ctx = makeCtx(
+      { hiddenEvents: [EVENT], hiddenBreakdown: breakdown({ byColor: 1, byCalendar: 0 }) },
+      { createAt: [], showAllCategories: 0, showAllCalendars: 0 },
+    );
+    const { node } = renderMonth(ctx);
+    expect(textOf(node)).toBe('当前范围内，1 个事件被分类筛选隐藏了。');
+    expect(buttonOf(node).textContent).toContain('显示全部分类');
+    buttonOf(node).click();
+    expect(ctx.calls.showAllCategories).toBe(1);
+    expect(ctx.calls.showAllCalendars).toBe(0);
+  });
+
+  it('日程视图用同一套分桶（日历隐藏时给「显示全部日历」）', () => {
+    const ctx = makeCtx(
+      { hiddenEvents: [EVENT], hiddenBreakdown: breakdown({}) },
+      { createAt: [], showAllCategories: 0, showAllCalendars: 0 },
+    );
+    const { node } = renderTimeGrid([DAY], ctx);
+    expect(textOf(node)).toBe('当前范围内，1 个事件被日历筛选隐藏了。');
+    const button = buttonOf(node);
+    expect(button.textContent).toContain('显示全部日历');
+    button.click();
+    expect(ctx.calls.showAllCalendars).toBe(1);
   });
 });
 

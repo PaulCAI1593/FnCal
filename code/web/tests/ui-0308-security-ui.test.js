@@ -2,9 +2,9 @@
  * 0.3.8（v1.1 安全界面接线，M12 §3/§5/§6）：真实安全对话框的 P2 十条行为。
  *
  * 覆盖：
- *   - 首屏骨架（6 条）+ 加载期 footer 只有「关闭」+ aria-busy；加载完成后 7 个分区；
+ *   - 首屏骨架（6 条）+ 加载期 footer 只有「关闭」+ aria-busy；加载完成后 8 个分区（0.6.1 增加登录设备与接入）；
  *   - 加载失败 → 中文提示 + 重试（重试会再次请求），不自动重试；
- *   - 「我的安全」2 块 + 480px 类名；
+ *   - 「我的安全」3 块（0.6.1 起含登录设备与接入）+ 480px 类名；
  *   - 分区内危险按钮一律描边（btn--danger-outline），实心红只留给确认弹窗；
  *   - 危险确认对话框初始焦点落在「取消」；
  *   - 不再有全局「保存」死按钮与 window.prompt。
@@ -136,7 +136,9 @@ afterEach(() => {
 });
 
 describe('0.3.8 管理员对话框：骨架 / 错误 / 分区', () => {
-  it('加载中：6 条骨架 + footer 只有「关闭」+ aria-busy；完成后 7 个分区', async () => {
+  // 0.6.1：① 页在 TOTP 与 CalDAV 专用密码之间新增「登录设备与接入」，
+  // 分区由 7 个变 8 个——不是放宽断言。
+  it('加载中：6 条骨架 + footer 只有「关闭」+ aria-busy；完成后 8 个分区', async () => {
     let resolveSettings;
     mocks.getSecuritySettings.mockImplementation(() => new Promise((resolve) => { resolveSettings = resolve; }));
     openAdmin();
@@ -153,10 +155,12 @@ describe('0.3.8 管理员对话框：骨架 / 错误 / 分区', () => {
     expect(modal().querySelector('.security-loading').hidden).toBe(true);
     expect(modal().querySelector('.security-sections').hidden).toBe(false);
     expect(modal().querySelector('.modal__body').hasAttribute('aria-busy')).toBe(false);
-    // 0.3.10（M13 §2.1）：4 个面板共 9 张卡（① 自己的两步验证 + 专用密码最前）。
+    // 0.3.10（M13 §2.1）：4 个面板共 9 张卡（① 自己的两步验证 + 专用密码最前）；
+    // 0.6.1 插入「登录设备与接入」后为 10 张。
     const titles = [...modal().querySelectorAll('.security-section__title')].map((n) => n.textContent);
     expect(titles).toEqual([
       t('security.section.totp'),
+      t('security.section.devices'),
       t('security.section.dav'),
       t('security.section.activity'),
       t('security.section.policy'),
@@ -165,6 +169,8 @@ describe('0.3.8 管理员对话框：骨架 / 错误 / 分区', () => {
       t('security.section.https'),
       t('security.section.cert'),
       t('security.section.audit'),
+      // 0.6.4（用户 m00854）：④ 审计页多一组「系统诊断」。
+      t('security.section.diag'),
     ]);
     // 全局「保存」死按钮已删除：footer 与正文都不再有 bare 保存按钮。
     expect(footButtons()).toEqual([t('security.action.close')]);
@@ -189,13 +195,18 @@ describe('0.3.8 管理员对话框：骨架 / 错误 / 分区', () => {
     expect(modal().querySelector('.security-section')).not.toBeNull();
   });
 
-  it('「我的安全」：2 块（两步验证 + CalDAV 专用密码）且用 480px 窄对话框类名', async () => {
+  // 0.6.1：① 页新增「登录设备与接入」，2 块变 3 块——不是放宽断言。
+  it('「我的安全」：3 块（两步验证 + 登录设备与接入 + CalDAV 专用密码）且用 480px 窄对话框类名', async () => {
     openSelf();
     await flush();
     const m = modal();
     expect(m.classList.contains('security-modal--self')).toBe(true);
     const titles = [...m.querySelectorAll('.security-section__title')].map((n) => n.textContent);
-    expect(titles).toEqual([t('security.section.totp'), t('security.section.dav')]);
+    expect(titles).toEqual([
+      t('security.section.totp'),
+      t('security.section.devices'),
+      t('security.section.dav'),
+    ]);
     expect(footButtons()).toEqual([t('security.action.close')]);
   });
 });

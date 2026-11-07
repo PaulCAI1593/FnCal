@@ -2,7 +2,14 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- 0.5.13：键盘弹出时只抬弹窗，不抬日历。默认的 resizes-content 会让
+         Android Chrome 把布局视口改矮，整壳跟着重排；overlays-content 让键盘
+         覆盖在内容之上，布局视口不动，弹窗由 keyboard-inset.js 定位到键盘上方。
+         iOS 本身就是覆盖式，此值不影响它。 -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content"
+    />
 
     <title>FnCal</title>
     <meta name="description" content="FnCal：本地优先的日程管理应用，自带 CalDAV 服务。月/周/日/日程视图、重复事件、搜索与 .ics 导入导出，数据只保存在本机。" />

@@ -34,6 +34,7 @@ import { createDataApi } from './api/data.mjs';
 import { createCalendarsApi } from './api/calendars.mjs';
 import { createAiApi } from './api/ai.mjs';
 import { createAiRest } from './api/ai-rest.mjs';
+import { createWidgetRest } from './api/widget-rest.mjs';
 import { createMcp } from './api/mcp.mjs';
 import { createApprovalPage, APPROVAL_PAGE_PREFIX } from './api/approval-page.mjs';
 import { DEFAULT_ACCENT } from './lib/accent.mjs';
@@ -47,6 +48,9 @@ import { createLogger } from './lib/log.mjs';
 import { createMigration, resolveMigrationOptions } from './lib/migration.mjs';
 import { createReconciler } from './lib/reconcile.mjs';
 import { createAiStore } from './lib/ai-store.mjs';
+import { createWidgetStore } from './lib/widget-store.mjs';
+// 0.6.1（M5 §S1）：会话的服务端记录（逐台撤销登录设备）。
+import { createSessionStore } from './lib/session-store.mjs';
 import { createAccountStore } from './auth/accounts.mjs';
 import { loadOrCreateSecret, createSessionCodec } from './auth/session.mjs';
 import { createRateLimiter } from './auth/rate-limit.mjs';
@@ -76,7 +80,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 开关对比度、迷你月历点线、年视图换行断开、「四日」）——同样是纯前端。
 // 0.2.18：C 批七条（年视图圆几何、迷你点线一整条、四视图拼接条与箭头方向、
 // 搜索面板加宽、编辑弹窗农历日期选择、搜索胶囊圆头等高）——同样是纯前端。
-export const VERSION = '0.5.12';
+// 0.6.7：手机月视图日号行的节日名 / 节气名在真机上被裁掉一点（用户：「手机端的
+// 节气又被挡掉了一点，节日也是」）——承载盒补 1px 保护边、上下各留 1px、字体就绪后
+// 重新量宽。纯前端，无接口与数据变化。
+export const VERSION = '0.6.11';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -415,7 +422,16 @@ export async function createApp(
   // 0.2.37（S1/S2）：可信反代解析器。默认关闭 = 完全旧行为；关闭时 resolve()
   // 返回的就是 socket 地址与 socket 协议，调用方无需分支。
   const proxy = createProxyResolver({ getSettings: () => security.getSettings() });
-  const auth = createAuthService({ config, accounts, session, limiter, audit, logger, security, proxy });
+  // 0.6.1（M5 §S1）：会话记录跟随安全设置里的绝对有效期裁剪。
+  const sessionStore = createSessionStore({
+    store,
+    logger,
+    ttlMs: () => security.sessionLifetimes().absoluteMs,
+  });
+  // AI 凭据 / 卡片令牌在下面才创建；auth 需要它们汇总「接入」，所以先给同一对象，
+  // 创建后补引用（`auth/index.mjs` 每次按引用读，不复制值）。
+  const authStores = {};
+  const auth = createAuthService({ config, accounts, session, limiter, audit, logger, security, proxy, sessionStore, stores: authStores });
   const securityApi = createSecurityApi({ accounts, auth, security, audit, logger, proxy });
 
   const davHandler = createDavHandler({ store, config, logger, auth });
@@ -463,6 +479,12 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   const aiService = createAiService({ aiStore, health: healthState, trash: aiTrash });
   const aiRateLimiter = createAiRateLimiter();
   const aiRest = createAiRest({ aiStore, aiService, audit, logger, health: healthState, limiter: aiRateLimiter });
+  // 0.6.2（M5 §F）：桌面卡片只读摘要认会话 Cookie（跟着 App 的登录态走），不再单独发令牌；
+  // widget-store 只保留按用户读日历数据的能力。
+  const widgetStore = createWidgetStore({ store, logger });
+  const widgetRest = createWidgetRest({ widgetStore, auth, audit, logger, version: config.version });
+  // 0.6.1：把接入来源交给 auth（「我的安全」→ 登录设备与接入）。0.6.2 起只剩 MCP 一类。
+  authStores.aiStore = aiStore;
   // 0.4.22（M4 §S2–S3）：无弹窗客户端的一次性审批链接；MCP 生成、审批页消费，同一个内存表。
   // 0.4.25（S4）：审批链接落盘到账号数据目录，重启后未过期链接仍可用（只存哈希）。
   const approvalLinks = createApprovalLinks({
@@ -516,6 +538,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     calendars: calendarsApi,
     ai: aiApi,
     aiRest,
+    widgetRest,
     audit,
     securityApi,
     // 0.2.14（P0-2）：/api/version 带上 HTTPS 运行态（公开、只含布尔/端口/原因代码，

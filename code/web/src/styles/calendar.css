@@ -559,18 +559,22 @@ body.is-reordering {
     min-height: 44px;
   }
 }
-/* 0.2.9（用户 9）：设置弹窗底部常驻提示条——在滚动容器 .modal__body 之外、
-   按钮区之上；说明文字常显，「有 N 项未应用」仅在 N>0 显示。预留最小高度避免
-   表格滚动区高度随提示出现/消失而跳动。 */
-/* 0.2.10（1-7）：页脚一行 = 提示（左）+ 版本号（右），不再有 58px 高的独立提示条；
- * 窄屏只允许提示换行，版本号与按钮各占一行、不挤在一起。 */
-.settings__foot-hint {
+/* 0.5.22（用户 m00535 / m00549）：设置弹窗页脚收成「按钮行 + 左侧两行小块」。
+   旧结构（常驻提示句 + 右对齐版本号与关于区、提示与版本同行）整体撤掉，不留死样式。 */
+.settings__foot {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex: 0 0 auto;
+  padding: 0 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+/* 上面一行只放「有 N 项未应用」；N=0 时整行不渲染、不占高度。 */
+.settings__pending-row {
+  padding: 10px 0 0;
+}
+.settings__pending-row[hidden] {
+  display: none;
 }
 .settings__pending-count {
   font-size: var(--fs-sm);
@@ -580,47 +584,65 @@ body.is-reordering {
 .settings__pending-count[hidden] {
   display: none;
 }
-.settings__pending-hint {
-  margin: 0;
-  font-size: var(--fs-sm);
-  color: var(--text-3);
-}
-.settings__foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
+/* 按钮行：左侧两行小块 + 右侧「取消 / 应用」。小块总高 = 同一行按钮的实际渲染高
+   （精确指针 36px、触屏 44px），两行 line-height 各取按钮高的一半（18px / 22px），
+   字号随行高定（12px / 13px），行间不加 gap；垂直居中由同一 align-items 保证。 */
+.settings__actions {
+  --settings-meta-h: 36px;
   flex-wrap: wrap;
-  flex: 0 0 auto;
-  padding: 12px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--surface);
+  row-gap: var(--sp-2);
+  margin-top: 0;
+  padding: 12px 0 16px;
 }
-.settings__version {
-  font-size: var(--fs-sm);
+.settings__foot-meta {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  height: var(--settings-meta-h);
+  line-height: calc(var(--settings-meta-h) / 2);
+  font-size: 12px;
   color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-  margin-left: auto;
-  /* 0.2.10（1-7）：提示可换行，版本号本身不换行、始终与提示同一行右端。 */
   white-space: nowrap;
   flex: none;
 }
-/* 0.2.23（H4）→ 0.2.24（I3）：页脚只留一行版本号（前端内嵌版本，与后端不一致时补
-   「需刷新」），指纹行已按用户要求撤掉，`settings__build` 随之删除。 */
-.settings__about {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  margin-left: auto;
-  min-width: 0;
-  flex: none;
-}
-.settings__about .settings__version {
+.settings__foot-meta .settings__version {
   margin-left: 0;
+  font-size: inherit;
+  color: inherit;
 }
-/* 0.2.44：页脚关于区再加一行「开发者 · 项目仓库」，右对齐、与版本号同列；
-   链接沿用全局 a 的强调色，hover 下划线按惯例门控在精确指针设备上。 */
+.settings__foot-meta .settings__about-meta {
+  font-size: inherit;
+}
+.settings__foot-meta .settings__about-dot {
+  color: inherit;
+}
+.settings__foot-meta .settings__repo {
+  font-size: inherit;
+}
+@media (pointer: coarse) {
+  /* 触屏底部按钮 44px（layout.css:1795-1797）；两行行高各 22px，字号 13px，
+     仍高于 11px 下限。 */
+  .settings__actions {
+    --settings-meta-h: 44px;
+  }
+  .settings__foot-meta {
+    font-size: 13px;
+  }
+}
+@media (max-width: 640px) {
+  /* 窄屏（390 / 360）：小块整组换到按钮上方，块内两行不拆散，按钮不被挤出弹窗。 */
+  .settings__foot-meta {
+    order: -1;
+    flex: 1 1 100%;
+  }
+  .settings__apply-error {
+    order: -2;
+    flex: 1 1 100%;
+  }
+}
+/* 0.2.44：页脚关于区第二行的「开发者 · 项目仓库」；链接沿用全局 a 的强调色，
+   hover 下划线按惯例门控在精确指针设备上。 */
 .settings__about-meta {
   display: flex;
   align-items: center;
@@ -743,39 +765,9 @@ body.is-reordering {
 .settings__segmented {
   align-self: flex-start;
 }
-.settings__account {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding-bottom: 4px;
-}
-.settings__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: var(--fs-md);
-  font-weight: 600;
-}
-.settings__account-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.settings__account-name {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text);
-}
-.settings__account-username {
-  font-size: var(--fs-sm);
-  color: var(--text-3);
-}
+/* 0.6.4（用户 m00800）：设置页与账号与安全页首的头像/显示名小块删除
+   （`.settings__account` / `.settings__avatar` / 账户名与用户名四组规则已撤），
+   页内直接从第一个 section 开始，间距由 .settings__page 的 padding-top 给。 */
 .settings__inline {
   display: flex;
   align-items: center;
@@ -1385,9 +1377,38 @@ label,
     border: 0;
     border-radius: 0;
   }
+  /* 0.5.18（W1，用户：「手机页面，筛选无法显示筛选项，被遮挡」）：旧写法
+     `flex: 1` = `flex: 1 1 0%`，而 `.search__results` 是 `flex: 1 1 auto`（基准 =
+     结果列表内容高）。结果内容比剩余空间高时，负的自由空间只按基准分配收缩，
+     筛选区基准是 0 → 一点也分不到，被压成 0 高，四组控件等于看不见。
+     现在筛选区按内容高度（basis auto）占位、自己滚，结果区吃剩下的高度。 */
   .search__filters {
-    flex: 1;
-    max-height: none;
+    flex: 0 1 auto;
+    /* 70%：键盘态可视高 500 时面板 480，筛选项自然高 310 能整块放下（60% 只给 288，
+       底部「清除」会被裁一半）。再矮的屏仍按上限收缩 + 自身滚动。 */
+    max-height: min(70%, 70dvh);
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .search__panel .search__results {
+    flex: 1 1 0;
+    min-height: 88px;
+  }
+}
+/* 0.5.18（W1）：≤520 全屏搜索跟**可视视口**走——键盘打开时面板只占键盘上方那块，
+   不会被压到键盘下面；底部留 8px（安全区更大时取安全区）。scrim 的 top/height
+   用 keyboard-inset.js 写的 --vv-offset-top / --vv-height（缺失时退回原值）。 */
+@media (max-width: 520px) {
+  .search-scrim {
+    top: var(--vv-offset-top, 0px);
+    height: var(--vv-height, 100dvh);
+    padding: max(var(--sp-3), env(safe-area-inset-top)) var(--sp-3)
+      max(8px, env(safe-area-inset-bottom));
+  }
+  .search__panel {
+    height: 100%;
+    max-height: 100%;
   }
 }
 @media (hover: none) {
@@ -1632,26 +1653,20 @@ label,
   text-align: center;
 }
 
-/* ---- 设置 → 日历 表格页（0.2.1 #6 结构） ---- */
-/* 0.2.10（1-6）：工具条常驻不滚动、表格自己滚（窄屏同样成立）：
-   页面 = flex 列，上限与 .settings__pages 一致；工具条/说明 flex:none，
-   表格体 flex:1 1 auto + 自身滚动。 */
-.settings__page--calendar {
-  max-height: min(70vh, 560px);
-  overflow: hidden;
+/* ---- 设置 → CalDAV 页里的日历表格块（0.6.4：原「日历」页签整块并入） ---- */
+/* 0.6.4（用户 m00800）：日历表格搬到 CalDAV 页最上面，原页面级的第二层滚动撤掉——
+   滚动统一交给 .settings__pages 一层，工具条与表格各自按内容高度排。 */
+.settings__cal-table {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
-.settings__page--calendar .cal-table__toolbar {
+.settings__cal-table .cal-table__toolbar {
   flex: 0 0 auto;
   margin-bottom: 0;
 }
-.settings__page--calendar .cal-table__body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-.settings__page--calendar .cal-table__dav-hint {
+.settings__cal-table .cal-table__dav-hint {
   flex: 0 0 auto;
   margin: 0;
 }
@@ -1666,6 +1681,15 @@ label,
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+/* 0.6.4：计数 + 刷新作为一组靠右（旧结构里两者是独立子项，spacer 只在 .modal__foot
+   下有 flex:1，工具条里其实没有撑开，导致计数紧贴「导出」、右侧留一大片空白）。 */
+.cal-table__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
 }
 /* 0.2.15（D12）：「编辑 / 删除(清空) / 导出」统一圆角描边框——同高、同内边距、同圆角；
    危险动作只换文字与描边颜色；hover / active / focus-visible / 禁用态都保留框。 */
@@ -2087,6 +2111,18 @@ label,
   line-height: 1.5;
   color: var(--text-3);
 }
+/* 0.6.5（用户 m01273）：两套凭据「权限互相独立」的说明句，四处共用。
+   纯文本、不可点；12px / 行高 1.5 / 上下 4-8px，不做告警卡片。 */
+.permission-hint {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+/* 0.6.4：④ 审计页「系统诊断」组的说明句按 12px 给（同组只有一枚导出按钮，左对齐）。 */
+.security-diag__hint {
+  font-size: 12px;
+}
 .security-error {
   margin: 0;
   font-size: 12px;
@@ -2299,6 +2335,68 @@ label,
 .security-app-password__name {
   font-weight: 600;
 }
+/* 0.6.2（M5 §E）：登录设备 / 接入分两组——组标题 12px/600，中间一条 1px 浅分割线。
+   行内两行明细，第二行 nowrap + 省略号；撤销按钮固定右侧，不被文字挤窄。 */
+.security-group__title {
+  margin: 16px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.security-group__divider {
+  height: 1px;
+  margin: 16px 14px;
+  background: var(--border);
+}
+.security-app-password--stack {
+  align-items: flex-start;
+  padding: 10px 0;
+  gap: 10px;
+}
+.security-app-password--stack .security-app-password__meta {
+  flex: 1 1 auto;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+/* 0.6.2（M5 §B-12）：第一行「设备：…」也只占一行——放不下就省略号，不折行撑高行高。
+   行高因此不随宽度变化，撤销按钮也不会被挤到第二行。 */
+.security-app-password--stack .security-app-password__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+.security-app-password--stack .security-app-password__name {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.security-app-password__detail {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+.security-app-password__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+.security-app-password--editing {
+  flex-direction: column;
+  align-items: stretch;
+}
 /* 锁定与审计 */
 .security-locks {
   display: flex;
@@ -2381,6 +2479,11 @@ label,
   .security-app-password {
     flex-wrap: wrap;
   }
+  /* 0.6.2（M5 §B-12）：设备/接入行例外——两行明细固定在左、按钮固定在右；
+     文字走省略号，不折行，按钮不被挤出右缘（320 / 360 也成立）。 */
+  .security-app-password--stack {
+    flex-wrap: nowrap;
+  }
   .security-qr svg {
     width: 140px;
     height: 140px;
@@ -2429,11 +2532,7 @@ label,
    只用 tokens.css 既有颜色/圆角/间距；不新增颜色档、不新增字体档；
    栅格一律 minmax(0,1fr)；触控目标 ≥44px（按钮沿用 .btn 既有尺寸）。
    ============================================================================= */
-.ai-page__title {
-  margin: 0;
-  font-size: var(--fs-lg);
-  color: var(--text);
-}
+/* 0.6.6（用户）：页内大标题 `.ai-page__title` 已删（与页签「AI」重复）。 */
 /* 三块共用外壳：服务 / 凭据 / 提案队列。 */
 .ai-section {
   display: flex;
@@ -2616,16 +2715,22 @@ label,
 .ai-editor__error {
   min-height: 18px;
 }
+/* 0.6.9（F）：错误行为空时不占高度，也不贡献 flex gap——否则「删除凭据」后面会
+   多出 18px 空行加一个 24px 间距，滚到底看起来又是一块空白。有错误时照常显示。 */
+.ai-editor__error:empty {
+  display: none;
+}
 /* 权限矩阵：一行一张日历 + 三档单选组。 */
 .ai-matrix {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  /* 0.3.1（设计侧 P1-2）：矩阵区独立滚动，24 个日历时只滚日历行。 */
+  /* 0.3.1（设计侧 P1-2）：矩阵区独立滚动，24 个日历时只滚日历行。
+     0.6.5（用户 2026-11-08）：滚到底后允许链式滚外层设置页（contain → auto）。 */
   max-height: min(40vh, 320px);
   overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: auto;
 }
 .ai-matrix__setall {
   /* 0.3.1（设计侧 P1-2）：工具条在矩阵滚动区内吸顶，不许被滚走。 */
@@ -2691,6 +2796,29 @@ label,
   height: 28px;
   padding: 0 var(--sp-2);
   font-size: var(--fs-sm);
+  /* 0.6.6（§二）：三档单选一律单行，禁止「读\n写」折行。 */
+  white-space: nowrap;
+}
+/* 0.6.6（§二）：桌面档「全部设为」与权限行也单行（0.6.5 只约束了 ≤520），
+   名字过长时省略，不把三档控件挤到下一行。 */
+@media (min-width: 521px) {
+  .ai-matrix__setall {
+    flex-wrap: nowrap;
+  }
+  .ai-matrix__setall-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ai-matrix__row {
+    flex-wrap: nowrap;
+  }
+  .ai-matrix__name {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
 }
 @media (pointer: coarse) {
   /* 0.3.1（设计侧 P1-1）：触屏命中区 ≥44px（规范 §6）。 */
@@ -2698,6 +2826,66 @@ label,
     height: auto;
     min-height: 44px;
     padding-block: 8px;
+  }
+}
+/* 0.6.5（用户 2026-11-08）：手机档矩阵不再内滚（全页一个滚动容器），
+   每条权限行与「全部设为」都单行，名字省略、三段控件不换行。
+   28px 低于 44px 触控建议值，是「一条不换行」的取舍（记录里写明）。 */
+@media (max-width: 520px) {
+  .ai-matrix {
+    max-height: none;
+    overflow: visible;
+    overscroll-behavior: auto;
+  }
+  .ai-matrix__setall {
+    position: static;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .ai-matrix__setall-label {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* 0.6.5：窄屏「全部设为」按钮收内距与字号，保证与标签同一行（320 时行宽 222px）。 */
+  .ai-matrix .ai-matrix__setall-btn {
+    flex: 0 1 auto;
+    min-width: 0;
+    min-height: 32px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  .ai-matrix__row {
+    /* 0.6.5：覆盖 ≤720 档的上下排（flex-direction: column），手机档每行单行不换行。 */
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 4px;
+  }
+  .ai-matrix__name {
+    flex: 1 1 auto;
+    max-width: 42%;
+  }
+  .ai-matrix__name-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .segmented.ai-seg {
+    flex: 0 0 auto;
+    padding: 2px;
+    gap: 1px;
+  }
+  .segmented.ai-seg button {
+    height: 28px;
+    min-height: 28px;
+    padding: 0 9px;
+    padding-block: 0;
+    font-size: var(--fs-sm);
   }
 }
 /* 时间窗。 */
@@ -2862,6 +3050,14 @@ label,
   .settings__tabs button {
     padding-inline: 6px;
   }
+  /* 0.6.4：日历表格并入 CalDAV 页后整页取消二层裁剪（旧日历页那条 overflow:hidden
+     曾把工具条右侧的计数与刷新按钮裁掉）。320 这个工具条放不下三项按钮 + 计数 +
+     刷新，改为「计数 + 刷新」整组换到第二行并靠右（.cal-table__meta 自带
+     margin-left:auto），两行都不出现横向溢出。 */
+  .settings__cal-table .cal-table__toolbar {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
 }
 /* 0.3.10（M13 §4.3）：320px（SE 档）页签可用 256px、每签 64px；4 字 + 6×2 padding
    恰好压线，收字号兜底（4 字 48px + 12px = 60px ≤ 64px）。先收 padding、再收字号，
@@ -2871,8 +3067,9 @@ label,
     font-size: var(--fs-sm);
   }
 }
-/* 窄屏：矩阵行改成上下排，单选组靠左，避免三档被裁。 */
-@media (max-width: 720px) {
+/* 窄屏：矩阵行改成上下排，单选组靠左，避免三档被裁。
+   0.6.5：手机档（≤520）改回单行，所以这里只覆盖 521–720。 */
+@media (min-width: 521px) and (max-width: 720px) {
   .ai-matrix__row {
     flex-direction: column;
     align-items: flex-start;
@@ -3206,6 +3403,16 @@ label,
   .ai-editor .ai-row--inline > .settings__label {
     flex: 0 0 auto;
   }
+  /* 0.6.5：320/360 下「令牌」行的掩码是 0 0 auto、不收缩，会把「重置令牌」
+     顶出编辑器 4–44px。窄档让掩码可收缩省略，仍放不下时按钮换行。 */
+  .ai-editor .ai-row--inline > .settings__control {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .ai-editor .ai-row--inline .ai-token__mask {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
 }
 
 /* 0.4.23（M4 §S12）：凭据编辑器按区块分组——单列、区块 24px、字段 12px、底部固定操作条。 */
@@ -3217,6 +3424,11 @@ label,
   flex-direction: column;
   gap: var(--sp-6);
   min-width: 0;
+  /* 0.6.9（F，用户：「还有这里空太大」）：0.6.6 的正文末端 `::after` 垫片与吸底条
+     自身在流内占的高度重复计算，滚到底后最后一项到 footer 有 113–165px 空白。
+     垫片整条删除；`scroll-padding-bottom` 只影响键盘焦点滚动，不占布局空间，
+     保留为 footer 实测高度，焦点项不会被吸底条挡住。 */
+  scroll-padding-bottom: var(--ai-editor-foot-h, 52px);
 }
 .ai-editor .ai-block {
   display: flex;
@@ -3242,7 +3454,11 @@ label,
 .ai-editor__footer {
   position: sticky;
   bottom: 0;
-  z-index: 5;
+  /* 0.6.9（B，用户截图：「全部设为…」压在保存上面）：保存条必须永远压在正文之上。
+     `.ai-matrix__setall` 是 flex item、带 z-index: 50，会形成堆叠上下文；原来的 5
+     比它低，滚到矩阵工具条经过时就把「保存」盖住了。抬到 60，永远高于正文里的
+     任何吸顶/吸底元素。 */
+  z-index: 60;
   padding-top: var(--sp-3);
   padding-bottom: var(--sp-2);
   background: var(--surface);
@@ -3406,9 +3622,10 @@ label,
 }
 
 /* ---- 0.4.14（规范 M22 第 2 版）：检查更新弹窗 ----------------------------
-   只补布局：状态行（左文案 + 右侧「本次实际用的源」）、更新源分段控件、两句旁注。
-   尺寸沿用 .modal / .settings__row / .segmented / .btn 的既有 token，不新增档位；
-   ≤520 时 .settings__row 已是单列，源的两项拿到整行宽，320 下也不会溢出。 */
+   只补布局：状态行、两个下载入口、两句旁注。
+   0.6.8（用户 2026-11-08「gitee、github 就两个源」）：删分段控件，改两个下载链接；
+   尺寸沿用 .modal / .settings__row / .btn 的既有 token，不新增档位；
+   ≤520 时 .settings__row 已是单列，两个入口拿到整行宽，320 下换行也不溢出。 */
 .modal--update .update__status {
   flex-direction: row;
   align-items: center;
@@ -3419,31 +3636,30 @@ label,
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.modal--update .update__via {
-  flex: 0 0 auto;
-  font-size: var(--fs-xs);
-  color: var(--text-3);
-}
-.modal--update .update__via[hidden] {
-  display: none;
-}
-.modal--update .update__source {
+.modal--update .update__sources {
   display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  min-width: 0;
   max-width: 100%;
 }
-.modal--update .update__source button {
-  flex: 1 1 auto;
+.modal--update .update__sources .btn {
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 .modal--update .update__hints {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-/* 320 档：分段控件仍要完整显示两项 —— 只收内边距与字号，不改高度档位。 */
+/* 320 档：两个入口都完整显示 —— 只收内边距与字号，不改高度档位。 */
 @media (max-width: 360px) {
-  .modal--update .update__source button {
-    padding: 0 6px;
+  .modal--update .update__sources {
+    gap: var(--sp-1);
+  }
+  .modal--update .update__sources .btn {
+    padding: 0 8px;
     font-size: var(--fs-sm);
   }
 }

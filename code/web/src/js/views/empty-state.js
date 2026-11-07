@@ -49,24 +49,96 @@ export function emptyBlock({ title, description, button, className = '' }) {
 }
 
 /**
- * 空态主按钮（0.2.17 B3.1）：网格视图与日程视图共用——「显示全部分类」或「新建事件」。
- * @param {{hiddenCount?: number, onShowAll: () => void, onCreate: () => void}} opts
+ * 空态主按钮（0.2.17 B3.1，0.5.19 改）：网格视图与日程视图共用。
+ *
+ * 按钮必须清掉**真正**挡住内容的那一种筛选：0.5.18 之前一律「显示全部分类」，
+ * 但 visibleCalendarIds / 日历自身 visible 也能把视图掏空，此时点「分类」什么
+ * 都不会变（hiddenColors 本来就是空的）。所以标签与动作由 `hidden` 分桶决定。
+ * @param {{hidden?: {total:number,byColor:number,byCalendar:number},
+ *   hiddenCount?: number, onShowAll?: () => void, onShowCalendars?: () => void,
+ *   onShow?: () => void, onCreate: () => void}} opts
  * @returns {HTMLElement}
  */
-export function emptyButton({ hiddenCount = 0, onShowAll, onCreate }) {
-  return hiddenCount
-    ? el('button', {
-      class: 'btn btn--primary',
-      type: 'button',
-      html: icon('check', { size: 'sm' }) + `<span>${t('empty.showAllCategories')}</span>`,
-      on: { click: () => onShowAll() },
-    })
-    : el('button', {
+export function emptyButton({
+  hidden = null,
+  hiddenCount = 0,
+  onShowAll = null,
+  onShowCalendars = null,
+  onShow = null,
+  onCreate,
+}) {
+  // 兼容旧调用：只给 hiddenCount 的时代按「全是被分类隐藏」处理。
+  const buckets = hidden || { total: hiddenCount, byColor: hiddenCount, byCalendar: 0 };
+  if (!buckets.total) {
+    return el('button', {
       class: 'btn btn--primary',
       type: 'button',
       html: icon('plus', { size: 'sm' }) + `<span>${t('empty.newEvent')}</span>`,
       on: { click: () => onCreate() },
     });
+  }
+  const byColor = buckets.byColor > 0;
+  const byCalendar = buckets.byCalendar > 0;
+  const label = byColor && byCalendar
+    ? t('empty.showAll')
+    : byColor
+      ? t('empty.showAllCategories')
+      : t('empty.showAllCalendars');
+  const click = onShow || (() => {
+    if (byColor && onShowAll) onShowAll();
+    if (byCalendar && onShowCalendars) onShowCalendars();
+  });
+  return el('button', {
+    class: 'btn btn--primary',
+    type: 'button',
+    html: icon('check', { size: 'sm' }) + `<span>${label}</span>`,
+    on: { click },
+  });
+}
+
+/**
+ * 空态的结论行：按隐藏原因换主谓（0.5.19）。`scope` 区分网格（当前范围内）与
+ * 日程（接下来 N 天），其余串共用 `{what}`。
+ * @param {'range'|'agenda'} scope
+ */
+export function hiddenTitle(scope, hidden, what, days = 0) {
+  const byColor = hidden && hidden.byColor > 0;
+  const byCalendar = hidden && hidden.byCalendar > 0;
+  if (scope === 'agenda') {
+    const key = byColor && byCalendar
+      ? 'empty.agendaHiddenBoth'
+      : byCalendar ? 'empty.agendaHiddenCalendars' : 'empty.agendaHidden';
+    return t(key, { what, days });
+  }
+  const key = byColor && byCalendar
+    ? 'empty.rangeHiddenBoth'
+    : byCalendar ? 'empty.rangeHiddenCalendars' : 'empty.rangeHidden';
+  return t(key, { what });
+}
+
+/**
+ * 被隐藏的东西按原因分桶（0.5.19）。store 提供 getHiddenInRange 时按真实原因
+ * 区分分类/日历；测试桩没有该函数时退化成「includeHidden 全量」，保持旧行为。
+ */
+export function hiddenBuckets(store, rangeStart, rangeEnd) {
+  if (typeof store.getHiddenInRange === 'function') {
+    const hidden = store.getHiddenInRange(rangeStart, rangeEnd);
+    if (hidden && typeof hidden.total === 'number') return hidden;
+  }
+  const hiddenEvents = typeof store.getEventsInRange === 'function'
+    ? (store.getEventsInRange(rangeStart, rangeEnd, { includeHidden: true }) || [])
+      .filter((event) => !event.readOnly).length
+    : 0;
+  const hiddenTasks = typeof store.getTasksInRange === 'function'
+    ? (store.getTasksInRange(rangeStart, rangeEnd, { includeHidden: true }) || []).length
+    : 0;
+  return {
+    events: hiddenEvents,
+    tasks: hiddenTasks,
+    total: hiddenEvents + hiddenTasks,
+    byColor: hiddenEvents + hiddenTasks,
+    byCalendar: 0,
+  };
 }
 
 /**
@@ -83,29 +155,21 @@ export function emptyButton({ hiddenCount = 0, onShowAll, onCreate }) {
 export function buildEmptyState({ store, actions, rangeStart, rangeEnd, visibleCount, emptyKey, onCreate }) {
   if (visibleCount > 0) return null;
 
-  // Only reached when the grid is already empty: count what the category filter
-  // is hiding (same logic/口径 as the agenda view), never treat a filtered-out
-  // range as "no events".
-  const events = typeof store.getEventsInRange === 'function'
-    ? store.getEventsInRange(rangeStart, rangeEnd, { includeHidden: true }) || []
-    : [];
-  const tasks = typeof store.getTasksInRange === 'function'
-    ? store.getTasksInRange(rangeStart, rangeEnd, { includeHidden: true }) || []
-    : [];
-  const hiddenEvents = events.filter((event) => !event.readOnly).length;
-  const hiddenTasks = tasks.length;
-  const hiddenCount = hiddenEvents + hiddenTasks;
-  const what = hiddenWhat(hiddenEvents, hiddenTasks);
+  // Only reached when the grid is already empty: count what a filter is hiding
+  // (same logic/口径 as the agenda view), never treat a filtered-out range as
+  // "no events". 0.5.19：分类与日历分开数，按钮只清真正挡路的那一种。
+  const hidden = hiddenBuckets(store, rangeStart, rangeEnd);
+  const what = hiddenWhat(hidden.events, hidden.tasks);
 
   const button = emptyButton({
-    hiddenCount,
-    onShowAll: () => actions.showAllCategories(),
+    hidden,
+    onShow: () => actions.showHiddenFilters(hidden),
     onCreate: () => onCreate(),
   });
 
   return emptyBlock({
-    title: hiddenCount ? t('empty.rangeHidden', { what }) : t(emptyKey),
-    description: hiddenCount ? t('empty.hiddenHint') : t('empty.createHint'),
+    title: hidden.total ? hiddenTitle('range', hidden, what) : t(emptyKey),
+    description: hidden.total ? t('empty.hiddenHint') : t('empty.createHint'),
     button,
     className: 'empty--overlay',
   });

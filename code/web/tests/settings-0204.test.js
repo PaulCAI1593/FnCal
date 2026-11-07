@@ -147,7 +147,7 @@ describe('0.2.4 P0-4 设置表格选中行', () => {
   });
 
   it('点行后 aria-selected 跟随（只有一个 true），CSS 用 --accent-soft 显示选中', () => {
-    opened = openAccountDialog({ user: { username: 'admin', role: 'admin' }, store, tab: 'calendar' });
+    opened = openAccountDialog({ user: { username: 'admin', role: 'admin' }, store, tab: 'account' });
     const rows = [...opened.dialog.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')];
     const workRow = rows.find((r) => r.textContent.includes('工作'));
     workRow.click();

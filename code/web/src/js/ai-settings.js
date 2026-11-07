@@ -279,7 +279,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     'aria-labelledby': 'settings-tab-ai',
     hidden: true,
   }, [
-    el('h2', { class: 'ai-page__title', text: t('settings.ai.title') }),
+    // 0.6.6（用户）：页签已写「AI」，页内大标题「AI 接入」与页签语义重复，删除。
+    // 删后页面第一块直接是「服务」卡片；settings.ai.title 保留（别处可能引用）。
     el('section', { class: 'ai-section ai-section--service' }, [
       el('h3', { class: 'ai-section__title', text: t('settings.ai.service') }),
       serviceBody,
@@ -710,7 +711,12 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     const serviceOn = Boolean(state.settings && state.settings.enabled);
     const body = el('div', { class: 'ai-section__body' });
     clear(credsSection);
-    credsSection.append(renderCredsHeading(), body);
+    credsSection.append(
+      renderCredsHeading(),
+      // 0.6.5（用户 m01273）：AI 凭据的权限与 CalDAV 专用密码是两套，先说明再列凭据。
+      el('p', { class: 'permission-hint', text: t('settings.ai.credentials.independentHint') }),
+      body,
+    );
 
     if (state.credsLoading) {
       body.setAttribute('aria-busy', 'true');
@@ -817,6 +823,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
   function renderEditor() {
     const editor = state.editor;
     const draft = editor.draft;
+    // 0.6.5（用户 2026-11-08）：保存按钮「未改动」时灰显。声明放最前，
+    // 因为下面的渲染期回调（refreshModeAvailability / syncApprovalBlocks）会提前调 refreshSave()。
+    let saveBtn = null;
     clear(credsSection);
     // 编辑器每次重建都会丢弃旧的回收站子块引用（0.4.14、M21 第 3 版 §2.4）。
     trashBlock = null;
@@ -841,7 +850,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       on: {
         input: () => {
           draft.label = nameInput.value;
-          saveBtn.disabled = !canSave();
+          refreshSave();
         },
       },
     });
@@ -1031,6 +1040,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         modeNotes.append(el('p', { class: 'ai-hint', text: t('settings.ai.deleteMode.readonly') }));
       }
       syncTrashBlock();
+      refreshSave();
     }
 
     paintWriteHint(draft.writeMode);
@@ -1091,6 +1101,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
           draft.pin = digits;
           if (digits) draft.clearPin = false;
           paintPin();
+          refreshSave();
         },
       },
     });
@@ -1113,6 +1124,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
               draft.pinSet = false;
               pinInput.value = '';
               paintPin();
+              refreshSave();
             },
           });
         },
@@ -1161,6 +1173,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       }
       approvalBlock.hidden = !allowed;
       pinBlock.hidden = !allowed || draft.agentApproval !== true;
+      refreshSave();
     }
     syncApprovalBlocks();
 
@@ -1179,10 +1192,12 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
             if (draft.timeWindow[key] === null) return;
             draft.timeWindow[key] = clampDays(input.value, limits, DEFAULT_TIME_WINDOW[key]);
             input.value = String(draft.timeWindow[key]);
+            refreshSave();
           },
           input: () => {
             const parsed = Number.parseInt(input.value, 10);
             if (Number.isFinite(parsed)) draft.timeWindow[key] = Math.max(limits.min, parsed);
+            refreshSave();
           },
         },
       });
@@ -1204,6 +1219,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
               input.value = String(draft.timeWindow[key]);
               input.disabled = false;
             }
+            refreshSave();
           },
         },
       });
@@ -1230,7 +1246,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         switchControl({
           checked: draft.fieldMask[key],
           ariaLabel: t(`settings.ai.field.${key}`),
-          onChange: (next) => { draft.fieldMask[key] = next; },
+          onChange: (next) => { draft.fieldMask[key] = next; refreshSave(); },
         }).node,
       ]),
     ]));
@@ -1264,14 +1280,34 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     const deleteBlock = block('settings.ai.editor.block.delete', 'settings.ai.editor.block.deleteHint', [deleteCredBtn]);
 
     const errorLine = el('p', { class: 'ai-editor__error', role: 'alert', text: editor.error || '' });
-    const canSave = () => Boolean(draft.label && draft.label.trim());
-    const saveBtn = el('button', {
+    /**
+     * 0.6.5（总监 m01026）：名称合法 + 有改动才可保存。
+     * 新建态不要求改动（打开就是为了新建），编辑态与关闭时的放弃确认共用 editorDirty()。
+     */
+    function canSave() {
+      if (!draft.label || !draft.label.trim()) return false;
+      return editor.mode === 'create' || editorDirty();
+    }
+    /** 0.6.5：重算保存按钮的 disabled 与「没有改动」提示。 */
+    function refreshSave() {
+      if (!saveBtn) return;
+      const ok = canSave();
+      saveBtn.disabled = !ok || Boolean(editor.saving);
+      if (!ok && editor.mode === 'edit' && draft.label && draft.label.trim() && !editorDirty()) {
+        saveBtn.title = t('settings.ai.editor.noChanges');
+      } else {
+        saveBtn.removeAttribute('title');
+      }
+    }
+    saveBtn = el('button', {
       class: 'btn btn--primary ai-editor__save',
       type: 'button',
       disabled: !canSave() || editor.saving,
       text: editor.saving ? t('settings.ai.editor.saving') : t('settings.ai.editor.save'),
       on: { click: () => saveEditor() },
     });
+    // 0.6.5：首帧就按「是否改动」定灰显与提示（编辑态打开即灰）。
+    refreshSave();
 
     const cancelBtn = el('button', {
       class: 'btn ai-editor__cancel',
@@ -1291,13 +1327,34 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       deleteBlock,
       errorLine,
     ]);
+    const footerEl = el('div', { class: 'ai-editor__actions ai-editor__footer' }, [saveBtn, cancelBtn]);
     const editorEl = el('div', { class: 'ai-editor' }, [
       el('div', { class: 'ai-editor__head' }, [backBtn, title]),
       bodyEl,
-      el('div', { class: 'ai-editor__actions ai-editor__footer' }, [saveBtn, cancelBtn]),
+      footerEl,
     ]);
     credsSection.append(editorEl);
     editorReady = true;
+
+    /**
+     * 0.6.5（用户 2026-11-08）：保存条吸底会盖住最后一行，按实测高度给正文留底。
+     * CSS 只读 `--ai-editor-foot-h`（外加 52px 兜底），不再写死第二套高度。
+     */
+    function syncFootHeight() {
+      const h = footerEl.getBoundingClientRect ? footerEl.getBoundingClientRect().height : 0;
+      if (h > 0) editorEl.style.setProperty('--ai-editor-foot-h', `${Math.round(h)}px`);
+    }
+    syncFootHeight();
+    // 首帧后布局才稳定（字体加载、软键盘、屏幕旋转）；只在编辑器还在文档里时写。
+    const raf = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => setTimeout(fn, 0);
+    raf(() => {
+      if (editorEl.isConnected) syncFootHeight();
+    });
+    if (typeof ResizeObserver === 'function') {
+      const footObserver = new ResizeObserver(() => syncFootHeight());
+      footObserver.observe(footerEl);
+      editorEl.__footObserver = footObserver;
+    }
 
     /**
      * 0.4.14（M21 第 3 版 §2.4）：回收站子块的出现条件 = 该凭据「删除」为回收站 + 有写档日历。

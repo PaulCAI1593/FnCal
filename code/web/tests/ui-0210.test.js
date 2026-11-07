@@ -702,7 +702,7 @@ describe('1-6 日历表格工具条与实时计数', () => {
   it('计数在工具条右侧、勾选暂存后实时变化', async () => {
     const opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
-    const page = opened.dialog.querySelector('#settings-page-calendar');
+    const page = opened.dialog.querySelector('#settings-page-account');
     expect(page.querySelector('.cal-table__toolbar .cal-table__count').textContent).toBe('共 3 个项目');
     // 取消勾选「工作」→ 显示计数立刻变 2（不必点应用）
     const row = [...page.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')].find((r) =>
@@ -716,34 +716,50 @@ describe('1-6 日历表格工具条与实时计数', () => {
     opened.close();
   });
 
-  it('工具条固定、表格自己滚（CSS 结构）', () => {
-    expect(rule(calendarCss, '.settings__page--calendar')).toContain('overflow: hidden');
-    expect(rule(calendarCss, '.settings__page--calendar .cal-table__toolbar')).toContain('flex: 0 0 auto');
-    expect(rule(calendarCss, '.settings__page--calendar .cal-table__body')).toContain('overflow-y: auto');
-    expect(rule(calendarCss, '.settings__page--calendar .cal-table__body')).toContain('min-height: 0');
+  it('工具条固定、整页统一滚动（CSS 结构）', () => {
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，日历块不再自己开二层滚动，
+    // 整页统一由 .settings__pages 滚。旧的 .settings__page--calendar 规则随之删除，
+    // 这条按新结构改写，不是放宽。
+    expect(calendarCss).not.toContain('.settings__page--calendar');
+    expect(rule(calendarCss, '.settings__pages')).toContain('overflow-y: auto');
+    expect(rule(calendarCss, '.settings__cal-table')).toContain('flex-direction: column');
+    expect(rule(calendarCss, '.settings__cal-table .cal-table__toolbar')).toContain('flex: 0 0 auto');
+    expect(rule(calendarCss, '.settings__cal-table .cal-table__dav-hint')).toContain('flex: 0 0 auto');
   });
 });
 
-describe('1-7 底部提示与版本号同一行', () => {
-  it('foot-hint 与 version 同在 .settings__foot；按钮在下一行', () => {
+describe('0.5.22 页脚：未应用计数一行 + 按钮行左侧两行小块', () => {
+  it('计数独占上面一行；版本号与关于区在按钮行的小块里', () => {
     const opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store: null });
     const foot = opened.dialog.querySelector('.settings__foot');
     expect(foot).toBeTruthy();
-    expect(foot.querySelector('.settings__foot-hint')).toBeTruthy();
-    expect(foot.querySelector('.settings__version')).toBeTruthy();
-    const actions = opened.dialog.querySelector('.settings__actions');
-    expect(foot.nextElementSibling).toBe(actions);
-    // 提示左、版本右
-    expect(foot.firstElementChild.classList.contains('settings__foot-hint')).toBe(true);
+    // 0.5.22（用户 m00535 / m00549）：旧「提示与版本号同行、按钮在下一行」的结构已撤掉，
+    // 改为「计数行 + 按钮行两行小块」——不是放宽断言。
+    const pendingRow = foot.querySelector('.settings__pending-row');
+    expect(pendingRow).toBeTruthy();
+    expect(pendingRow.hidden).toBe(true);
+    expect(foot.querySelector('.settings__foot-hint')).toBeNull();
+    const meta = foot.querySelector('.settings__foot-meta');
+    expect(meta).toBeTruthy();
+    expect(meta.querySelector('.settings__version')).toBeTruthy();
+    expect(meta.querySelector('.settings__about-meta')).toBeTruthy();
+    // 小块与「取消 / 应用」在同一个 flex 行（.settings__actions 的直接子元素）
+    const actions = foot.querySelector('.settings__actions');
+    expect(meta.parentElement).toBe(actions);
+    expect([...actions.querySelectorAll('.btn')].map((b) => b.textContent.trim())).toEqual(['取消', '应用']);
     opened.close();
   });
 
-  it('CSS：底部行不收缩、提示可换行、版本不换行', () => {
-    expect(rule(calendarCss, '.settings__foot')).toContain('flex: 0 0 auto');
-    expect(rule(calendarCss, '.settings__foot-hint')).toContain('flex-wrap: wrap');
+  it('CSS：小块总高=按钮高、两行各半、窄屏整块换行、旧提示规则删净', () => {
     expect(rule(calendarCss, '.settings__foot')).toContain('border-top: 1px solid var(--border)');
-    const version = calendarCss.slice(calendarCss.indexOf('.settings__version'));
-    expect(version.slice(0, 400)).toContain('white-space: nowrap');
+    expect(rule(calendarCss, '.settings__actions')).toContain('--settings-meta-h: 36px');
+    const meta = rule(calendarCss, '.settings__foot-meta');
+    expect(meta).toContain('height: var(--settings-meta-h)');
+    expect(meta).toContain('line-height: calc(var(--settings-meta-h) / 2)');
+    expect(meta).toContain('white-space: nowrap');
+    expect(calendarCss).toMatch(/@media \(pointer: coarse\)[\s\S]{0,300}--settings-meta-h: 44px/);
+    expect(calendarCss).toMatch(/@media \(max-width: 640px\)[\s\S]{0,300}order: -1/);
+    expect(calendarCss).not.toContain('.settings__foot-hint');
   });
 });
 

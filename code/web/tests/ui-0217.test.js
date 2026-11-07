@@ -416,7 +416,7 @@ describe('0.2.17 B4 周数算法联动 + 快捷键清单', () => {
     expect(rowByLabel(opened.dialog, '周数算法').hidden).toBe(false);
   });
 
-  it('「快捷键」是第 5 个页签，13 条键位直接平铺（0.2.20 E14：不再弹窗）', () => {
+  it('「快捷键」是第 4 个页签，13 条键位直接平铺（0.2.20 E14：不再弹窗）', () => {
     opened = openAccountDialog({
       user: { username: 'alice', displayName: 'Alice', role: 'user' },
       store: makeStore({}),
@@ -424,8 +424,10 @@ describe('0.2.17 B4 周数算法联动 + 快捷键清单', () => {
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
     // 0.3.0（P4）：五个页签，快捷键仍在最后。
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', '日历', 'CalDAV', 'AI', '快捷键']);
-    tabs[4].click();
+    // 0.6.2：桌面卡片跟随 App 登录态，不再单独发令牌——「卡片」页签删除，快捷键仍是最后一个。
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4，快捷键仍是最后一个。
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
+    tabs[3].click();
 
     const page = dialog.querySelector('#settings-page-shortcuts');
     expect(page).toBeTruthy();

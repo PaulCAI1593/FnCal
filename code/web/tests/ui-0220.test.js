@@ -745,12 +745,14 @@ describe('0.2.20 E13–E16：设置页', () => {
     expect(i18n).not.toContain("'settings.admin.hint'");
   });
 
-  it('E14：快捷键是第 5 个页签，13 条直接平铺', async () => {
+  it('E14：快捷键是第 4 个页签，13 条直接平铺', async () => {
     const dialog = await openSettings({});
     const tabs = [...dialog.querySelectorAll('.settings__tabs [role="tab"]')].map((b) => b.textContent);
     // 0.3.0（P4）：五个页签（CalDAV 文案收短、新增 AI）
-    expect(tabs).toEqual(['一般', '日历', 'CalDAV', 'AI', '快捷键']);
-    [...dialog.querySelectorAll('.settings__tabs [role="tab"]')][4].click();
+    // 0.6.2：删除「卡片」页签（卡片改用 App 会话），快捷键回到第 5 位、仍是最后一个。
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，五个变四个，快捷键是第 4 枚（索引 3）。
+    expect(tabs).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
+    [...dialog.querySelectorAll('.settings__tabs [role="tab"]')][3].click();
     const page = dialog.querySelector('#settings-page-shortcuts');
     expect(page).toBeTruthy();
     expect(page.hidden).toBe(false);

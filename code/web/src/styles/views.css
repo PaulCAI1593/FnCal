@@ -46,6 +46,8 @@
 }
 .month__grid {
   display: grid;
+  /* 0.5.21（W2）：网格级跨天条标签层（`.month__bar-labels`）以网格为定位容器。 */
+  position: relative;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   grid-auto-rows: 1fr;
   min-height: 0;
@@ -135,7 +137,9 @@
   flex: none;
   width: 12px;
   height: 12px;
-  color: var(--accent);
+  /* 0.6.11（用户：「图标什么颜色，文字就什么颜色」）：不写色值，跟随容器——
+     节日是 --accent、节气是 --term-ink、其它月格是 --gray-400。 */
+  color: currentColor;
 }
 .month__holiday-icon svg {
   width: 12px;
@@ -387,7 +391,7 @@
   outline-offset: -2px;
 }
 .chip--filled:focus-visible {
-  outline-color: var(--ev-fg, #fff);
+  outline-color: var(--ev-fg, #101216);
 }
 @media (hover: hover) {
   .chip:hover {
@@ -411,12 +415,30 @@
   text-overflow: ellipsis;
   font-weight: 500;
 }
+/* 0.6.2（W2，用户：「和桌面端一致啊」）：桌面跨天条的标题可以伸到本段之后，
+   到整条最右一段的右缘才收口（右界由 month.js 写 max-width）。段本身放开裁剪、
+   抬一层；标题不吃指针事件，点击/拖拽仍落在段上。
+   ≤520px 不走这套：手机档由 `.month__bar-labels` 逐行段画名称。 */
+.chip[data-bar-label='1'] {
+  position: relative;
+  z-index: 2;
+  overflow: visible;
+}
+.chip[data-bar-label='1'] .chip__title {
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
 /* Filled variant for all-day / multi-day */
 .chip--filled {
   background: var(--chip-color);
   /* Per-color ink (see colors.js): white on every fill but amber, where it
      would sit at 2.2:1 and no text-shadow rescues that. */
-  color: var(--ev-fg, #fff);
+  color: var(--ev-fg, #101216);
 }
 @media (hover: hover) {
   .chip--filled:hover {
@@ -431,7 +453,7 @@
    4.6–4.8:1 against its ink, so 85% or 90% of that ink lands under AA. The
    smaller size already carries the hierarchy. */
 .chip--filled .chip__time {
-  color: var(--ev-fg, #fff);
+  color: var(--ev-fg, #101216);
 }
 
 /* ---- 0.2.9（用户 12）：多日全天/多日条跨格连成整条 ---- */
@@ -480,7 +502,7 @@
   height: 13px;
   max-height: 100%;
   opacity: 0.92;
-  color: var(--ev-fg, #fff);
+  color: var(--ev-fg, #101216);
   pointer-events: none;
 }
 .chip__cont svg {
@@ -738,7 +760,7 @@
   font-size: var(--fs-sm);
   line-height: 1.3;
   background: var(--ev-fill);
-  color: var(--ev-fg, #fff); /* per-color ink — see colors.js */
+  color: var(--ev-fg, #101216); /* per-color ink — see colors.js */
   border: 1px solid color-mix(in srgb, var(--ev-fill) 70%, #000);
   box-shadow: var(--shadow-sm);
   z-index: 5;
@@ -781,7 +803,7 @@
   padding: 3px 6px;
   overflow: hidden;
   background: var(--draft-fill, var(--accent));
-  color: var(--ev-fg, #fff);
+  color: var(--ev-fg, #101216);
   border: 1px solid color-mix(in srgb, var(--draft-fill, var(--accent)) 70%, #000);
   box-shadow: var(--shadow-lg);
   opacity: 0.92;
@@ -836,11 +858,16 @@ body.is-dragging .tevent--resizing * {
   z-index: 8;
 }
 
+/* 0.6.3（B）：三行都按 `--tevent-lines-*`（JS 按可用高度写入）做多行截断。
+   名称/地点允许 `overflow-wrap: anywhere`；时间仍不折行（在空格处断开会把
+   「3 PM」拆成两行），靠 clamp=1 + 省略号收口。 */
 .tevent__title {
   font-weight: 600;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--tevent-lines-title, 1);
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   min-width: 0;
 }
 /* A time is only readable whole: allowed to wrap, it splits at the space
@@ -851,6 +878,9 @@ body.is-dragging .tevent--resizing * {
 .tevent__time {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--tevent-lines-time, 1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -863,21 +893,28 @@ body.is-dragging .tevent--resizing * {
 }
 .tevent.is-short .tevent__title {
   flex: 1 1 auto;
+  display: block;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
 }
 .tevent.is-short .tevent__time {
   font-size: 10px;
   flex: none;
+  display: block;
+  -webkit-line-clamp: unset;
 }
-/* 0.3.5（M10 §2）：定时事件块第三行——地点。只加纯文本行，不引新颜色：
-   墨色继承 .tevent 的 --ev-fg，只靠 opacity 退一档，形成标题/时间/地点的三级层次。
-   10px 是高度预算的硬约束：三行内容 = padding 6 + 标题 15.6 + gap 1 + 时间 13
-   + gap 1 + 地点 13 = 49.6px，1 小时块 52px 才装得下；12px 地点会到 52.2px 而溢出。 */
+/* 0.3.5（M10 §2）：定时事件块第三行——地点。墨色继承 .tevent 的 --ev-fg，只靠
+   opacity 退一档，形成标题/时间/地点的三级层次。
+   0.6.3（B）：行数由 `--tevent-lines-loc` 决定（默认 1，够高才 2），允许折行。 */
 .tevent__loc {
   font-size: 10px;
   line-height: 1.3;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--tevent-lines-loc, 1);
   overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   min-width: 0;
   color: inherit;
   opacity: 0.85;
@@ -920,7 +957,7 @@ body.is-dragging .tevent--resizing * {
   font-size: var(--fs-sm);
   font-weight: 550;
   background: var(--chip-color);
-  color: var(--ev-fg, #fff); /* per-color ink — see colors.js */
+  color: var(--ev-fg, #101216); /* per-color ink — see colors.js */
   cursor: pointer;
   overflow: hidden;
   white-space: nowrap;
@@ -939,7 +976,7 @@ body.is-dragging .tevent--resizing * {
    overwrite just the time text and keep it. */
 .allday-chip__time {
   font-variant-numeric: tabular-nums;
-  color: var(--ev-fg, #fff);
+  color: var(--ev-fg, #101216);
 }
 .allday-chip__time::before {
   content: '，';
@@ -991,7 +1028,7 @@ body.is-dragging .tevent--resizing * {
   border: 2px solid var(--chip-color);
   border-radius: 50%;
   background: transparent;
-  color: var(--ev-fg, #fff); /* the check glyph sits on --chip-color when checked */
+  color: var(--ev-fg, #101216); /* the check glyph sits on --chip-color when checked */
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1175,11 +1212,13 @@ body.is-dragging .tevent--resizing * {
 .chip__holiday-icon {
   display: inline-flex;
   flex: none;
-  color: var(--accent);
+  /* 0.6.11：跟随容器文字色（节日 --accent / 节气 --term-ink），图标与文字必然同色。 */
+  color: currentColor;
 }
 /* 节日全天行的旗子：.allday-chip__icon 的通用色是 ooo/灰，这里按 S2 只给节日行上主题色。 */
 .allday-chip.allday-chip--holiday .allday-chip__icon {
-  color: var(--accent);
+  /* 0.6.11：与文字同色（currentColor），不再单独写主题色。 */
+  color: currentColor;
 }
 /* 0.5.11（S1，用户：「在周/四日/日/日程中，节日的小旗子图标不用去掉」）：
    撤销 0.5.10 ≤520 的藏旗子。窄列仍要放得下名字，所以旗子收到 12px、间距 2px、
@@ -1233,13 +1272,36 @@ body.is-dragging .tevent--resizing * {
 .agenda__event--holiday .agenda__event-icon {
   width: 16px;
   margin: 0 -3px;
-  /* 0.5.11（S2，用户）：旗子与节日文字同为主题色；其它行（外出/普通事件）仍走上面的通用色。 */
-  color: var(--accent);
+  /* 0.5.11（S2）旗子与节日文字同色；0.6.11 改为 currentColor，节气同样自动跟随 --term-ink。 */
+  color: currentColor;
 }
 .agenda__event--holiday .agenda__event-time,
 .agenda__event--holiday .agenda__event-title {
   color: var(--accent);
   font-weight: 500;
+}
+
+/* 0.6.6：二十四节气与节日同款外壳（同尺寸、同位置、同底色），只换颜色令牌与
+   图标（JS 用 sun）。0.6.9（D，用户最终口径「节气颜色用主题色的反色」）：
+   `--term-ink` = 主题色互补色，由 accent-prepaint.js 运行期计算（色相 +180°、
+   饱和度不变、对 --surface ≥4.5:1 兜底）；tokens.css 两套静态值只是无 JS 兜底。 */
+.month__holiday--term,
+.month__holiday--term .month__holiday-icon {
+  color: var(--term-ink);
+}
+.chip.chip--holiday--term,
+.allday-chip.allday-chip--term {
+  color: var(--term-ink);
+}
+.chip.chip--holiday--term .chip__holiday-icon,
+.allday-chip.allday-chip--term .allday-chip__icon {
+  color: var(--term-ink);
+}
+.agenda__event.agenda__event--term,
+.agenda__event--term .agenda__event-icon,
+.agenda__event--term .agenda__event-time,
+.agenda__event--term .agenda__event-title {
+  color: var(--term-ink);
 }
 
 /* ---- Agenda view ------------------------------------------------------ */
@@ -1296,12 +1358,27 @@ body.is-dragging .tevent--resizing * {
   font-weight: 600;
   text-transform: uppercase;
   margin-top: 2px;
+  /* 0.6.11（用户：「11月的月不要换行」）：日期列只有 96px，浏览器会在数字与「月」
+     之间断行；这一行必须始终保持单行。 */
+  white-space: nowrap;
+}
+/* 0.6.11：窄档放不下就降一档字号并收一点字距，不折行、不省月份、不改文案格式。 */
+@media (max-width: 430px) {
+  .agenda__date-dow {
+    font-size: var(--fs-xs);
+    letter-spacing: -0.01em;
+  }
 }
 /* 0.5.10（S6，用户：「日程视图中，在这里加上节日」）：日期列「周X · M月」下方一行
    节日全名；只用主题色，字号小于日期标签，长名省略（title 给全名）。只有当天有节日
    时才渲染这个节点，无节日的日期头高度不变。 */
+/* 0.6.11（用户：日程列表 22 日「小雪」是主题蓝、且没有太阳图标）：日期列这一行
+   改成「图标 + 名字」，与其它界面同一套口径——节日 flag + --accent、节气 sun +
+   --term-ink。图标只写 currentColor，颜色统一由容器继承，所以图标与文字必然同色。 */
 .agenda__date-holiday {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 3px;
   max-width: 100%;
   margin-top: 2px;
   font-size: 10px;
@@ -1309,8 +1386,27 @@ body.is-dragging .tevent--resizing * {
   line-height: 1.2;
   color: var(--accent);
   white-space: nowrap;
+}
+.agenda__date-holiday--term {
+  color: var(--term-ink);
+}
+.agenda__date-holiday-icon {
+  display: inline-flex;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  /* 与文字同色：不写具体色值，继承容器（节日主题色 / 节气 --term-ink）。 */
+  color: currentColor;
+}
+.agenda__date-holiday-icon .icon {
+  width: 12px;
+  height: 12px;
+}
+.agenda__date-holiday-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .agenda__events {
   display: flex;
@@ -1471,7 +1567,7 @@ body.is-dragging .tevent--resizing * {
   border: 2px solid var(--chip-color);
   border-radius: 50%;
   background: transparent;
-  color: var(--ev-fg, #fff); /* the check glyph sits on --chip-color when checked */
+  color: var(--ev-fg, #101216); /* the check glyph sits on --chip-color when checked */
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1503,6 +1599,22 @@ body.is-dragging .tevent--resizing * {
   padding: 11vh var(--sp-4) var(--sp-4);
   animation: fade-in var(--dur) var(--ease);
 }
+/* 0.6.6（§三）：顶部常驻条（docked）搜索也补遮罩——0.2.3 起只有全屏搜索有，
+   用户看到的是「点搜索时页面没有被压暗」。层级：高于页面内容、低于顶栏（30）
+   与结果面板（105），所以不挡顶栏输入框、也不接管结果面板的点击。
+   点遮罩由 search.js 收起（与点外部同一条路径）。 */
+.search-scrim--docked {
+  z-index: 25;
+  display: block;
+  padding: 0;
+  animation: fade-in 120ms var(--ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .search-scrim--docked {
+    animation: none;
+  }
+}
+
 .search__panel {
   width: 100%;
   /* 0.2.18（C5）：与顶栏搜索槽位解耦——桌面面板按自己的宽度开（lib/segment.js
@@ -1599,7 +1711,7 @@ body.is-dragging .tevent--resizing * {
   border: 2px solid var(--chip-color);
   border-radius: 50%;
   background: transparent;
-  color: var(--ev-fg, #fff); /* the check glyph sits on --chip-color when checked */
+  color: var(--ev-fg, #101216); /* the check glyph sits on --chip-color when checked */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2101,26 +2213,30 @@ button.year__day {
     width: 20px;
     height: 20px;
   }
-  /* 0.5.3（S4）：窄屏顶栏重新分配宽度，别让「今天」被 .header__nav{overflow:hidden}
-     裁掉（320/375 触屏实测：今天 44px 按钮只剩几像素甚至整颗不见，只剩箭头）。
-     ① 品牌标在本档已被挤成几像素残片 → 隐藏；② 齿轮入口隐藏，同一个打开动作并入
-     头像菜单（app.js `popover__settings`），窄屏仍能进设置；
-     ③ 标题本档本来就被裁掉 → 隐藏，把宽度让给「今天」+ 月切换箭头；
-     ④ 顶栏左右留白与间距各收一档。改后 320 触屏 nav 宽 152 ≥ 内容 140。 */
+  /* 0.6.3（用户）：手机顶栏放得下设置图标了，本档不再隐藏 `.header__settings`；
+     齿轮常驻、触控区 40×40、与相邻按钮间距 4px（`margin:-2px` 吃掉视觉外扩，
+     布局占位仍是 36px），`aria-label` / `title` 不变。头像菜单里的「设置」项
+     同时在 app.js 删除，入口全档统一成顶栏一个。
+     0.5.3（S4）的宽度重分配仍有效：「今天」由底栏接管，标题在 nav 里省略，顶栏
+     左右留白各收一档（320 实测 nav 宽 152 ≥ 内容 140）。 */
   .header {
     gap: var(--sp-1);
     padding: 0 max(var(--sp-2), env(safe-area-inset-right, 0px)) 0
       max(var(--sp-2), env(safe-area-inset-left, 0px));
   }
   /* 0.5.4（U2/U4）：本档保留 logo（侧栏开关）与「2026年11月」标题，只在宽度
-     不够时按省略号收缩；齿轮仍隐藏（设置入口并入头像菜单）。 */
+     不够时按省略号收缩；0.6.3 起齿轮也常驻（见上）。 */
   .header__brand {
     flex: none;
     min-width: 0;
     gap: 0;
   }
+  /* 0.6.3：40×40 触控区，负 margin 抵消视觉外扩（布局占位仍 36px，与相邻按钮
+     间距 8-2-2 = 4px）。 */
   .header__settings {
-    display: none;
+    width: 40px;
+    height: 40px;
+    margin: -2px;
   }
   .header__title {
     order: 2;
@@ -2146,7 +2262,7 @@ button.year__day {
   .chip.chip--span-mid,
   .chip.chip--span-end {
     background: var(--chip-color);
-    color: var(--ev-fg, #fff);
+    color: var(--ev-fg, #101216);
     border-radius: 0;
     /* 段与段之间不能有圆角或 1px 断口：几何给的内联圆角已经在真首末生效。 */
   }
@@ -2155,6 +2271,26 @@ button.year__day {
   .chip.chip--span-mid::after,
   .chip.chip--span-end::after {
     display: none;
+  }
+  /* 0.6.2（用户：「和桌面端一致啊」「一行一个」）：每个行段各自显示名称。
+     名称画在网格级标签层上，不被 `.month__cell` 的 overflow 裁切；
+     段内标题只留零宽占位（读屏走 chip 的 aria-label），不再用 visibility 隐藏。 */  /* 0.5.21（W2，用户：「一格处裁切…应该看整体空间」）：一个事件的名称只在网格级
+     标签层画一次。标签层不被 `.month__cell { overflow: clip }` 裁切，所以名称可以
+     跨格压在同事件其它段上；层本身不吃指针事件，点按/长按/拖拽仍落到段上。
+     宽度/位置/字体由 month.js 按「最宽行内段」写内联样式。 */
+  .month__bar-labels {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .month__bar-label {
+    position: absolute;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
   }
   /* 条内延续箭头（行首「<」/ 行末「>」）与桌面同源，手机不隐藏。 */
   /* 0.5.10（S1，用户：「月视图农历日期直接和公历日期一行…节日不需要再有图标和
@@ -2171,10 +2307,14 @@ button.year__day {
     display: none;
   }
   .month__holiday {
-    flex: 0 1 auto;
+    /* 0.5.18（W3）：不许 flex 再压窄承载盒——宽度由 month.js 写「自然宽 × scale」，
+       压窄就会把末字裁掉（用户「廿八和 8 之间有空隙但廿八的八依然被遮挡」）。 */
+    flex: 0 0 auto;
     width: auto;
     min-width: 0;
-    padding: 0;
+    /* 0.6.7（用户：「手机端的节气又被挡掉了一点，节日也是」）：承载盒上下各留 1px，
+       缩放后的墨迹不再贴着 overflow:hidden 的裁切边（真机字体度量略大时会被切）。 */
+    padding: 1px 0;
     overflow: hidden;
   }
   .month__holiday-name {
@@ -2182,16 +2322,29 @@ button.year__day {
     min-width: 0;
     overflow: hidden;
     /* 0.5.11（用户）：「手机上月视图『国庆』『中秋』都显示两个字就好，不要显示
-       『……』」。手机档不再画省略号；宽度不够时由 month.js 缩字号 / 减到 1 个
-       完整汉字，保证不出现半个字。桌面仍保留上面的省略号规则。 */
+       『……』」。正常情况按缩字号把两个字完整放下；只有缩到下限仍放不下时
+       （month.js 加 `is-truncated`）才画省略号——见下面的 .is-truncated 规则。
+       桌面仍保留上面的省略号规则。 */
     text-overflow: clip;
     white-space: nowrap;
-    /* 0.5.10（S1 细则，用户：「如果窄，就继续缩小农历的字号」）：窄格优先缩字号，
-       到 0.5 下限仍放不下才由上面「减到 1 个字」接手。比例由 month.js 按实测宽度
-       写进 --holiday-scale（节日名基准 10px）。 */
+    /* 0.5.18（W3，用户：「农历和节日的字体不统一」）：农历与节日名共用 10px 基准 +
+       同一个 `--dayhead-scale`（由 month.js 按实测可用宽写入，一个格子两者同值）。
+       transform 不改布局宽度，所以 month.js 同时把「自然宽 × scale」写进承载盒宽度，
+       视觉宽 = 布局宽，不再出现「右边有空隙、末字却被切」。 */
+    font-size: 10px;
     transform-origin: left center;
-    transform: scale(var(--holiday-scale, 1));
+    transform: scale(var(--dayhead-scale, 1));
   }
+  /* 0.6.10（用户：「和农历日期同样的方式应该就可以了」）：节日/节气名截断时与
+     `.month__lunar--inline .month__lunar-text.is-truncated` 用**同一组声明**——
+     inline-block、overflow:hidden、text-overflow:ellipsis；宽度由 month.js 按
+     「可用宽 ÷ 0.5」写死，缩放后正好铺满，省略号落在最后一个可见字后面。 */
+  .month__holiday-name.is-truncated {
+    display: inline-block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   /* 0.5.10（S1）：≤520 的农历节点并进日号行（左对齐），不再单独占一行。 */
   .month__lunar {
     display: flex;
@@ -2202,16 +2355,21 @@ button.year__day {
     line-height: 1;
   }
   .month__lunar--inline {
-    flex: 1 1 auto;
+    /* 0.5.18（W3）：同上，宽度由 month.js 定，flex 不许再收缩。 */
+    flex: 0 0 auto;
     min-width: 0;
+    /* 0.6.7（用户）：与节日名同一条规则，上下各留 1px 保护边。 */
+    padding-block: 1px;
     overflow: hidden;
     text-align: left;
   }
   .month__lunar-text {
     transform-origin: left center;
-    /* E12 的整行占位在手机档取消；0.8 是基准，窄格由 month.js 实测后把
-       --lunar-scale 往下调到 0.5 下限（用户：窄就继续缩字号，不折行、不省略）。 */
-    transform: scale(var(--lunar-scale, 0.8));
+    /* 0.5.18（W3）：与节日名共用 10px 基准 + 共享 --dayhead-scale（旧的是农历 12px、
+       节日 10px 各自缩，视觉字号对不上）。承载盒宽度由 month.js 写成「自然宽 ×
+       scale」，缩放后正好铺满，不再留白、也不再按放大的父盒裁字。 */
+    font-size: 10px;
+    transform: scale(var(--dayhead-scale, 1));
     max-width: 100%;
     white-space: nowrap;
   }
@@ -2252,7 +2410,10 @@ button.year__day {
     line-height: 12px;
     overflow: hidden;
   }
-  /* 日历色映射：左侧 3px 色条（原 7px 点的颜色语义，白底上仍能一眼分辨日历）。 */
+  /* 日历色映射：左侧 3px 色条（原 7px 点的颜色语义，白底上仍能一眼分辨日历）。
+     紧凑月视图 chip 高仅 26px，色条是日历色的唯一识别线索（等同桌面的 4px 圆点），
+     不是给卡片加装饰性侧边条；0.5.x 起的既有设计，0.6.6 未改。 */
+  /* impeccable-disable-next-line side-tab: 日历色识别线索，非装饰性卡片侧边条 */
   .chip::after {
     content: '';
     position: absolute;

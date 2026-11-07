@@ -135,15 +135,18 @@ describe('0.3.5 M10 · 时间网格地点行', () => {
     expect(block.querySelector('.tevent__loc')).toBeNull();
   });
 
-  it('超长地点：节点文本完整保留，仍是单行省略（CSS 规则断言）', () => {
+  it('超长地点：节点文本完整保留，按 --tevent-lines-loc 多行截断（0.6.3 起）', () => {
     const [block] = renderBlocks(makeEvent({ start: at(10), end: at(11), location: LONG_LOC }));
     const loc = block.querySelector('.tevent__loc');
     expect(loc.textContent).toBe(LONG_LOC);
     const rule = cssRule(views, '.tevent__loc');
-    expect(rule).toMatch(/white-space:\s*nowrap/);
+    // 0.6.3（B）：地点由「单行省略」改为按行数变量多行截断——52px 的 1 小时块只有
+    // 1 行预算，90px+ 才可能拿到 2 行；因此 white-space/text-overflow 不再是判据。
+    expect(rule).toMatch(/-webkit-line-clamp:\s*var\(--tevent-lines-loc/);
     expect(rule).toMatch(/overflow:\s*hidden/);
-    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+    expect(rule).toMatch(/overflow-wrap:\s*anywhere/);
     expect(rule).toMatch(/min-width:\s*0/);
+    expect(block.style.getPropertyValue('--tevent-lines-loc')).toBe('1');
   });
 
   it('aria-label：地点非空时拼在时间后；为空不留多余逗号', () => {

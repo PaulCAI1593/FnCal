@@ -3,8 +3,36 @@
  * 组合规则：关键词 AND、不同筛选 AND、同组多值 OR；结果计数「找到 N 个」。
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { createSearch } from '../src/js/search.js';
 import { normalizeEvent, normalizeTask, DEFAULT_SETTINGS } from '../src/js/store.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const calendarCss = readFileSync(path.join(HERE, '..', 'src/styles/calendar.css'), 'utf8');
+
+/** 取某个媒体块（按 `{` 配对）；出现多段时取包含 marker 的那段。 */
+function mediaBlock(css, header, marker) {
+  let from = 0;
+  for (;;) {
+    const at = css.indexOf(header, from);
+    expect(at).toBeGreaterThan(-1);
+    let depth = 0;
+    for (let i = css.indexOf('{', at); i < css.length; i += 1) {
+      if (css[i] === '{') depth += 1;
+      else if (css[i] === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const block = css.slice(at, i + 1);
+          if (!marker || block.includes(marker)) return block;
+          from = i + 1;
+          break;
+        }
+      }
+    }
+  }
+}
 
 const NOW = new Date(2026, 6, 16, 12, 0).getTime();
 
@@ -184,5 +212,42 @@ describe('B6 搜索筛选', () => {
     expect(titles()).toEqual(['写周报']);
     [...document.querySelectorAll('.search__filter-clear')][0].click();
     expect(titles().sort()).toEqual(['写周报', '工作周会'].sort());
+  });
+});
+
+/* ------------------------------------------------------- 0.5.18 W1 */
+
+describe('0.5.18 W1：≤520 搜索筛选区不被结果区挤成一条缝', () => {
+  const wideBlock = mediaBlock(calendarCss, '@media (max-width: 720px) {', '.search__filters');
+  const phoneBlock = mediaBlock(calendarCss, '@media (max-width: 520px) {', '.search-scrim');
+
+  it('筛选区有非零基准与滚动，结果区不再抢光剩余高度', () => {
+    // 根因：旧 .search__filters 是 flex:1（basis 0%）+ max-height:none，而
+    // .search__panel .search__results 是 flex:1 1 auto（basis = 内容高）。负自由空间只按
+    // 基准收缩，筛选区被压到只剩 2×padding（390 实测 clientHeight 48 / scrollHeight 310，
+    // 四组控件全在盒外、看不到）。
+    expect(wideBlock).toMatch(
+      /\.search__filters \{[\s\S]*?flex:\s*0 1 auto;[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto;[\s\S]*?overscroll-behavior:\s*contain;/
+    );
+    // 上限 70%：键盘态可视高 500 时面板约 480，筛选项自然高 310 能整块放下；
+    // 60% 只给 288，会把「清除筛选」裁掉一半（实测过）。
+    expect(wideBlock).toMatch(/\.search__filters \{[\s\S]*?max-height:\s*min\(70%,\s*70dvh\);/);
+    expect(wideBlock).toMatch(/\.search__panel \.search__results \{[\s\S]*?flex:\s*1 1 0;[\s\S]*?min-height:\s*88px;/);
+    // 旧写法必须消失，否则后写者又把它压回 48px
+    expect(wideBlock).not.toMatch(/\.search__filters \{[^}]*flex:\s*1;/);
+    expect(wideBlock).not.toMatch(/\.search__filters \{[^}]*max-height:\s*none;/);
+  });
+
+  it('≤520 浮层跟可视视口（键盘）缩放，底部留 8px', () => {
+    // 0.5.13 建的键盘变量：--vv-height / --vv-offset-top 由 keyboard-inset.js 写。
+    expect(phoneBlock).toMatch(
+      /\.search-scrim \{[\s\S]*?top:\s*var\(--vv-offset-top,\s*0px\);[\s\S]*?height:\s*var\(--vv-height,\s*100dvh\);/
+    );
+    expect(phoneBlock).toMatch(
+      /\.search-scrim \{[\s\S]*?padding:\s*max\(var\(--sp-3\),\s*env\(safe-area-inset-top\)\) var\(--sp-3\)\s+max\(8px,\s*env\(safe-area-inset-bottom\)\);/
+    );
+    expect(phoneBlock).toMatch(/\.search__panel \{[\s\S]*?height:\s*100%;[\s\S]*?max-height:\s*100%;/);
+    // 收起键盘后回到设计位置：0.5.13 的 vv 变量在无键盘时等于 100dvh / 0
+    expect(calendarCss).not.toMatch(/\.search-scrim \{[^}]*height:\s*100vh;/);
   });
 });

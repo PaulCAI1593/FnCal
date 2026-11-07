@@ -5,7 +5,7 @@
  *   - 菜单：管理员 4 项、无独立「我的安全」；普通用户 4 项、无「安全设置」；
  *   - 4 个页签的 role/aria-selected/aria-controls，默认选中 ①，其余面板 hidden；
  *   - 点页签 / ←→ / Home / End 只切 hidden，不发请求；切页回顶；切走再切回未保存输入仍在；
- *   - 分组：① 自己的 2 块、② 其他账号（排除自己）+ 三个既有分区、③ HTTPS/证书、④ 审计；
+ *   - 分组：① 自己的 3 块（0.6.1 增加「登录设备与接入」）、② 其他账号（排除自己）+ 三个既有分区、③ HTTPS/证书、④ 审计；
  *   - 按钮：每页可见 primary ≤1；破坏性按钮是 btn--danger-outline，实心 btn--danger 只在确认弹窗。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -213,11 +213,17 @@ describe('0.3.10 四页签与分组', () => {
     expect(visiblePanels()[0].id).toBe('sec-panel-self');
   });
 
-  it('分组：① 自己的 2 块、② 其他账号 + 三个分区、③ HTTPS/证书、④ 审计', async () => {
+  // 0.6.1：① 页新增「登录设备与接入」一区（TOTP 之后、CalDAV 专用密码之前），
+  // 故由 2 块变 3 块——不是放宽断言，是分区数量按其实际用途增加。
+  it('分组：① 自己的 3 块、② 其他账号 + 三个分区、③ HTTPS/证书、④ 审计', async () => {
     openAdmin();
     await flushTwice();
     const [self, login, cert, audit] = panels();
-    expect(panelTitles(self)).toEqual([t('security.section.totp'), t('security.section.dav')]);
+    expect(panelTitles(self)).toEqual([
+      t('security.section.totp'),
+      t('security.section.devices'),
+      t('security.section.dav'),
+    ]);
     expect(panelTitles(login)).toEqual([
       t('security.section.activity'),
       t('security.section.policy'),
@@ -225,12 +231,41 @@ describe('0.3.10 四页签与分组', () => {
       t('security.section.otherTotp'),
     ]);
     expect(panelTitles(cert)).toEqual([t('security.section.https'), t('security.section.cert')]);
-    expect(panelTitles(audit)).toEqual([t('security.section.audit')]);
+    // 0.6.4（用户 m00854）：「系统诊断」作为 ④ 审计页的第二组，放在审计列表下方。
+    expect(panelTitles(audit)).toEqual([t('security.section.audit'), t('security.section.diag')]);
     // ② 的「其他账号」不含登录者自己。
     expect(sectionByTitle(login, t('security.section.otherTotp'))).toBeTruthy();
     const rows = [...login.querySelectorAll('.security-account')].map((node) => node.textContent);
     expect(rows.some((text) => text.includes('me'))).toBe(false);
     expect(rows.some((text) => text.includes('管理员'))).toBe(true);
+  });
+
+  // 0.6.4（用户 m00854）：「诊断包放到安全设置里的审计，作为系统诊断的日志」——
+  // ④ 审计页的审计列表下方多一组「系统诊断」，只有一枚导出按钮。
+  it('④ 审计页：审计列表下方是「系统诊断」，全弹窗只有一枚「导出诊断包」', async () => {
+    openAdmin();
+    await flushTwice();
+    const audit = panels()[3];
+    const diag = sectionByTitle(audit, t('security.section.diag'));
+    expect(diag).toBeTruthy();
+    // 位置在审计列表之后：两部分是同级 section，诊断在后
+    const sections = [...audit.querySelectorAll('.security-section')];
+    expect(sections.indexOf(diag)).toBe(sections.length - 1);
+    const hint = diag.querySelector('.security-hint.security-diag__hint');
+    expect(hint).toBeTruthy();
+    expect(hint.textContent).toContain('系统诊断日志');
+    const buttons = [...diag.querySelectorAll('button')].filter(
+      (b) => b.textContent.trim() === t('settings.diagnostic.export'),
+    );
+    expect(buttons.length).toBe(1);
+    expect(buttons[0].className).toContain('btn--sm');
+    // 说明在按钮上方（DOM 顺序）
+    expect(hint.compareDocumentPosition(buttons[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // 整张弹窗里也只有这一处
+    const all = [...modal().querySelectorAll('button')].filter(
+      (b) => b.textContent.trim() === t('settings.diagnostic.export'),
+    );
+    expect(all.length).toBe(1);
   });
 
   it('② 页排除自己：accounts 含自己时只列出其他账号', async () => {

@@ -4,13 +4,17 @@
 
 ![FnCal 主界面：年视图、左侧日历列表与顶部工具栏](docs/screenshots/main.png)
 
-当前版本：**0.5.12**
+当前版本：**0.6.11**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
 [![Platform](https://img.shields.io/badge/platform-fnOS%20%C2%B7%20Linux-4D6BFE)](https://www.fnnas.com/)
 
 **项目页面**：<https://paulcai1593.github.io/FnCal/>
+
+**下载**：全部在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>（网页安装包、安卓 APK、AI 技能包、校验文件）。
+
+*国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)，内容与 GitHub 相同。*
 
 ---
 
@@ -25,7 +29,7 @@
 
 ---
 
-## AI 助手：四步接入，决定权在你
+## AI 助手：提案与审批，决定权在你
 
 AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）可以接入 FnCal。默认情况下它**只能看、不能改**；能改的写入也默认走提案，要你点头才落库。
 
@@ -53,9 +57,9 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 ## 六条特色
 
-### 1. 数据在自己的硬盘
+### 1. 数据在自己的 NAS 上
 
-账号、日历、事件全部落在 NAS 本机（默认 `/vol1/@appdata/FnCal/`）。运行期不请求任何第三方服务：没有遥测、没有统计脚本、构建产物不含 CDN 依赖。备份就是备份那个目录，换机器把目录带过去再装即可。
+账号、日历、事件、任务全部落在 NAS 本机（默认 `/vol1/@appdata/FnCal/`）。运行期不请求任何第三方服务：没有遥测、没有统计脚本、构建产物不含 CDN 依赖。一个 fnOS 应用包装好，安装向导填端口与管理员账号即可用；也提供 Docker 部署。备份就是备份那个目录，换机器把目录带过去再装即可。
 
 ### 2. 标准 CalDAV，不是封闭格式
 
@@ -63,26 +67,33 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 ### 3. 六种看法，一套数据
 
-年 / 月 / 周 / 四日 / 日 / 日程六个视图看同一份日程。左侧迷你月历点年月可快速跳转；年视图用色块呈现一整年的安排；日程视图在标题下显示地点，长地点单行省略。
+年 / 月 / 周 / 四日 / 日 / 日程六个视图看同一份日程。左侧迷你月历点年月可快速跳转；年视图用色块呈现一整年的安排；日程视图在标题下显示地点，长地点单行省略。手机上六个视图保留桌面元素，只按宽度缩放排布。
 
 ### 4. 每个日历一种颜色
 
 可建多个日历，各自有名称、颜色、描述与显示开关，也能只显示某一个。事件颜色默认继承所属日历，单条事件可另行覆盖。日历可删（非空会提示将删除多少条，并给 10 秒撤销）；「我的日历」「任务」两个内置日历不可删、可改名。
 
-### 5. 事件和任务分开管
+### 5. 事件和任务分开管，中国节日与节气
 
-待办用独立的「任务」日历，与事件分开；它同样通过 CalDAV 以 VTODO 暴露给客户端。中国法定节日可开关，只标节日当天，不含调休、不联网。`.ics` 可导入为新日历或并入现有日历，也可按日历导出，保留时区、重复规则与提醒。
+待办用独立的「任务」日历，与事件分开；它同样通过 CalDAV 以 VTODO 暴露给客户端。中国法定节日与二十四节气都可开关：同一天只显示一个，节日优先，不标调休、不联网，节气按北京时间离线推算。`.ics` 可导入为新日历或并入现有日历，也可按日历导出，保留时区、重复规则与提醒。
 
-### 6. 装在自己的 NAS 上
+### 6. 安卓端与桌面卡片
 
-一个 fnOS 应用包，安装向导里填端口与管理员账号即可用；也提供 Docker 部署。手机、平板可用：六个视图在手机上保留大屏的元素与信息，只按宽度缩放排布；底栏四项（提案 / 当前视图 / 今天 / 任务），横滑切周期，点左上角 logo 开合侧栏。
+安卓外壳直连你自己的 NAS，填地址就能用，不经过任何中转。桌面可加五款只读卡片：迷你月历、单日日程、月视图、四日视图、日程列表。卡片跟随 App 登录态取数，不需要另配凭据，约 30 分钟自动刷新；状态栏与手势条透明，内容留在安全区内。
+
+**安卓下载**：`FnCal-Android-0.3.6.apk` <https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk>，3,912,809 B，SHA-256 `5962B8B28BE272C103D3C2E423413E21D57A8C03722E3C5F5F62C9549D917576`；可直接覆盖 0.3.5，不用卸载。
+
+*国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk) 下载同一个包。*
 
 **还有这些**
 
-- 搜索可按关键词与时间范围筛选；重复事件可改所属日历，选「整个系列」或「此事件及以后」。
-- 设置项：时区、每周开始日、是否显示周数、事件默认提醒与默认全天提醒、公共假日开关、主题色。
-- 头像菜单里有「检查更新」：显示当前版本与更新源（国内加速 / GitHub 直连），发现新版本可直达下载页。
+- 搜索可按关键词与时间范围筛选，手机端筛选项分组排布、可滚动。
+- 设置项：时区、每周开始日、是否显示周数、事件默认提醒与默认全天提醒、公共假日与节气开关、主题色。
+- 头像菜单里有「检查更新」：先查 Gitee 镜像，再查 GitHub；发现新版本可直达下载，安装包优先从 Gitee 取。
 - 「新建」只分事件与任务两类；任务按钮在搜索与设置之间，点开右侧栏看全部任务。
+- 节日与节气在六个视图里各有颜色与图标：节日用旗子配主题色，节气用太阳配主题色的互补色，图标与文字同色；日程视图日期列也带图标，「周X · M月」保持单行。
+- 迷你月历只留日号与事件点，不再显示农历、节日、节气那行小字。
+- 多端一致：网页、安卓外壳、标准 CalDAV 客户端读写同一批数据。
 
 ---
 
@@ -92,7 +103,7 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 从本仓库 Release 下载 `FnCal-0.5.12.fpk`；
+1. 下载 `FnCal-0.6.11.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -100,14 +111,14 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.5.12.fpk
-# Windows: Get-FileHash .\FnCal-0.5.12.fpk -Algorithm SHA256
+sha256sum FnCal-0.6.11.fpk
+# Windows: Get-FileHash .\FnCal-0.6.11.fpk -Algorithm SHA256
 ```
 
-期望值也写在 `SHA256SUMS.txt` 里；0.5.12 安装包的 SHA-256 是：
+期望值也写在 `SHA256SUMS.txt` 里。0.6.11 安装包的 SHA-256：
 
 ```
-4C7BD8D1C6139189C977BB34761BEEC62AD432CAB7B39DFA844A581D29BEA391
+FDD78A057426F0ED16337185A6F89B49FD7664CB1D71AFEF9D45B4F9F9196FC7
 ```
 
 **升级**
@@ -162,7 +173,7 @@ sha256sum FnCal-0.5.12.fpk
 | 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500）。不带会话头的客户端照常可用；批准时返回审批链接（`approval_requires_ui` + `approvalUrl`，10 分钟、每条一次） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用） |
 
-附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.5.12.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明。技能包可自升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 gh-proxy / jsDelivr / raw 三个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
+附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.6.11.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明。技能包可自升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
 
 ---
 
@@ -233,7 +244,7 @@ docker compose up -d --build      # 然后在 http://<NAS-IP>:5581/ 登录
 
 ## 版本记录
 
-每个版本的改动见 [`CHANGELOG.md`](./CHANGELOG.md)。0.5.x 主要变化：手机端导航形态（底栏四项、滑动切周期、logo 开合侧栏）、手机六个视图保留桌面元素只按宽度缩放、月视图跨天连续条、节日标主题色、AI 审批回执与提案链接、长按菜单存活修复、检查更新下载页可点。
+每个版本的改动见 [`CHANGELOG.md`](./CHANGELOG.md)。0.6.x 主要变化：设置页签收拢与诊断包迁移、登录设备与接入管理、权限独立提示、桌面卡片接口与安卓桌面卡片、卡片多行排版、二十四节气、手机日号行与跨天条几何修正、节日与节气在六个视图的配色与图标统一、迷你月历精简、日程视图日期列不折行。0.5.x 是手机端形态与 AI 审批链路的成型阶段。
 
 ---
 
@@ -271,5 +282,6 @@ MIT License，Copyright (c) 2026 **PaulCAI1593** <https://github.com/PaulCAI1593
 
 ## 链接
 
-- 仓库：<https://github.com/PaulCAI1593/FnCal>
+- 仓库（GitHub）：<https://github.com/PaulCAI1593/FnCal>
+- 仓库（Gitee 镜像，国内更快）：<https://gitee.com/Paul1593/FnCal>
 - 问题反馈：<https://github.com/PaulCAI1593/FnCal/issues>

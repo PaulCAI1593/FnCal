@@ -38,6 +38,11 @@
   --accent-soft: #e8eff8;
   --accent-contrast: #ffffff;
 
+  /* 0.6.9（D）：二十四节气的文字/图标色 = 主题色的互补色，由 accent-prepaint.js
+     运行期计算（色相 +180°、饱和度不变、对 --surface ≥4.5:1 兜底）。无 JS 时用这里
+     的静态兜底：默认 accent #2f5e9e 的互补色 #96692d（对 #ffffff 4.82:1）。 */
+  --term-ink: #96692d;
+
   /* 农历行视觉缩放（0.2.21 F6）：内层文字 12px（浏览器最小字号）再按这个比例缩小，
      视觉 ≈9.6px；后续调档只改这一处（不要再用 font-size 往下压，会被最小字号抬回去）。
      0.2.22（G4）用户要求再大一号：0.6（≈7.2px）→ 0.8（≈9.6px）。 */
@@ -162,6 +167,9 @@
   --accent-link-hover: #7091bc;
   --accent-soft: #1b2a40;
   --accent-contrast: #101216;
+  /* 0.6.9（D）：深色档兜底。#2f5e9e 在深色下先抬到 #5c82b3，其互补色 #b38d5c
+     对 #0e0f13 6.28:1。 */
+  --term-ink: #b38d5c;
   /* 深色下浅蓝 accent 用于文字/描边；其上的文字用深色墨水保证对比度。 */
   --text-on-accent: var(--accent-contrast);
   /* 深色 accent-soft 上的 accent 文字用 hover 亮阶，保证小字号可读。 */

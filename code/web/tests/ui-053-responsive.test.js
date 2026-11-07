@@ -73,7 +73,7 @@ describe('0.5.3 屏幕适配', () => {
     expect(block(viewsCss, '.year--compact .year__bar')).toContain('display: none');
   });
 
-  it('0.5.4（U2/U4/U6）：≤520 保留 logo 与标题、齿轮仍隐藏，顶栏「今天」由底栏接管', () => {
+  it('0.5.4（U2/U4/U6）：≤520 保留 logo 与标题；0.6.3 起齿轮常驻顶栏', () => {
     // 0.5.9（S4）口径变更：views.css 现在有多段 `@media (max-width: 520px)`（新增的
     // 月视图/日程紧凑段在文件末尾），旧的「取最后一段」会取到日程段、把顶栏规则漏掉。
     // 改成取**包含 .header__settings 的那一段**，断言内容本身不变。
@@ -87,18 +87,23 @@ describe('0.5.3 屏幕适配', () => {
     // 标题常驻（省略号收缩）、logo 作侧栏开关，因此这两条断言按新口径改写。
     expect(narrow).not.toMatch(/\.header__brand\s*\{\s*display:\s*none/);
     expect(narrow).not.toMatch(/\.header__title\s*\{[^}]*display:\s*none/);
-    expect(narrow).toMatch(/\.header__settings\s*\{\s*display:\s*none/);
+    // 0.6.3（用户 m01078）：手机顶栏放得下设置图标，本档不再隐藏齿轮；
+    // 旧断言 `display: none` 按新口径反转，并把 40×40 触控区写进断言。
+    expect(narrow).not.toMatch(/\.header__settings\s*\{\s*display:\s*none/);
+    const gearBlock = narrow.slice(narrow.indexOf('.header__settings'));
+    expect(gearBlock).toMatch(/width:\s*40px/);
+    expect(gearBlock).toMatch(/height:\s*40px/);
     // U6：≤720 顶栏「今天」整体隐藏（底栏 `.tabbar__today` 接管）。
     expect(viewsCss).toMatch(
       /@media \(max-width: 720px\)\s*\{[\s\S]*?\.header__today\s*\{\s*display:\s*none/,
     );
   });
 
-  it('S4：齿轮按钮有可隐藏的类名，窄屏设置入口走头像菜单（仅 ≤520）', () => {
+  it('0.6.3：设置入口全档只在顶栏齿轮，头像菜单不再重复「设置」项', () => {
     expect(appJs).toMatch(/class:\s*'icon-btn header__settings'/);
-    expect(appJs).toMatch(/matchMedia\('\(max-width: 520px\)'\)/);
-    expect(appJs).toMatch(/settingsEntry\(\)/);
-    // 菜单项只在窄屏出现：条件命中才返回节点
-    expect(appJs).toMatch(/narrowHeaderQuery\s*&&\s*narrowHeaderQuery\.matches\s*\?/);
+    // 双入口（≤520 隐齿轮 + 菜单补一项）随 0.6.3 删除，宽窄统一。
+    expect(appJs).not.toMatch(/settingsEntry/);
+    expect(appJs).not.toMatch(/narrowHeaderQuery/);
+    expect(appJs).not.toMatch(/popover__settings/);
   });
 });

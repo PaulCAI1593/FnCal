@@ -574,15 +574,18 @@ export function createAiStore({
     return Boolean(removed);
   }
 
-  async function touchLastUsed(userId, id) {
+  async function touchLastUsed(userId, id, { ua = '' } = {}) {
     const file = await loadCredentials(userId);
     const target = file.credentials.find((item) => item.id === id);
     if (!target || target.revokedAt) return null;
     const at = now();
     const previous = target.lastUsedAt ? Date.parse(target.lastUsedAt) : 0;
+    const nextUa = String(ua || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200);
     // 一分钟内重复调用不写盘，省 IO（lastUsedAt 只用于「最近使用」展示）。
-    if (!previous || at - previous > 60 * 1000) {
+    // 0.6.2：顺带记最近一次请求的 UA（界面解析机型/客户端）；UA 变了就写，不受节流限制。
+    if (!previous || at - previous > 60 * 1000 || (nextUa && nextUa !== target.lastUa)) {
       target.lastUsedAt = new Date(at).toISOString();
+      if (nextUa) target.lastUa = nextUa;
       await saveCredentials(userId, file);
     }
     return target;
