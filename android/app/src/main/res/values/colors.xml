@@ -33,4 +33,9 @@
     <color name="glass_fill">#DBFFFFFF</color>
     <color name="glass_stroke">#8CFFFFFF</color>
     <color name="glass_fill_solid">#F5FFFFFF</color>
+
+    <!-- 0.3.0 桌面卡片：卡片自己的底色与描边（与壳内卡片同族，深色在 values-night）。 -->
+    <color name="widget_bg">#FFFFFF</color>
+    <color name="widget_border">#E2E5EB</color>
+    <color name="widget_weekend">#F5F6F8</color>
 </resources>

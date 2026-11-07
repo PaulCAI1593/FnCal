@@ -40,12 +40,16 @@ import kotlin.math.abs
 class MainActivity : AppCompatActivity() {
 
     companion object {
+        /** 0.3.0：桌面卡片点进来时带的视图与日期（Web 端 hash 深链）。 */
+        const val EXTRA_VIEW = "fncal.view"
+        const val EXTRA_DATE = "fncal.date"
+
         private const val REQ_PICK_FILE = 2001
         private const val REQ_STORAGE_PERMISSION = 2002
         private const val MENU_REFRESH = 1
         private const val MENU_ABOUT = 2
         private const val DOUBLE_BACK_WINDOW_MS = 2_000L
-        private const val UA_SUFFIX = " FnCalAndroid/0.2.2"
+        private const val UA_SUFFIX = " FnCalAndroid/0.3.0"
     }
 
     private lateinit var webView: WebView
@@ -195,7 +199,32 @@ class MainActivity : AppCompatActivity() {
         val baseUrl = ShellPrefs.baseUrl(this) ?: return
         errorView.visibility = View.GONE
         progress.visibility = View.VISIBLE
-        webView.loadUrl(baseUrl)
+        webView.loadUrl(targetUrl(baseUrl))
+    }
+
+    /**
+     * 点桌面卡片进来时，在地址后加 hash：`#fncal-view=month&fncal-date=2026-11-07`。
+     *
+     * 只是给网页一个初始视图与日期，不改用户的默认视图设置；
+     * 网页没有这段逻辑时 hash 被忽略，行为与原来一致。
+     */
+    private fun targetUrl(baseUrl: String): String {
+        val view = intent?.getStringExtra(EXTRA_VIEW)?.takeIf { it.isNotBlank() } ?: return baseUrl
+        val date = intent?.getStringExtra(EXTRA_DATE)
+        val hash = buildString {
+            append("fncal-view=").append(Uri.encode(view))
+            if (!date.isNullOrBlank()) {
+                append("&fncal-date=").append(Uri.encode(date))
+            }
+        }
+        val separator = if (baseUrl.contains('#')) "&" else "#"
+        return baseUrl + separator + hash
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (::webView.isInitialized) loadHome()
     }
 
     private fun injectShell(view: WebView?) {

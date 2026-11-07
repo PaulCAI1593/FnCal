@@ -61,6 +61,23 @@ def foreground(source: Image.Image, canvas: int) -> Image.Image:
     return out
 
 
+def logo_mark(source: Image.Image, size: int = 144) -> Image.Image:
+    """0.3.0 地址页 logo：同源图标，方形底板 22% 圆角。
+
+    与启动图标用的是同一张 icon-512.png（不新画图形）。72dp 显示尺寸在 xxhdpi
+    需要 216px，这里生成 144px 的 2x 规格（drawable-xxhdpi），再由系统按密度
+    缩放；比直接引用带 108dp 画布留白的自适应前景更清晰，也不会显得小。
+    """
+    base = source.resize((size, size), Image.LANCZOS)
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    radius = int(round(size * 0.22))
+    draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=255)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(base, (0, 0), mask)
+    return out
+
+
 def main() -> int:
     if not SRC.is_file():
         print("缺少源图:", SRC)
@@ -90,6 +107,13 @@ def main() -> int:
     (anydpi / "ic_launcher.xml").write_text(ADAPTIVE_XML, encoding="utf-8")
     (anydpi / "ic_launcher_round.xml").write_text(ADAPTIVE_XML, encoding="utf-8")
     print("mipmap-anydpi-v26/ic_launcher.xml, ic_launcher_round.xml")
+
+    # 0.3.0（0.2.3 并入）：地址页标题上方的 72dp logo。
+    drawable_xxhdpi = RES / "drawable-xxhdpi"
+    drawable_xxhdpi.mkdir(parents=True, exist_ok=True)
+    mark = logo_mark(src, 144)
+    mark.save(drawable_xxhdpi / "logo_mark.png", optimize=True)
+    print("drawable-xxhdpi/logo_mark.png", mark.size)
     return 0
 
 

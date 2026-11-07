@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  0.3.0 桌面卡片：整张卡片由 WidgetRenderer 用 Canvas 画成位图，这里只有一张图。
+  位图按 AppWidgetManager 给出的实际尺寸与 density 重画，不靠缩放。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent"
+    android:contentDescription="@string/widget_description">
+
+    <ImageView
+        android:id="@+id/widget_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:importantForAccessibility="no"
+        android:scaleType="fitXY" />
+</FrameLayout>

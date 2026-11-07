@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FnCal 安卓外壳 v0.2.1
+  FnCal 安卓外壳 v0.3.0
 
   - 地址页是 LAUNCHER（首次打开先填地址），主界面不导出。
   - usesCleartextTraffic：局域网自托管常是 http，安卓 9 起默认禁明文。
   - 旧系统（API 24-28）保存 Blob 导出文件到公共下载目录需要写外部存储权限。
   - 0.2.1：三页统一 Theme.FnCal，edge-to-edge + 透明状态栏 / 导航栏（§S2-2b）；
     地址页与关于页的渐变背景与卡片风格由布局与 drawable 决定。
+  - 0.3.0：五款桌面卡片（AppWidget）+ WorkManager 每 30 分钟刷新；
+    RECEIVE_BOOT_COMPLETED 用于重启后重排周期任务；MainActivity 改 singleTop，
+    点卡片带视图与日期时复用同一个 WebView，不重开一页。
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -16,6 +19,8 @@
         android:maxSdkVersion="28" />
     <!-- 0.2.0（§B4）：更新用系统下载器取 APK，交给系统安装器。 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 0.3.0（§A2）：重启后重新排卡片刷新。 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="false"
@@ -41,6 +46,7 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
             android:exported="false"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
@@ -49,6 +55,79 @@
             android:label="@string/title_about"
             android:theme="@style/Theme.FnCal"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- 0.3.0（§A3）：五款桌面卡片。导出给桌面进程投递 APPWIDGET_UPDATE。 -->
+        <receiver
+            android:name=".MiniMonthWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_mini_month_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_mini_month_info" />
+        </receiver>
+
+        <receiver
+            android:name=".DayAgendaWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_day_agenda_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_day_agenda_info" />
+        </receiver>
+
+        <receiver
+            android:name=".MonthWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_month_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_month_info" />
+        </receiver>
+
+        <receiver
+            android:name=".FourDayWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_four_day_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_four_day_info" />
+        </receiver>
+
+        <receiver
+            android:name=".AgendaListWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_agenda_list_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_agenda_list_info" />
+        </receiver>
+
+        <!-- 0.3.0（§A2）：开机 / 改时间 / 改时区 / 升级后重排并刷新。 -->
+        <receiver
+            android:name=".WidgetRefreshReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- 0.2.0（§B4）：把下载到外部私有目录的 APK 以 content:// 交给安装器。 -->
         <provider

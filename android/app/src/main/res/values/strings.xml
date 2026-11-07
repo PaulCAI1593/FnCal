@@ -98,4 +98,35 @@
     <string name="update_check_failed">检查更新失败：%1$s</string>
     <string name="update_signature_note">测试签名：同签名可直接覆盖；换正式签名或跨过 0.2.0 之前版本需先卸载一次。</string>
     <string name="update_install_started">已打开安装器</string>
+
+    <!-- 0.3.0：地址页 logo 与桌面卡片（0.2.3 的 logo、透明系统栏并入本版）。 -->
+    <string name="logo_content_description">FnCal 标志</string>
+    <string name="about_widget_hint">桌面卡片用只读令牌读取日程。到网页「设置 → 卡片」生成令牌，再粘贴到这里。</string>
+    <string name="about_widget_label">令牌</string>
+    <string name="about_widget_placeholder">fncal_wd_…</string>
+    <string name="about_widget_save">保存并测试</string>
+    <string name="about_widget_saving">正在测试连接…</string>
+    <string name="about_widget_clear">清除令牌</string>
+    <string name="about_widget_ok">已连接 · 今天 %1$d 条</string>
+    <string name="about_widget_empty">已连接 · 今天没有日程</string>
+    <string name="about_widget_invalid">令牌无效或已吊销</string>
+    <string name="about_widget_network">连不上服务器</string>
+    <string name="about_widget_cleared">令牌已清除，桌面卡片会显示设置提示</string>
+    <string name="about_widget_saved_hint">已保存令牌；重新粘贴可以替换。</string>
+    <string name="widget_description">FnCal 桌面卡片</string>
+    <string name="widget_mini_month_label">FnCal 迷你月历</string>
+    <string name="widget_day_agenda_label">FnCal 今日日程</string>
+    <string name="widget_month_label">FnCal 月视图</string>
+    <string name="widget_four_day_label">FnCal 四日视图</string>
+    <string name="widget_agenda_list_label">FnCal 日程列表</string>
+    <string name="widget_no_token">打开 FnCal → 设置 → 桌面卡片</string>
+    <string name="widget_no_token_hint">先粘贴令牌</string>
+    <string name="widget_today_none">今天没有日程</string>
+    <string name="widget_more_items">+%1$d 项</string>
+    <string name="widget_updated">上次更新 %1$s</string>
+    <string name="widget_all_day">全天</string>
+    <string name="widget_refresh">刷新</string>
+    <string name="widget_future_week">未来 7 天</string>
+    <string name="widget_today_header">今天 · %1$s</string>
+    <string name="widget_week_none">未来 7 天没有日程</string>
 </resources>

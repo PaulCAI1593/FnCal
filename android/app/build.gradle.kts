@@ -11,11 +11,11 @@ android {
         applicationId = "com.paulcai1593.fncal.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 202
-        versionName = "0.2.2"
+        versionCode = 300
+        versionName = "0.3.0"
 
         // 外壳版本与 FnCal 服务端版本无关；UA 里带的是壳版本。
-        resValue("string", "fncal_shell_version", "0.2.2")
+        resValue("string", "fncal_shell_version", "0.3.0")
     }
 
     signingConfigs {
@@ -60,4 +60,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // 0.3.0（§A2）：桌面卡片每 30 分钟刷新；WorkManager 是系统推荐的周期任务方案。
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }

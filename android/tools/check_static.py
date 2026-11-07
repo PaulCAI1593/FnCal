@@ -43,11 +43,24 @@ EXPECTED_PNG = {
     "mipmap-xxxhdpi/ic_launcher.png": (192, 192),
     "mipmap-xxxhdpi/ic_launcher_round.png": (192, 192),
     "mipmap-xxxhdpi/ic_launcher_foreground.png": (432, 432),
+    # 0.3.0（§A1 前置）：地址页标题上方的标志，同源 144×144。
+    "drawable-xxhdpi/logo_mark.png": (144, 144),
 }
 
 ALLOWED_DEPS = {
     "androidx.core:core-ktx:1.13.1",
     "androidx.appcompat:appcompat:1.7.0",
+    # 0.3.0（§A2）：桌面卡片 30 分钟周期刷新。
+    "androidx.work:work-runtime-ktx:2.9.0",
+}
+
+# 0.3.0（§A3）：五款卡片与它们声明的尺寸 / 目标格。
+WIDGET_PROVIDERS = {
+    "widget_mini_month_info": ("MiniMonthWidgetProvider", 110, 110, "2x2", "widget_mini_month_label"),
+    "widget_day_agenda_info": ("DayAgendaWidgetProvider", 110, 110, "2x2", "widget_day_agenda_label"),
+    "widget_month_info": ("MonthWidgetProvider", 250, 250, "4x4", "widget_month_label"),
+    "widget_four_day_info": ("FourDayWidgetProvider", 250, 250, "4x4", "widget_four_day_label"),
+    "widget_agenda_list_info": ("AgendaListWidgetProvider", 250, 250, "4x4", "widget_agenda_list_label"),
 }
 
 failures: list[str] = []
@@ -199,7 +212,10 @@ def collect_resources() -> tuple[set[str], set[str], set[str]]:
 def check_resources() -> None:
     strings, colors, styles = collect_resources()
     layouts = {p.stem for p in (APP / "res" / "layout").glob("*.xml")}
-    drawables = {p.stem for p in (APP / "res" / "drawable").glob("*.xml")}
+    # 0.3.0：密度限定目录（drawable-xxhdpi）里的图也算 drawable 引用。
+    drawables: set[str] = set()
+    for folder in (APP / "res").glob("drawable*"):
+        drawables.update(p.stem for p in folder.glob("*"))
     xmls = {p.stem for p in (APP / "res" / "xml").glob("*.xml")}
     mipmaps: set[str] = set()
     for folder in (APP / "res").glob("mipmap-*"):
@@ -313,8 +329,9 @@ def check_update_manifest() -> None:
         fail("update.json apk should be " + expected_apk + ", got " + repr(apk))
     else:
         ok("update.json apk " + apk)
-    if not isinstance(notes, list) or len(notes) != 3 or not all(isinstance(n, str) and n for n in notes):
-        fail("update.json notes should be 3 non-empty strings")
+    if not isinstance(notes, list) or not (3 <= len(notes) <= 6) \
+            or not all(isinstance(n, str) and n for n in notes):
+        fail("update.json notes should be 3-6 non-empty strings")
     else:
         ok("update.json notes " + str(len(notes)))
 
@@ -331,9 +348,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 202": app_gradle,
-        'versionName = "0.2.2"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.2.2")': app_gradle,
+        "versionCode = 300": app_gradle,
+        'versionName = "0.3.0"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.0")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -662,6 +679,206 @@ def check_layouts() -> None:
         fail("input field selector missing focused/default states")
 
 
+def check_widgets() -> None:
+    """0.3.0（§A1–§A5）：五款桌面卡片、令牌入口、30 分钟刷新、透明系统栏与 72dp 标志。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    manifest = (APP / "AndroidManifest.xml").read_text(encoding="utf-8")
+    xml_dir = APP / "res" / "xml"
+
+    # ① 五款 provider：声明的尺寸 / 目标格 / 初始布局，manifest 注册与 meta-data 指向。
+    for info, (cls, width, height, cells, label) in WIDGET_PROVIDERS.items():
+        path = xml_dir / (info + ".xml")
+        if not path.is_file():
+            fail("widget info missing " + info)
+            continue
+        text = path.read_text(encoding="utf-8")
+        col, row = cells.split("x")
+        for needle in (
+            'android:minWidth="%ddp"' % width,
+            'android:minHeight="%ddp"' % height,
+            'android:targetCellWidth="%s"' % col,
+            'android:targetCellHeight="%s"' % row,
+            'android:initialLayout="@layout/widget_card"',
+            'android:previewImage="@drawable/logo_mark"',
+            'android:updatePeriodMillis="0"',
+            '@string/widget_description',
+        ):
+            if needle in text:
+                ok("widget info " + info + " has " + needle)
+            else:
+                fail("widget info " + info + " missing " + needle)
+        for needle in (
+            'android:name=".' + cls + '"',
+            'android:resource="@xml/' + info + '"',
+            '@string/' + label,
+        ):
+            if needle in manifest:
+                ok("manifest widget " + cls + " has " + needle)
+            else:
+                fail("manifest widget " + cls + " missing " + needle)
+
+    # ② 卡片布局：整卡位图 + 可缩放 ImageView，且图片本身对读屏隐藏（文案在外层）。
+    card = (APP / "res" / "layout" / "widget_card.xml").read_text(encoding="utf-8")
+    for needle in (
+        'android:id="@+id/widget_image"',
+        'android:scaleType="fitXY"',
+        'android:contentDescription="@null"',
+        'android:importantForAccessibility="no"',
+        'android:contentDescription="@string/widget_description"',
+    ):
+        if needle in card:
+            ok("widget card layout has " + needle)
+        else:
+            fail("widget card layout missing " + needle)
+
+    # ③ Kotlin 能力：加密、刷新周期、范围、五款渲染、点击深链。
+    for name in (
+        "WidgetPrefs.kt", "WidgetData.kt", "WidgetClient.kt", "WidgetRepository.kt",
+        "WidgetRenderer.kt", "WidgetScheduler.kt", "WidgetWorker.kt",
+        "WidgetRefreshReceiver.kt", "FnCalWidgetProvider.kt",
+    ):
+        if (kt / name).is_file():
+            ok("widget kotlin " + name)
+        else:
+            fail("widget kotlin missing " + name)
+
+    prefs = (kt / "WidgetPrefs.kt").read_text(encoding="utf-8")
+    for needle in ("AES/GCM/NoPadding", "AndroidKeyStore", "fncal_widget_token"):
+        if needle in prefs:
+            ok("widget prefs has " + needle)
+        else:
+            fail("widget prefs missing " + needle)
+
+    scheduler = (kt / "WidgetScheduler.kt").read_text(encoding="utf-8")
+    for needle in (
+        "INTERVAL_MINUTES = 30L",
+        "PeriodicWorkRequestBuilder",
+        "ExistingPeriodicWorkPolicy.UPDATE",
+        "NetworkType.CONNECTED",
+    ):
+        if needle in scheduler:
+            ok("widget scheduler has " + needle)
+        else:
+            fail("widget scheduler missing " + needle)
+
+    repository = (kt / "WidgetRepository.kt").read_text(encoding="utf-8")
+    if "RANGE_DAYS = 45" in repository:
+        ok("widget range 45 days")
+    else:
+        fail("widget range must be 45 days")
+
+    renderer = (kt / "WidgetRenderer.kt").read_text(encoding="utf-8")
+    for kind in ("MINI_MONTH", "DAY_AGENDA", "MONTH", "FOUR_DAY", "AGENDA_LIST"):
+        if kind in renderer:
+            ok("widget renderer kind " + kind)
+        else:
+            fail("widget renderer missing kind " + kind)
+    # 正文 10sp / 标题 12sp；任何绘制字号都不得低于 10sp（用户要求不许裁一半、不许更小）。
+    sizes = [float(x) for x in re.findall(r"\bpaint\((\d+(?:\.\d+)?)f", renderer)]
+    if sizes and min(sizes) < 10:
+        fail("widget text below 10sp: " + repr(min(sizes)))
+    else:
+        ok("widget text all >= 10sp")
+
+    provider = (kt / "FnCalWidgetProvider.kt").read_text(encoding="utf-8")
+    for needle in (
+        "MiniMonthWidgetProvider", "DayAgendaWidgetProvider", "MonthWidgetProvider",
+        "FourDayWidgetProvider", "AgendaListWidgetProvider",
+        "OPTION_APPWIDGET_MIN_WIDTH", "FLAG_IMMUTABLE", "ACTION_REFRESH",
+    ):
+        if needle in provider:
+            ok("widget provider has " + needle)
+        else:
+            fail("widget provider missing " + needle)
+
+    receiver = (kt / "WidgetRefreshReceiver.kt").read_text(encoding="utf-8")
+    for action in ("ACTION_BOOT_COMPLETED", "ACTION_TIME_CHANGED", "ACTION_TIMEZONE_CHANGED",
+                   "ACTION_MY_PACKAGE_REPLACED"):
+        if action in receiver:
+            ok("widget receiver action " + action)
+        else:
+            fail("widget receiver missing " + action)
+    if "RECEIVE_BOOT_COMPLETED" in manifest:
+        ok("manifest RECEIVE_BOOT_COMPLETED")
+    else:
+        fail("manifest missing RECEIVE_BOOT_COMPLETED")
+
+    # ④ 0.2.3 并入 0.3.0：系统栏全透明（窗口层 + 主题层），内容仍按 insets 留白。
+    chrome = (kt / "ShellChrome.kt").read_text(encoding="utf-8")
+    for needle in (
+        "setDecorFitsSystemWindows(window, false)",
+        "statusBarColor = Color.TRANSPARENT",
+        "navigationBarColor = Color.TRANSPARENT",
+        "isNavigationBarContrastEnforced = false",
+        "isAppearanceLightStatusBars",
+        "isAppearanceLightNavigationBars",
+    ):
+        if needle in chrome:
+            ok("chrome has " + needle)
+        else:
+            fail("chrome missing " + needle)
+
+    # ⑤ 地址页标志：72dp、居中、不新画图形（复用同源 logo_mark.png）。
+    address = (APP / "res" / "layout" / "activity_address.xml").read_text(encoding="utf-8")
+    logo_block = re.search(r'<ImageView[^>]*@\+id/logo_mark.*?/>', address, re.S)
+    if not logo_block:
+        fail("address layout missing logo_mark ImageView")
+    else:
+        block = logo_block.group(0)
+        for needle in (
+            'android:layout_width="72dp"',
+            'android:layout_height="72dp"',
+            'android:layout_marginBottom="16dp"',
+            'android:scaleType="fitCenter"',
+            '@drawable/logo_mark',
+        ):
+            if needle in block:
+                ok("address logo has " + needle)
+            else:
+                fail("address logo missing " + needle)
+        if 'android:contentDescription="@string/logo_content_description"' in block \
+                or 'android:importantForAccessibility="no"' in block:
+            ok("address logo accessibility")
+        else:
+            fail("address logo needs contentDescription or importantForAccessibility")
+
+    # ⑥ 关于页令牌入口 + 保存并测试 / 清除 的接线。
+    about_layout = (APP / "res" / "layout" / "activity_about.xml").read_text(encoding="utf-8")
+    for needle in (
+        'android:id="@+id/widget_token"',
+        'android:id="@+id/widget_token_state"',
+        'android:id="@+id/btn_widget_save"',
+        'android:id="@+id/btn_widget_clear"',
+    ):
+        if needle in about_layout:
+            ok("about widget form has " + needle)
+        else:
+            fail("about widget form missing " + needle)
+    about_kt = (kt / "AboutActivity.kt").read_text(encoding="utf-8")
+    for needle in ("WidgetPrefs.setToken", "WidgetRepository.testToday", "WidgetScheduler.ensurePeriodic"):
+        if needle in about_kt:
+            ok("about activity has " + needle)
+        else:
+            fail("about activity missing " + needle)
+
+    # ⑦ 点卡片开对应视图：主界面把 hash 交给网页，网页按 hash 切视图与日期。
+    main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.0"', "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+        if needle in main_kt:
+            ok("main activity has " + needle)
+        else:
+            fail("main activity missing " + needle)
+
+    # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。
+    workflow = ROOT.parent / ".github" / "workflows" / "android.yml"
+    wf = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
+    for needle in ("TAG=android-v0.3.0", "OUT=FnCal-Android-0.3.0.apk", "versionCode='300'", "versionName='0.3.0'"):
+        if needle in wf:
+            ok("workflow has " + needle)
+        else:
+            fail("workflow missing " + needle)
+
+
 def main() -> int:
     print("root:", ROOT)
     check_xml()
@@ -673,6 +890,7 @@ def main() -> int:
     check_gradle()
     check_theme_tokens()
     check_layouts()
+    check_widgets()
     check_line_endings()
     print()
     if failures:

@@ -28,4 +28,9 @@
 
     <!-- 深色卡片上的错误文案：原 #B3261E 在 #1A1C24 上约 2.3:1，不可读。 -->
     <color name="error_red">#FFB4AB</color>
+
+    <!-- 0.3.0 桌面卡片深色令牌。 -->
+    <color name="widget_bg">#17191F</color>
+    <color name="widget_border">#2A2E3A</color>
+    <color name="widget_weekend">#1F222B</color>
 </resources>

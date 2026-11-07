@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 0.3.0 桌面卡片：月视图：六周网格，每格最多两条事件条。
+     updatePeriodMillis=0：刷新交给 WorkManager（30 分钟）+ 手动/开机/时间变化，系统闹钟不参与。 -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_description"
+    android:initialLayout="@layout/widget_card"
+    android:minHeight="250dp"
+    android:minWidth="250dp"
+    android:previewImage="@drawable/logo_mark"
+    android:resizeMode="horizontal|vertical"
+    android:targetCellHeight="4"
+    android:targetCellWidth="4"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen" />

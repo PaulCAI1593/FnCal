@@ -59,6 +59,18 @@
                     android:gravity="center_horizontal"
                     android:orientation="vertical">
 
+                    <!-- 0.3.0（0.2.3 并入）：标题上方的 72dp logo；同源图标，22% 圆角。
+                         纯装饰——标题已说明这是什么，读屏再念一遍只是噪声，故不参与无障碍。 -->
+                    <ImageView
+                        android:id="@+id/logo_mark"
+                        android:layout_width="72dp"
+                        android:layout_height="72dp"
+                        android:layout_marginBottom="16dp"
+                        android:contentDescription="@string/logo_content_description"
+                        android:importantForAccessibility="no"
+                        android:scaleType="fitCenter"
+                        android:src="@drawable/logo_mark" />
+
                     <TextView
                         android:id="@+id/title"
                         android:layout_width="wrap_content"
