@@ -52,8 +52,8 @@ jobs:
           AAPT="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/aapt"
           # 0.3.0（§A5）：版本号必须真的打进包里，避免 tag 与包内容对不上。
           "$AAPT" dump badging "$APK" | tee badging.txt | head -6
-          grep -q "versionCode='302'" badging.txt
-          grep -q "versionName='0.3.2'" badging.txt
+          grep -q "versionCode='303'" badging.txt
+          grep -q "versionName='0.3.3'" badging.txt
           # 0.2.1（§S1）：打印签名证书指纹；同一签名的包才能覆盖升级。
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner"
           "$APKSIGNER" verify --print-certs "$APK" | tee apk-signature.txt
@@ -73,9 +73,9 @@ jobs:
         run: |
           set -e
           APK=app/build/outputs/apk/debug/app-debug.apk
-          OUT=FnCal-Android-0.3.2.apk
+          OUT=FnCal-Android-0.3.3.apk
           cp "$APK" "$OUT"
-          TAG=android-v0.3.2
+          TAG=android-v0.3.3
           if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$OUT"; then
             echo "资产 $OUT 已存在，跳过覆盖（已发布的包不改字节）"
             exit 0
@@ -84,7 +84,7 @@ jobs:
             echo "release $TAG 已存在，覆盖资产"
           else
             gh release create "$TAG" \
-              --title "FnCal Android 0.3.2" \
+              --title "FnCal Android 0.3.3" \
               --notes "安卓外壳测试包（固定测试签名，可直接覆盖升级）。本版修两处外观与文案：主界面系统栏、手势条跟随页面底色（白色日历上不再是蓝底）；关于页的桌面卡片说明改成实际做法（长按桌面添加小部件，五款只读卡片）。到点提醒不在本版。" \
               --latest=false
           fi

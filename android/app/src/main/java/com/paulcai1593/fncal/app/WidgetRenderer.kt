@@ -11,14 +11,30 @@ import android.text.TextPaint
 import android.text.TextUtils
 import androidx.core.content.ContextCompat
 import java.util.Calendar
+import kotlin.math.round
 
-/** 0.3.0 的五款桌面卡片。每款只决定画法，数据都来自同一份摘要缓存。 */
+/** 0.3.3 的五款桌面卡片。每款只决定画法，数据都来自同一份摘要缓存。 */
 enum class WidgetKind {
     MINI_MONTH,
     DAY_AGENDA,
     MONTH,
     FOUR_DAY,
     AGENDA_LIST,
+}
+
+/**
+ * 0.3.3 的尺寸档位，按卡片**短边 dp** 判定（AppWidgetManager 给的是像素，除以 density 得 dp）：
+ *   - SMALL  ≤ 140dp（2×2 及其下限 110dp）
+ *   - MEDIUM 141–220dp（3×3 一档）
+ *   - LARGE  > 220dp（4×4 及以上）
+ *
+ * 档位只决定内距、字号、行距与可显示条数；几何仍然全部从实际宽高算，
+ * 因此同一个档位在横向拉伸时列宽会跟着变，不会出现「内容缩在角落」。
+ */
+enum class SizeTier {
+    SMALL,
+    MEDIUM,
+    LARGE,
 }
 
 /**
@@ -49,7 +65,7 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         val width = widthPx.coerceAtLeast(1)
         val height = heightPx.coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val sketch = Sketch(Canvas(bitmap), width.toFloat(), height.toFloat())
+        val sketch = Sketch(Canvas(bitmap), width.toFloat(), height.toFloat(), tierOf(width, height))
         sketch.background()
 
         val snapshot = WidgetSnapshot.parse(WidgetPrefs.cache(context))
@@ -73,6 +89,16 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         return bitmap
     }
 
+    /** 短边 dp 决定档位。三个阈值集中在这里，静态检查也查这三个常量。 */
+    private fun tierOf(widthPx: Int, heightPx: Int): SizeTier {
+        val shortDp = minOf(widthPx, heightPx) / density
+        return when {
+            shortDp <= TIER_SMALL_MAX_DP -> SizeTier.SMALL
+            shortDp <= TIER_MEDIUM_MAX_DP -> SizeTier.MEDIUM
+            else -> SizeTier.LARGE
+        }
+    }
+
     private fun sp(value: Float): Float = value * density
 
     private fun dp(value: Float): Float = value * density
@@ -92,10 +118,14 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         private val canvas: Canvas,
         private val w: Float,
         private val h: Float,
+        private val tier: SizeTier,
     ) {
 
         private val path = Path()
         private val rect = RectF()
+
+        private val isSmall: Boolean get() = tier == SizeTier.SMALL
+        private val isLarge: Boolean get() = tier == SizeTier.LARGE
 
         fun background() {
             val radius = dp(16f)
@@ -117,20 +147,31 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
 
         /* ------------------------------------------------------ 迷你月历 2×2 */
 
+        /**
+         * 0.3.3 §A：日期下的圆点对齐网页左侧栏迷你月历。每个有事件的日子都画点，
+         * 0.3.0 的「格子太矮就整体省略」条件已取消；点直径随卡片高度在 2.0–3.0dp 之间取。
+         */
         fun miniMonth(snapshot: WidgetSnapshot) {
-            val pad = dp(7f)
+            val pad = if (isSmall) dp(5f) else if (isLarge) dp(9f) else dp(7f)
             val now = System.currentTimeMillis()
             val monthStart = CalKit.monthStart(now)
-            val titlePaint = paint(12f, colorText, mediumWeight = true)
+            val titlePaint = if (isLarge) paint(13f, colorText, mediumWeight = true)
+            else paint(12f, colorText, mediumWeight = true)
             val labelPaint = paint(10f, colorText3)
-            val dayPaint = paint(10f, colorText)
-            val mutedPaint = paint(10f, colorText3)
-            val todayPaint = paint(10f, colorOnAccent)
+            val dayPaint = if (isLarge) paint(11f, colorText) else paint(10f, colorText)
+            val mutedPaint = if (isLarge) paint(11f, colorText3) else paint(10f, colorText3)
+            val todayPaint = if (isLarge) paint(11f, colorOnAccent) else paint(10f, colorOnAccent)
 
-            drawText(CalKit.monthTitle(now), pad, pad + sp(12f), w - pad * 2, titlePaint)
+            val titleSp = if (isLarge) 13f else 12f
+            drawText(CalKit.monthTitle(now), pad, pad + sp(titleSp), w - pad * 2, titlePaint)
+
+            // 圆点直径：卡片高 110dp → 2.0dp；≥150dp → 3.0dp；中间线性，取整到 0.1dp。
+            val heightDp = h / density
+            val dotDp = roundToOneDecimal((2f + (heightDp - 110f) * 0.025f).coerceIn(2f, 3f))
+            val dotD = dp(dotDp)
 
             val weekLabels = arrayOf("一", "二", "三", "四", "五", "六", "日")
-            val weekBaseline = pad + sp(12f) + sp(10f)
+            val weekBaseline = pad + sp(titleSp) + sp(10f)
             val rowsTop = weekBaseline + dp(3f)
             val gridBottom = h - pad
             val cellW = (w - pad * 2) / 7f
@@ -155,31 +196,49 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                     val cx = left + cellW / 2f
                     val cy = top + cellH / 2f
                     val isToday = inMonth && CalKit.isSameDay(dayMillis, now)
-                    if (isToday) {
-                        val radius = minOf(cellW, cellH) / 2f - dp(0.5f)
+                    val events = if (inMonth) {
+                        snapshot.eventsOn(dayMillis, CalKit.dayEnd(dayMillis))
+                    } else {
+                        emptyList<WidgetEvent>()
+                    }
+                    val hasEvents = events.isNotEmpty()
+                    // 有圆点时基线上移 dotDiameter + 1dp，数字与圆点不重叠、也不贴格底。
+                    val dotShift = if (hasEvents) dp(dotDp + 1f) else 0f
+                    val baseline = cy + sp(3.6f) - dotShift
+                    if (isToday && isSmall) {
+                        // 0.3.3 总监修订：2×2 档格子只有约 12.5dp 高，给圆点让位后圆底半径
+                        // 只剩约 2.75dp，包不住 10sp 日号。小档改为「强调色 + 加粗」日号，
+                        // 不再画圆底；圆点照画，今天仍能一眼认出，也不与圆点相撞。
+                        drawCentered(
+                            "$day",
+                            cx,
+                            baseline,
+                            paint(10f, colorAccent, mediumWeight = true),
+                            cellW,
+                        )
+                    } else if (isToday) {
+                        // 今天的圆底要给下方圆点留位置：有事件时扣掉「点直径 + 4dp」再取半径，
+                        // 保证圆底与圆点之间至少 0.5dp 间隙（不是相切）；没有事件时只留 1dp。
+                        val dotPad = if (hasEvents) dotD + dp(4f) else dp(1f)
+                        val radius = (minOf(cellW, cellH - dotPad) / 2f - dp(0.5f))
+                            .coerceAtLeast(dp(2f))
                         canvas.drawCircle(cx, cy, radius, solid(colorAccent))
-                        drawCentered("$day", cx, cy + sp(3.6f), todayPaint, cellW)
+                        drawCentered("$day", cx, baseline, todayPaint, cellW)
                     } else {
                         drawCentered(
                             "$day",
                             cx,
-                            cy + sp(3.6f),
+                            baseline,
                             if (inMonth) dayPaint else mutedPaint,
                             cellW,
                         )
                     }
-                    // 2×2 被压到 provider 下限 110dp 时，每格只有约 11.8dp 高：
-                    // 10sp 日号的字底已经贴到格底，再画 2dp 圆点会和数字叠在一起。
-                    // 这种情况省略圆点（日号仍然完整）；正常 2×2（≥150dp 高）圆点照画。
-                    val roomForDot = cellH >= dp(15f)
-                    if (inMonth && roomForDot) {
-                        val events = snapshot.eventsOn(dayMillis, CalKit.dayEnd(dayMillis))
-                        if (events.isNotEmpty()) {
-                            val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                                color = events.first().color ?: colorAccent
-                            }
-                            canvas.drawCircle(cx, top + cellH - dp(1.6f), dp(1.4f), dot)
+                    if (hasEvents) {
+                        // 点画在格子底部、水平居中；今天画在圆底之外的下方（保留 0.5dp 间隙）。
+                        val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = events.first().color ?: colorAccent
                         }
+                        canvas.drawCircle(cx, top + cellH - dp(dotDp / 2f + 0.5f), dotD / 2f, dot)
                     }
                 }
             }
@@ -188,22 +247,26 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         /* ------------------------------------------------------ 今日日程 2×2 */
 
         fun dayAgenda(snapshot: WidgetSnapshot) {
-            val pad = dp(10f)
+            val pad = if (isSmall) dp(8f) else if (isLarge) dp(12f) else dp(10f)
             val now = System.currentTimeMillis()
             val dayStart = CalKit.dayStart(now)
             val dayEnd = CalKit.dayEnd(now)
-            val headerPaint = paint(12f, colorText, mediumWeight = true)
-            val timePaint = paint(10f, colorText3)
-            val rowPaint = paint(10f, colorText)
+            val headerPaint = if (isLarge) paint(13f, colorText, mediumWeight = true)
+            else paint(12f, colorText, mediumWeight = true)
+            val timePaint = if (isLarge) paint(11f, colorText3) else paint(10f, colorText3)
+            val rowPaint = if (isLarge) paint(11f, colorText) else paint(10f, colorText)
             val header = context.getString(
                 R.string.widget_today_header,
                 CalKit.dayMonth(now),
             )
-            drawText(header, pad, pad + sp(12f), w - pad * 2, headerPaint)
+            val titleSp = if (isLarge) 13f else 12f
+            drawText(header, pad, pad + sp(titleSp), w - pad * 2, headerPaint)
 
-            val listTop = pad + sp(18f) + dp(2f)
+            val listTop = pad + sp(titleSp + 6f) + dp(2f)
             val footerSpace = dp(12f)
             val listBottom = h - pad - footerSpace
+            val listH = listBottom - listTop
+            if (listH <= 0f) return
             val events = snapshot.eventsOn(dayStart, dayEnd)
             if (events.isEmpty()) {
                 drawCentered(
@@ -215,25 +278,30 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                 )
                 return
             }
-            val maxRows = 3
-            val shown = minOf(events.size, maxRows)
-            val rowH = minOf(dp(22f), (listBottom - listTop) / maxRows)
+            // 0.3.3 §B：可显示条数由档位上限与可用高度共同决定（每条至少 20dp），
+            // 行高均分填满，不再固定 3 行把内容挤在顶部。
+            val rowCapMin = dp(20f)
+            val rowsLimit = if (isSmall) 3 else if (isLarge) 8 else 6
+            val rowsCap = (listH / rowCapMin).toInt().coerceIn(1, rowsLimit)
+            val shown = minOf(events.size, rowsCap)
+            val rowH = listH / rowsCap
+            val timeCol = if (isSmall) dp(30f) else if (isLarge) dp(38f) else dp(34f)
             for (index in 0 until shown) {
                 val event = events[index]
                 val baseline = listTop + rowH * index + rowH / 2f + sp(3.6f)
                 val time = if (event.allDay) context.getString(R.string.widget_all_day)
                 else CalKit.hhmm(event.start)
-                drawText(time, pad, baseline, dp(34f), timePaint)
+                drawText(time, pad, baseline, timeCol - dp(2f), timePaint)
                 drawEllipsized(
                     event.summary.ifBlank { "—" },
-                    pad + dp(36f),
+                    pad + timeCol,
                     baseline,
-                    w - pad * 2 - dp(36f),
+                    w - pad * 2 - timeCol,
                     rowPaint,
                 )
             }
-            if (events.size > maxRows) {
-                val more = context.getString(R.string.widget_more_items, events.size - maxRows)
+            if (events.size > shown) {
+                val more = context.getString(R.string.widget_more_items, events.size - shown)
                 drawTextRight(more, w - pad, h - pad - dp(1f), paint(10f, colorText3))
             }
         }
@@ -241,21 +309,25 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         /* ------------------------------------------------------ 月视图 4×4 */
 
         fun month(snapshot: WidgetSnapshot) {
-            val pad = dp(9f)
+            val pad = if (isSmall) dp(7f) else if (isLarge) dp(11f) else dp(9f)
             val now = System.currentTimeMillis()
             val monthStart = CalKit.monthStart(now)
-            val titlePaint = paint(12f, colorText, mediumWeight = true)
+            val titleSp = if (isLarge) 13f else 12f
+            val titlePaint = if (isLarge) paint(13f, colorText, mediumWeight = true)
+            else paint(12f, colorText, mediumWeight = true)
             val labelPaint = paint(10f, colorText3)
-            val dayPaint = paint(10f, colorText)
-            val mutedPaint = paint(10f, colorText3)
+            val dayPaint = if (isLarge) paint(11f, colorText) else paint(10f, colorText)
+            val mutedPaint = if (isLarge) paint(11f, colorText3) else paint(10f, colorText3)
 
-            drawText(CalKit.monthTitle(now), pad, pad + sp(12f), w - pad * 2, titlePaint)
+            drawText(CalKit.monthTitle(now), pad, pad + sp(titleSp), w - pad * 2, titlePaint)
             val weekLabels = arrayOf("一", "二", "三", "四", "五", "六", "日")
-            val weekTop = pad + sp(18f)
+            val weekTop = pad + sp(titleSp + 6f)
             val gridTop = weekTop + sp(10f)
             val gridBottom = h - pad
             val cellW = (w - pad * 2) / 7f
             val cellH = (gridBottom - gridTop) / 6f
+            // 0.3.3 §C：单格 ≥28dp 时进入「一行日程名称」模式；否则保持色条模式，两者互斥。
+            val nameMode = cellH >= dp(MONTH_NAME_MIN_CELL_DP)
             for (col in 0 until 7) {
                 drawCentered(
                     weekLabels[col],
@@ -289,7 +361,7 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                             "$day",
                             left + cellW / 2f,
                             baseline,
-                            paint(10f, colorOnAccent),
+                            if (isLarge) paint(11f, colorOnAccent) else paint(10f, colorOnAccent),
                             cellW,
                         )
                     } else {
@@ -303,24 +375,59 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                     }
                     if (!inMonth) continue
                     val events = snapshot.eventsOn(dayMillis, CalKit.dayEnd(dayMillis))
-                    var barTop = baseline + dp(2f)
-                    val barWidth = cellW - dp(4f)
-                    for (index in 0 until minOf(events.size, 2)) {
-                        val bar = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = events[index].color ?: colorAccent
-                            alpha = 190
+                    if (nameMode) {
+                        // 名称模式：日号下一行 = 当天第一条事件的名称（10sp、单行省略），
+                        // 左侧 2dp 色点；第二条起不再画名称，更多显示 +N。
+                        if (events.isNotEmpty()) {
+                            val first = events.first()
+                            val nameBaseline = baseline + dp(10.5f)
+                            canvas.drawCircle(
+                                left + dp(3f),
+                                nameBaseline - sp(3.3f),
+                                dp(1f),
+                                solid(first.color ?: colorAccent),
+                            )
+                            drawEllipsized(
+                                first.summary.ifBlank { "—" },
+                                left + dp(5f),
+                                nameBaseline,
+                                cellW - dp(7f),
+                                paint(10f, colorText),
+                            )
+                            if (events.size > 1) {
+                                drawTextRight(
+                                    "+" + (events.size - 1),
+                                    left + cellW - dp(1.5f),
+                                    top + cellH - dp(2f),
+                                    paint(10f, colorText3),
+                                )
+                            }
                         }
-                        rect.set(left + dp(2f), barTop, left + dp(2f) + barWidth, barTop + dp(3f))
-                        canvas.drawRoundRect(rect, dp(1.5f), dp(1.5f), bar)
-                        barTop += dp(4.5f)
-                    }
-                    if (events.size > 2) {
-                        drawTextRight(
-                            "+" + (events.size - 2),
-                            left + cellW - dp(1.5f),
-                            top + cellH - dp(2f),
-                            paint(10f, colorText3),
-                        )
+                    } else {
+                        var barTop = baseline + dp(2f)
+                        val barWidth = cellW - dp(4f)
+                        for (index in 0 until minOf(events.size, 2)) {
+                            val bar = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                color = events[index].color ?: colorAccent
+                                alpha = 190
+                            }
+                            rect.set(
+                                left + dp(2f),
+                                barTop,
+                                left + dp(2f) + barWidth,
+                                barTop + dp(3f),
+                            )
+                            canvas.drawRoundRect(rect, dp(1.5f), dp(1.5f), bar)
+                            barTop += dp(4.5f)
+                        }
+                        if (events.size > 2) {
+                            drawTextRight(
+                                "+" + (events.size - 2),
+                                left + cellW - dp(1.5f),
+                                top + cellH - dp(2f),
+                                paint(10f, colorText3),
+                            )
+                        }
                     }
                 }
             }
@@ -329,15 +436,17 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         /* ------------------------------------------------------ 四日视图 4×4 */
 
         fun fourDay(snapshot: WidgetSnapshot) {
-            val pad = dp(8f)
+            val pad = if (isSmall) dp(6f) else if (isLarge) dp(10f) else dp(8f)
             val now = System.currentTimeMillis()
             val todayStart = CalKit.dayStart(now)
-            val headerPaint = paint(10f, colorText, mediumWeight = true)
-            val headerMuted = paint(10f, colorText3)
-            val dayPaint = paint(10f, colorText3)
+            val headerSize = if (isLarge) 11f else 10f
+            val headerPaint = if (isLarge) paint(11f, colorText, mediumWeight = true)
+            else paint(10f, colorText, mediumWeight = true)
+            val headerMuted = if (isLarge) paint(11f, colorText3) else paint(10f, colorText3)
+            val dayPaint = if (isLarge) paint(10f, colorText) else paint(10f, colorText3)
             val columnW = (w - pad * 2) / 4f
-            val headerBaseline = pad + sp(10f)
-            val bodyTop = pad + sp(14f) + dp(2f)
+            val headerBaseline = pad + sp(headerSize)
+            val bodyTop = pad + sp(headerSize + 4f) + dp(2f)
             val footerSpace = if (WidgetPrefs.lastError(context) != null) dp(14f) else dp(2f)
             val bodyBottom = h - pad - footerSpace
             val bodyH = bodyBottom - bodyTop
@@ -356,7 +465,12 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                     label,
                     left + columnW / 2f,
                     headerBaseline,
-                    if (isToday) paint(10f, colorAccent, mediumWeight = true) else headerMuted,
+                    if (isToday) {
+                        if (isLarge) paint(11f, colorAccent, mediumWeight = true)
+                        else paint(10f, colorAccent, mediumWeight = true)
+                    } else {
+                        headerMuted
+                    },
                     columnW - dp(2f),
                 )
                 if (col > 0) {
@@ -379,6 +493,8 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                 canvas.drawLine(pad, y, w - pad, y, gridLine)
             }
 
+            val minBlock = if (isSmall) dp(11f) else if (isLarge) dp(15f) else dp(13f)
+            val minBlockText = if (isSmall) dp(12f) else minBlock
             for (col in 0 until 4) {
                 val dayStart = CalKit.addDays(todayStart, col)
                 val dayEnd = CalKit.dayEnd(dayStart)
@@ -405,7 +521,7 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                     val end = event.end.coerceIn(dayStart, dayEnd)
                     val y0 = bodyTop + bodyH * ((start - dayStart).toFloat() / (dayEnd - dayStart))
                     val y1 = bodyTop + bodyH * ((end - dayStart).toFloat() / (dayEnd - dayStart))
-                    val blockH = (y1 - y0).coerceAtLeast(dp(7f))
+                    val blockH = (y1 - y0).coerceAtLeast(minBlock)
                     val eventColor = event.color ?: colorAccent
                     val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = eventColor
@@ -418,7 +534,7 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                         strokeWidth = dp(2f)
                     }
                     canvas.drawLine(left + dp(2f), y0 + dp(1f), left + dp(2f), y0 + blockH - dp(1f), edge)
-                    if (blockH >= dp(13f)) {
+                    if (blockH >= minBlockText) {
                         drawEllipsized(
                             event.summary.ifBlank { "—" },
                             left + dp(4f),
@@ -432,7 +548,7 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
 
             // 当前时间横线：今天在四天范围内时画在今天的列。
             if (CalKit.isSameDay(now, todayStart)) {
-                val y = bodyTop + bodyH * ((now - todayStart).toFloat() / (dayEnd(todayStart) - todayStart))
+                val y = bodyTop + bodyH * ((now - todayStart).toFloat() / (CalKit.dayEnd(todayStart) - todayStart))
                 if (y in bodyTop..bodyBottom) {
                     val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = colorAccent
@@ -447,22 +563,27 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         /* ------------------------------------------------------ 日程列表 4×4 */
 
         fun agendaList(snapshot: WidgetSnapshot) {
-            val pad = dp(10f)
+            val pad = if (isSmall) dp(8f) else if (isLarge) dp(12f) else dp(10f)
             val now = System.currentTimeMillis()
             val todayStart = CalKit.dayStart(now)
-            val titlePaint = paint(12f, colorText, mediumWeight = true)
-            val dayPaint = paint(10f, colorText2, mediumWeight = true)
-            val rowPaint = paint(10f, colorText)
-            val metaPaint = paint(10f, colorText3)
+            val titleSp = if (isLarge) 13f else 12f
+            val titlePaint = if (isLarge) paint(13f, colorText, mediumWeight = true)
+            else paint(12f, colorText, mediumWeight = true)
+            val dayPaint = if (isLarge) paint(11f, colorText2, mediumWeight = true)
+            else paint(10f, colorText2, mediumWeight = true)
+            val rowPaint = if (isLarge) paint(11f, colorText) else paint(10f, colorText)
+            val metaPaint = if (isLarge) paint(11f, colorText3) else paint(10f, colorText3)
             drawText(
                 context.getString(R.string.widget_future_week),
                 pad,
-                pad + sp(12f),
+                pad + sp(titleSp),
                 w - pad * 2,
                 titlePaint,
             )
-            val contentTop = pad + sp(18f) + dp(2f)
+            val contentTop = pad + sp(titleSp + 6f) + dp(2f)
             val contentBottom = h - pad
+            val lineSp = if (isSmall) 12f else if (isLarge) 14f else 13f
+            val dateSp = if (isSmall) 13f else if (isLarge) 15f else 14f
             var baseline = contentTop + sp(10f)
             var drawn = 0
             var any = false
@@ -474,16 +595,16 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
                 any = true
                 val dateLabel = CalKit.dayMonth(dayStart) + " " + CalKit.weekdayShort(dayStart)
                 drawText(dateLabel, pad, baseline, w - pad * 2, dayPaint)
-                baseline += sp(13f)
+                baseline += sp(dateSp)
                 for (event in events) {
-                    if (drawn >= 12 || baseline + sp(11f) > contentBottom) break
+                    if (drawn >= 24 || baseline + sp(11f) > contentBottom) break
                     val time = if (event.allDay) context.getString(R.string.widget_all_day)
                     else CalKit.hhmm(event.start)
                     var title = time + "  " + event.summary.ifBlank { "—" }
                     if (!event.location.isNullOrBlank()) title += " · " + event.location
                     drawEllipsized(title, pad, baseline, w - pad * 2, rowPaint)
                     drawn += 1
-                    baseline += sp(12f)
+                    baseline += sp(lineSp)
                 }
                 baseline += dp(3f)
             }
@@ -575,10 +696,17 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
             val width = paint.measureText(text)
             canvas.drawText(text, right - width, baseline, paint)
         }
+    }
 
-        private fun dayEnd(dayStart: Long): Long = Calendar.getInstance().apply {
-            timeInMillis = dayStart
-            add(Calendar.DAY_OF_MONTH, 1)
-        }.timeInMillis
+    companion object {
+        /** 档位阈值：≤140dp 最小档，141–220dp 中档，>220dp 大档。 */
+        const val TIER_SMALL_MAX_DP = 140f
+        const val TIER_MEDIUM_MAX_DP = 220f
+
+        /** 月视图单格达到这个高度才画一行日程名称（否则保持色条模式）。 */
+        const val MONTH_NAME_MIN_CELL_DP = 28f
     }
 }
+
+/** 0.1dp 取整：圆点直径在 2.0–3.0dp 之间，避免 2.0373… 这类浮点尾数写进注释与记录。 */
+private fun roundToOneDecimal(value: Float): Float = round(value * 10f) / 10f

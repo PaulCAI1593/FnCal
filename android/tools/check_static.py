@@ -350,9 +350,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 302": app_gradle,
-        'versionName = "0.3.2"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.2")': app_gradle,
+        "versionCode = 303": app_gradle,
+        'versionName = "0.3.3"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.3")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -894,7 +894,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.2"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.3"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -918,7 +918,7 @@ def check_widgets() -> None:
     # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。
     workflow = ROOT.parent / ".github" / "workflows" / "android.yml"
     wf = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
-    for needle in ("TAG=android-v0.3.2", "OUT=FnCal-Android-0.3.2.apk", "versionCode='302'", "versionName='0.3.2'"):
+    for needle in ("TAG=android-v0.3.3", "OUT=FnCal-Android-0.3.3.apk", "versionCode='303'", "versionName='0.3.3'"):
         if needle in wf:
             ok("workflow has " + needle)
         else:
@@ -991,6 +991,66 @@ def check_shell_surface() -> None:
         ok("no stale phrase 后续版本")
 
 
+def check_widget_layout() -> None:
+    """0.3.3（§A–§C）：迷你月历圆点、三档尺寸、月视图一行名称。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    renderer = (kt / "WidgetRenderer.kt").read_text(encoding="utf-8")
+
+    # ① 迷你月历：不再按格子高度整体省略圆点。
+    if "roomForDot" not in renderer:
+        ok("mini month draws dots without roomForDot gate")
+    else:
+        fail("mini month must not gate dots on roomForDot")
+
+    # ② 圆点直径与卡片高度挂钩，日号基线随圆点上移。
+    for needle in (
+        "val dotDp = roundToOneDecimal",
+        "(heightDp - 110f) * 0.025f",
+        "coerceIn(2f, 3f)",
+        "val dotShift = if (hasEvents) dp(dotDp + 1f) else 0f",
+        "val baseline = cy + sp(3.6f) - dotShift",
+        "top + cellH - dp(dotDp / 2f + 0.5f)",
+        # 0.3.3 总监修订：2×2 档不画圆底（会包不住日号），改强调色加粗日号。
+        "if (isToday && isSmall) {",
+        "paint(10f, colorAccent, mediumWeight = true)",
+    ):
+        if needle in renderer:
+            ok("mini month dot has " + needle)
+        else:
+            fail("mini month dot missing " + needle)
+
+    # ③ 三档尺寸分支：短边 140 / 220dp，且渲染器按档取内距与字号。
+    for needle in (
+        "const val TIER_SMALL_MAX_DP = 140f",
+        "const val TIER_MEDIUM_MAX_DP = 220f",
+        "private fun tierOf(widthPx: Int, heightPx: Int): SizeTier",
+        "shortDp <= TIER_SMALL_MAX_DP",
+        "shortDp <= TIER_MEDIUM_MAX_DP",
+        "enum class SizeTier",
+    ):
+        if needle in renderer:
+            ok("widget tier has " + needle)
+        else:
+            fail("widget tier missing " + needle)
+
+    # ④ 月视图：单格 ≥28dp 进名称模式，名称单行省略，色条模式与名称模式互斥。
+    for needle in (
+        "const val MONTH_NAME_MIN_CELL_DP = 28f",
+        "val nameMode = cellH >= dp(MONTH_NAME_MIN_CELL_DP)",
+        "if (nameMode) {",
+        "TextUtils.TruncateAt.END",
+        "events.size - 1",
+    ):
+        if needle in renderer:
+            ok("month name mode has " + needle)
+        else:
+            fail("month name mode missing " + needle)
+    if renderer.count("if (nameMode) {") == 1 and "} else {" in renderer:
+        ok("month name mode and bars are exclusive branches")
+    else:
+        fail("month name mode must be one exclusive branch")
+
+
 def check_update_fallback() -> None:
     """0.3.1（§B）：检测更新的 CDN 旧缓存兜底，以及版本串多处一致。"""
     import json
@@ -1046,6 +1106,7 @@ def main() -> int:
     check_urls()
     check_update_manifest()
     check_shell_surface()
+    check_widget_layout()
     check_update_fallback()
     check_gradle()
     check_theme_tokens()
