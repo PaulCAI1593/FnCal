@@ -44,7 +44,7 @@ object WidgetClient {
             if (opened is HttpsURLConnection && ShellPrefs.allowSelfSigned(context)) {
                 opened.sslSocketFactory =
                     trustAllContext().socketFactory as javax.net.ssl.SSLSocketFactory
-                opened.hostnameVerifier = { _, _ -> true }
+                opened.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
             }
             connection = opened as HttpURLConnection
             connection.requestMethod = "GET"
