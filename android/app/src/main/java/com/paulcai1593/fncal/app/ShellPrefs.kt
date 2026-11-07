@@ -19,9 +19,6 @@ object ShellPrefs {
     /** 0.3.5：最近一次刷新服务端版本的时间（毫秒），供排查与节流。 */
     private const val KEY_SERVER_VERSION_AT = "server_version_at"
 
-    /** 0.2.0：更新源（cn = 国内源，direct = 直通），默认国内源。 */
-    private const val KEY_UPDATE_SOURCE = "update_source"
-
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -56,13 +53,6 @@ object ShellPrefs {
 
     fun setAllowSelfSigned(context: Context, allow: Boolean) {
         prefs(context).edit().putBoolean(KEY_ALLOW_SELF_SIGNED, allow).apply()
-    }
-
-    /** 更新源偏好值；调用方用 UpdateSources.Source.fromPref 转成枚举。 */
-    fun updateSource(context: Context): String? = prefs(context).getString(KEY_UPDATE_SOURCE, null)
-
-    fun setUpdateSource(context: Context, value: String) {
-        prefs(context).edit().putString(KEY_UPDATE_SOURCE, value).apply()
     }
 
     fun clear(context: Context) {

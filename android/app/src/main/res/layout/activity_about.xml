@@ -235,47 +235,12 @@
                     android:paddingRight="14dp"
                     android:paddingBottom="12dp">
 
-                    <TextView
-                        android:id="@+id/label_update_source"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/update_source_label"
-                        android:textColor="@color/text_2"
-                        android:textSize="12sp" />
-
-                    <RadioGroup
-                        android:id="@+id/group_update_source"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:orientation="horizontal">
-
-                        <RadioButton
-                            android:id="@+id/radio_source_cn"
-                            android:layout_width="0dp"
-                            android:layout_height="44dp"
-                            android:layout_weight="1"
-                            android:buttonTint="@color/accent"
-                            android:text="@string/update_source_cn"
-                            android:textColor="@color/text"
-                            android:textSize="13sp" />
-
-                        <RadioButton
-                            android:id="@+id/radio_source_direct"
-                            android:layout_width="0dp"
-                            android:layout_height="44dp"
-                            android:layout_weight="1"
-                            android:buttonTint="@color/accent"
-                            android:text="@string/update_source_direct"
-                            android:textColor="@color/text"
-                            android:textSize="13sp" />
-                    </RadioGroup>
-
+                    <!-- 0.3.6（§A 修订）：只有 Gitee 与 GitHub 两个固定源，「更新源」单选已删。 -->
                     <TextView
                         android:id="@+id/text_update_note"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
+                        android:layout_marginTop="0dp"
                         android:ellipsize="end"
                         android:lineSpacingExtra="4dp"
                         android:maxLines="2"

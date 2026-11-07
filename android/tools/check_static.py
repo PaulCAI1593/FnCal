@@ -279,9 +279,10 @@ def check_urls() -> None:
     allowed_hosts = {
         "cdn.jsdelivr.net",
         "raw.githubusercontent.com",
-        "gh-proxy.com",
         "github.com",
         "paulcai1593.github.io",
+        # 0.3.6（§A）：Gitee 镜像清单与发行版附件直链。
+        "gitee.com",
     }
     count = 0
     for path in sorted(ROOT.rglob("*")):
@@ -352,9 +353,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 305": app_gradle,
-        'versionName = "0.3.5"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.5")': app_gradle,
+        "versionCode = 306": app_gradle,
+        'versionName = "0.3.6"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.6")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -901,7 +902,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.5"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.6"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -948,8 +949,8 @@ def workflow_version_status(name: str, code: int) -> tuple[bool, str]:
         return False, "android.yml missing"
     wf = workflow.read_text(encoding="utf-8")
     allowed = {name: code}
-    if name == "0.3.5":
-        allowed["0.3.4"] = 304
+    if name == "0.3.6":
+        allowed["0.3.5"] = 305
     tags = set(re.findall(r"TAG=android-v(\d+\.\d+\.\d+)", wf))
     outs = set(re.findall(r"OUT=FnCal-Android-(\d+\.\d+\.\d+)\.apk", wf))
     badges = set(re.findall(r"versionName='(\d+\.\d+\.\d+)'", wf))
@@ -1402,27 +1403,37 @@ def check_widget_agenda_frames() -> None:
 
 
 def check_update_fallback() -> None:
-    """0.3.4（§11）：三源链 Pages → 国内源 → 直通，以及版本串多处一致。"""
+    """0.3.6（§A 修订）：两源链（Gitee → GitHub）、apkCn 回退、版本串多处一致。"""
     import json
 
     kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
     updater = (kt / "UpdateChecker.kt").read_text(encoding="utf-8")
+    about = (kt / "AboutActivity.kt").read_text(encoding="utf-8")
+    strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
+    layout = (APP / "res" / "layout" / "activity_about.xml").read_text(encoding="utf-8")
     markers = (
-        # 三个清单地址，按优先级出现
-        '"https://paulcai1593.github.io/FnCal/update.json"',
-        '"https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/android/update.json"',
+        # 两个清单地址
+        '"https://gitee.com/Paul1593/FnCal/raw/main/android/update.json"',
         '"https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/android/update.json"',
-        # Pages 永远第一；用户选的源只决定 Pages 之后先试谁
-        "val checkOrder: List<Source> = listOf(PAGES, CN, DIRECT)",
-        "val order = mutableListOf(UpdateSources.Source.PAGES)",
+        # 0.3.6（§A 修订）：两源固定顺序，Gitee 永远第一
+        "val checkOrder: List<Source> = listOf(GITEE, GITHUB)",
         # 严格按 longVersionCode 比较
         "manifest.versionCode.toLong() > currentVersionCode",
         # 不比当前新就继续下一个源（0.3.1 的 bug 不能重演）
         "不判最新，继续下一个源（§11 关键）",
-        # 三源都不新：取版本号最大的候选
+        # 两源都不新：取版本号最大的候选
         "if (current == null || manifest.versionCode > current.versionCode)",
         # 全失败：报第一个失败原因
-        'Outcome.Failure("检查更新失败：" + (firstError ?: "所有更新源都不可用"))',
+        '"检查更新失败：" + (firstError ?: "所有更新源都不可用")',
+        "fun check(currentVersionCode: Long): Outcome",
+        # 0.3.6（§B）：apkCn 可选字段，缺省不报错
+        "val apkCn: String? = null",
+        'json.optString("apkCn")',
+        "fun giteeApkUrl(manifest: UpdateChecker.Manifest): String?",
+        # 0.3.6（§B）：Gitee 附件优先，失败一次再 GitHub 直连
+        "fun downloadTargets(manifest: UpdateChecker.Manifest): List<DownloadTarget> {",
+        "return listOfNotNull(gitee, github)",
+        "fun apkUrl(manifest: UpdateChecker.Manifest): String =",
     )
     for marker in markers:
         if marker in updater:
@@ -1430,24 +1441,76 @@ def check_update_fallback() -> None:
         else:
             fail("update checker missing " + marker)
 
-    # 三个来源文案齐备，关于页的 sourceName 三个分支都在。
-    about = (kt / "AboutActivity.kt").read_text(encoding="utf-8")
-    strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
-    for key in ("update_source_pages", "update_source_cn", "update_source_direct"):
+    # 0.3.6（§A 修订）：两源以外的东西都不许残留。
+    forbidden = (
+        "MANIFEST_PAGES",
+        "MANIFEST_CN",
+        "PAGES",
+        "jsdelivr",
+        "Jsdelivr",
+        "gh-proxy",
+        "cnFileName",
+        "apkFileNames",
+        "-cn.apk",
+        "update_source_switched",
+        "update_source_pages",
+        "update_source_cn",
+        "update_source_direct",
+        "ShellPrefs.updateSource",
+        "radio_source_",
+        "group_update_source",
+        "orderFor(preferred",
+    )
+    for text_name, text in (
+        ("UpdateChecker.kt", updater),
+        ("AboutActivity.kt", about),
+        ("strings.xml", strings),
+        ("activity_about.xml", layout),
+    ):
+        left = [token for token in forbidden if token in text]
+        if left:
+            fail(text_name + " still has " + ", ".join(left))
+        else:
+            ok("two-source chain clean in " + text_name)
+
+    # 关于页不再有更新源单选。
+    if "RadioGroup" in about or "RadioButton" in about:
+        fail("about page still has update source radio")
+    else:
+        ok("about page has no update source radio")
+
+    # 两个来源文案齐备，sourceName 两个分支都在。
+    for key in ("update_source_gitee", "update_source_github"):
         if key in strings and ("R.string." + key) in about:
             ok("update source label " + key)
         else:
             fail("update source label missing " + key)
 
-    # 地址顺序：Pages 在 jsDelivr 之前，jsDelivr 在 raw 之前。
-    pages_at = updater.find("MANIFEST_PAGES = ")
-    cn_at = updater.find("MANIFEST_CN = ")
-    direct_at = updater.find("MANIFEST_DIRECT =")
-    if 0 <= pages_at < cn_at < direct_at:
-        ok("manifest sources ordered pages < cn < direct")
+    # 诊断行仍写两个源的结果。
+    if "update_diag_sources" in strings and "R.string.update_diag_sources" in about:
+        ok("diag label update_diag_sources")
     else:
-        fail("manifest sources must be ordered pages < cn < direct")
+        fail("diag label missing update_diag_sources")
 
+    # 0.3.6（§B）：下载先按目标列表取地址，失败一次才换下一个；两次都失败才报错。
+    download_markers = (
+        "downloadTargets.getOrNull(targetIndex)",
+        "targetIndex + 1 < downloadTargets.size",
+        "UpdateSources.downloadTargets(manifest)",
+    )
+    for marker in download_markers:
+        if marker in about:
+            ok("download fallback has " + marker)
+        else:
+            fail("download fallback missing " + marker)
+
+    # 地址顺序：Gitee 镜像 → GitHub 直通。
+    gitee_at = updater.find("MANIFEST_GITEE = ")
+    github_at = updater.find("MANIFEST_GITHUB =")
+    if 0 <= gitee_at < github_at:
+        ok("manifest sources ordered gitee < github")
+    else:
+        fail("manifest sources must be ordered gitee < github")
     gradle = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "update.json").read_text(encoding="utf-8"))
     name = str(manifest.get("versionName", ""))
@@ -1485,21 +1548,38 @@ def check_update_fallback() -> None:
         docs.get("versionCode") == manifest.get("versionCode")
         and docs.get("versionName") == manifest.get("versionName")
         and docs.get("apk") == manifest.get("apk")
+        and docs.get("apkCn") == manifest.get("apkCn")
     )
     if same:
         ok("docs/update.json matches android/update.json")
     else:
         fail(
-            "docs/update.json not synced: %s/%s/%s vs %s/%s/%s"
+            "docs/update.json not synced: %s/%s/%s/%s vs %s/%s/%s/%s"
             % (
                 docs.get("versionName"),
                 docs.get("versionCode"),
                 docs.get("apk"),
+                docs.get("apkCn"),
                 manifest.get("versionName"),
                 manifest.get("versionCode"),
                 manifest.get("apk"),
+                manifest.get("apkCn"),
             )
         )
+
+    # 0.3.6（§B）：apkCn 可选；有就必须是同版本的 Gitee 附件直链。
+    apk_cn = manifest.get("apkCn")
+    if apk_cn is None:
+        ok("update.json apkCn optional (absent)")
+    elif (
+        isinstance(apk_cn, str)
+        and apk_cn.startswith("https://gitee.com/")
+        and apk_cn.endswith("/" + str(manifest.get("apk")))
+        and ("android-v" + str(manifest.get("versionName"))) in apk_cn
+    ):
+        ok("update.json apkCn " + apk_cn)
+    else:
+        fail("update.json apkCn should point at the same-version Gitee asset: " + repr(apk_cn))
 
 
 def main() -> int:

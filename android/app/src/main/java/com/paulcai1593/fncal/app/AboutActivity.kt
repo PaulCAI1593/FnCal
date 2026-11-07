@@ -16,8 +16,6 @@ import android.webkit.WebStorage
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.ProgressBar
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
@@ -57,8 +55,6 @@ class AboutActivity : AppCompatActivity() {
         private const val CACHE_UPDATES_DIR = "updates"
     }
 
-    private lateinit var radioSourceCn: RadioButton
-    private lateinit var radioSourceDirect: RadioButton
     private lateinit var buttonCheckUpdate: Button
     private lateinit var progressUpdate: ProgressBar
     private lateinit var textUpdateStatus: TextView
@@ -76,7 +72,6 @@ class AboutActivity : AppCompatActivity() {
     // ---- 0.3.4 更新收尾状态 ----
     /** 最近一次「下载并安装」的清单与源：文件已存在时重试一次要复用同一请求。 */
     private var lastManifest: UpdateChecker.Manifest? = null
-    private var lastSource: UpdateSources.Source = UpdateSources.Source.CN
     /** ERROR_FILE_ALREADY_EXISTS 的自愈重试是否已用过（本会话只一次）。 */
     private var retriedAfterExists = false
     /** 已校验通过、等「安装未知应用」授权后要续装的包。 */
@@ -84,6 +79,13 @@ class AboutActivity : AppCompatActivity() {
     private var pendingInstallArmed = false
     /** 诊断行：最近一次成功取到的落盘位置（只留目录名 + 文件名）。 */
     private var lastLandedPath = "-"
+
+    // ---- 0.3.6（§B）下载地址回退状态 ----
+    /** 本次下载按顺序要试的地址（首选 + 回退），以及当前是第几个。 */
+    private var downloadTargets: List<UpdateSources.DownloadTarget> = emptyList()
+    private var targetIndex = 0
+    /** 第一次失败的原因码：回退也失败时优先报它，避免被「文件已存在」之类的次生原因盖掉。 */
+    private var firstFailureReason = 0
 
     /** 0.3.5：服务端版本后台刷新是否在途（避免连点或 onResume 并发重复请求）。 */
     private var serverRefreshInFlight = false
@@ -193,26 +195,13 @@ class AboutActivity : AppCompatActivity() {
     // ---- 检查更新（§B4） -------------------------------------------------
 
     private fun setupUpdateCard() {
-        radioSourceCn = findViewById(R.id.radio_source_cn)
-        radioSourceDirect = findViewById(R.id.radio_source_direct)
         buttonCheckUpdate = findViewById(R.id.btn_check_update)
         progressUpdate = findViewById(R.id.progress_update)
         textUpdateStatus = findViewById(R.id.text_update_status)
         textUpdateDiag = findViewById(R.id.text_update_diag)
         buttonCancelUpdate = findViewById(R.id.btn_cancel_update)
-        val group = findViewById<RadioGroup>(R.id.group_update_source)
 
-        // 恢复上次选择：默认国内源。
-        val saved = UpdateSources.Source.fromPref(ShellPrefs.updateSource(this))
-        if (saved == UpdateSources.Source.DIRECT) {
-            radioSourceDirect.isChecked = true
-        } else {
-            radioSourceCn.isChecked = true
-        }
-        group.setOnCheckedChangeListener { _, _ ->
-            ShellPrefs.setUpdateSource(this, selectedSource().prefValue)
-        }
-
+        // 0.3.6（§A 修订）：只有 Gitee 与 GitHub 两个固定源，「更新源」单选已删。
         buttonCheckUpdate.setOnClickListener {
             checkForUpdate()
         }
@@ -221,11 +210,7 @@ class AboutActivity : AppCompatActivity() {
         }
     }
 
-    private fun selectedSource(): UpdateSources.Source =
-        if (radioSourceDirect.isChecked) UpdateSources.Source.DIRECT else UpdateSources.Source.CN
-
     private fun checkForUpdate() {
-        val source = selectedSource()
         buttonCheckUpdate.isEnabled = false
         progressUpdate.visibility = View.GONE
         buttonCancelUpdate.visibility = View.GONE
@@ -234,7 +219,7 @@ class AboutActivity : AppCompatActivity() {
 
         val current = currentVersionCode()
         thread {
-            val outcome = UpdateChecker.check(source, current)
+            val outcome = UpdateChecker.check(current)
             runOnUiThread { onCheckOutcome(outcome) }
         }
     }
@@ -242,6 +227,8 @@ class AboutActivity : AppCompatActivity() {
     private fun onCheckOutcome(outcome: UpdateChecker.Outcome) {
         buttonCheckUpdate.isEnabled = true
         buttonCheckUpdate.setText(R.string.update_retry)
+        // 0.3.6（§A）：四源结果写进诊断行，用户截图就能看出卡在哪一源。
+        updateSourceDiag(outcome.diagnostics)
         when (outcome) {
             is UpdateChecker.Outcome.Failure -> {
                 textUpdateStatus.text = getString(R.string.update_check_failed, outcome.message)
@@ -266,11 +253,8 @@ class AboutActivity : AppCompatActivity() {
             getString(R.string.update_dialog_version, manifest.versionName, manifest.versionCode)
         )
         lines.add(getString(R.string.update_dialog_date, manifest.releasedAt))
-        var sourceLabel = sourceName(outcome.source)
-        if (outcome.usedFallback) {
-            sourceLabel += "（" + getString(R.string.update_source_fallback) + "）"
-        }
-        lines.add(getString(R.string.update_dialog_source, sourceLabel))
+        // 0.3.6（§A 修订）：只有两个源，来源照实写（Gitee 镜像 / GitHub 直通）。
+        lines.add(getString(R.string.update_dialog_source, sourceName(outcome.source)))
         if (manifest.notes.isNotEmpty()) {
             lines.add(getString(R.string.update_dialog_notes))
             manifest.notes.forEach { lines.add("· " + it) }
@@ -279,7 +263,7 @@ class AboutActivity : AppCompatActivity() {
             .setTitle(getString(R.string.update_found_title, manifest.versionName))
             .setMessage(lines.joinToString("\n"))
             .setPositiveButton(R.string.update_download) { _, _ ->
-                startDownload(manifest, outcome.source)
+                startDownload(manifest)
             }
             .setNegativeButton(R.string.update_later, null)
             .show()
@@ -288,18 +272,32 @@ class AboutActivity : AppCompatActivity() {
     private fun sourceName(source: UpdateSources.Source): String =
         getString(
             when (source) {
-                UpdateSources.Source.PAGES -> R.string.update_source_pages
-                UpdateSources.Source.DIRECT -> R.string.update_source_direct
-                UpdateSources.Source.CN -> R.string.update_source_cn
+                UpdateSources.Source.GITEE -> R.string.update_source_gitee
+                UpdateSources.Source.GITHUB -> R.string.update_source_github
             }
         )
 
-    private fun startDownload(manifest: UpdateChecker.Manifest, source: UpdateSources.Source) {
+    /** 0.3.6（§A）：两源检查结果——`Gitee 200 · GitHub 超时`。 */
+    private fun updateSourceDiag(attempts: List<UpdateChecker.SourceAttempt>) {
+        if (!::textUpdateDiag.isInitialized || attempts.isEmpty()) {
+            return
+        }
+        val text = attempts.joinToString(" · ") {
+            UpdateChecker.sourceTag(it.source) + " " + it.status
+        }
+        textUpdateDiag.text = getString(R.string.update_diag_sources, text)
+        textUpdateDiag.visibility = View.VISIBLE
+    }
+
+    private fun startDownload(manifest: UpdateChecker.Manifest) {
         expectedVersionCode = manifest.versionCode
         expectedApkName = manifest.apk
         lastManifest = manifest
-        lastSource = source
         retriedAfterExists = false
+        // 0.3.6（§B）：Gitee 附件优先，失败一次换 GitHub 直连。
+        downloadTargets = UpdateSources.downloadTargets(manifest)
+        targetIndex = 0
+        firstFailureReason = 0
 
         // 0.3.4 §D：磁盘上已有同版本的正确包（包名 + versionCode 都对）就直接装，
         // 不再重下；这也顺带避开「目标文件已存在」导致的失败。
@@ -315,7 +313,7 @@ class AboutActivity : AppCompatActivity() {
         }
 
         cleanBeforeDownload(manifest.apk)
-        enqueueDownload(manifest, source)
+        enqueueDownload(manifest)
     }
 
     /** 0.3.4 §B：enqueue 前删掉外部私有目录与缓存里的同名包。 */
@@ -324,9 +322,22 @@ class AboutActivity : AppCompatActivity() {
         File(File(cacheDir, CACHE_UPDATES_DIR), apkName).delete()
     }
 
-    private fun enqueueDownload(manifest: UpdateChecker.Manifest, source: UpdateSources.Source) {
+    /**
+     * 0.3.6（§B）：按 [downloadTargets] 里当前那一条下载。
+     * 首选失败后 [targetIndex] 加一，再由这里取回退地址；两次都失败才报错。
+     */
+    private fun enqueueDownload(manifest: UpdateChecker.Manifest) {
+        if (downloadTargets.isEmpty()) {
+            downloadTargets = UpdateSources.downloadTargets(manifest)
+            targetIndex = 0
+        }
+        val target = downloadTargets.getOrNull(targetIndex)
+        if (target == null) {
+            finishDownloadWithFailure(firstFailureReason)
+            return
+        }
         val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val request = DownloadManager.Request(Uri.parse(UpdateSources.apkUrl(source, manifest)))
+        val request = DownloadManager.Request(Uri.parse(target.url))
             .setTitle(getString(R.string.app_name) + " " + manifest.versionName)
             .setDescription(getString(R.string.update_downloading))
             .setMimeType(INSTALL_MIME)
@@ -336,15 +347,21 @@ class AboutActivity : AppCompatActivity() {
             .setDestinationInExternalFilesDir(
                 this,
                 Environment.DIRECTORY_DOWNLOADS,
-                EXTERNAL_UPDATES_DIR + "/" + manifest.apk
+                EXTERNAL_UPDATES_DIR + "/" + target.fileName
             )
             .setAllowedOverMetered(true)
         downloadId = try {
             manager.enqueue(request)
         } catch (e: Exception) {
+            // 入队就失败：还有回退地址就换一个，否则报失败。
             updateDiag(-1, 0, "-")
-            textUpdateStatus.visibility = View.VISIBLE
-            textUpdateStatus.text = getString(R.string.update_download_failed)
+            if (targetIndex + 1 < downloadTargets.size) {
+                targetIndex += 1
+                enqueueDownload(manifest)
+            } else {
+                textUpdateStatus.visibility = View.VISIBLE
+                textUpdateStatus.text = getString(R.string.update_download_failed)
+            }
             return
         }
         progressUpdate.visibility = View.VISIBLE
@@ -439,10 +456,23 @@ class AboutActivity : AppCompatActivity() {
             retriedAfterExists = true
             cleanBeforeDownload(expectedApkName)
             downloadId = -1L
-            enqueueDownload(manifest, lastSource)
+            enqueueDownload(manifest)
             return
         }
-        finishDownloadWithFailure(reason)
+        // 0.3.6（§B）：首选地址失败一次就换回退地址；两次都失败才报错。
+        if (firstFailureReason == 0) {
+            firstFailureReason = reason
+        }
+        if (manifest != null && targetIndex + 1 < downloadTargets.size) {
+            targetIndex += 1
+            downloadId = -1L
+            cleanBeforeDownload(expectedApkName)
+            enqueueDownload(manifest)
+            return
+        }
+        // 原因码保留：报真正结束这次下载的那个原因；它若为 0 就退回第一次的原因。
+        val reported = if (reason != 0) reason else firstFailureReason
+        finishDownloadWithFailure(reported)
     }
 
     /**
