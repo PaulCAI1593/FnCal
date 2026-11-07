@@ -348,9 +348,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 300": app_gradle,
-        'versionName = "0.3.0"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.0")': app_gradle,
+        "versionCode = 301": app_gradle,
+        'versionName = "0.3.1"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.1")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -892,7 +892,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.0"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.1"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -916,11 +916,57 @@ def check_widgets() -> None:
     # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。
     workflow = ROOT.parent / ".github" / "workflows" / "android.yml"
     wf = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
-    for needle in ("TAG=android-v0.3.0", "OUT=FnCal-Android-0.3.0.apk", "versionCode='300'", "versionName='0.3.0'"):
+    for needle in ("TAG=android-v0.3.1", "OUT=FnCal-Android-0.3.1.apk", "versionCode='301'", "versionName='0.3.1'"):
         if needle in wf:
             ok("workflow has " + needle)
         else:
             fail("workflow missing " + needle)
+
+
+def check_update_fallback() -> None:
+    """0.3.1（§B）：检测更新的 CDN 旧缓存兜底，以及版本串多处一致。"""
+    import json
+
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    updater = (kt / "UpdateChecker.kt").read_text(encoding="utf-8")
+    markers = (
+        # 国内源版本 ≤ 当前版本时再取直通源
+        "0.3.1（§B）：国内源 ≤ 当前版本 → 再取直通源；两源取 versionCode 较大者。",
+        # 两源取 versionCode 较大者
+        "cn.versionCode >= direct.versionCode",
+        "fetch(UpdateSources.Source.DIRECT)",
+        # 两源失败时沿用原有错误文案
+        "直通也失败：",
+    )
+    for marker in markers:
+        if marker in updater:
+            ok("update checker has " + marker)
+        else:
+            fail("update checker missing " + marker)
+
+    gradle = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
+    manifest = json.loads((ROOT / "update.json").read_text(encoding="utf-8"))
+    name = str(manifest.get("versionName", ""))
+    code = manifest.get("versionCode")
+    workflow = (ROOT.parent / ".github" / "workflows" / "android.yml").read_text(encoding="utf-8")
+    checks = {
+        "gradle versionCode": ("versionCode = " + str(code)) in gradle,
+        "gradle versionName": ('versionName = "' + name + '"') in gradle,
+        "gradle resValue": ('resValue("string", "fncal_shell_version", "' + name + '")') in gradle,
+        "shell UA": ('UA_SUFFIX = " FnCalAndroid/' + name + '"')
+        in (kt / "MainActivity.kt").read_text(encoding="utf-8"),
+        "widget UA": ('const val VERSION = "' + name + '"')
+        in (kt / "WidgetClient.kt").read_text(encoding="utf-8"),
+        "update.json apk": manifest.get("apk") == "FnCal-Android-" + name + ".apk",
+        "workflow tag": ("TAG=android-v" + name) in workflow,
+        "workflow apk": ("OUT=FnCal-Android-" + name + ".apk") in workflow,
+        "workflow badging": ("versionName='" + name + "'") in workflow,
+    }
+    for label, good in checks.items():
+        if good:
+            ok("version string agrees: " + label)
+        else:
+            fail("version string mismatch: " + label)
 
 
 def main() -> int:
@@ -931,6 +977,7 @@ def main() -> int:
     check_resources()
     check_urls()
     check_update_manifest()
+    check_update_fallback()
     check_gradle()
     check_theme_tokens()
     check_layouts()

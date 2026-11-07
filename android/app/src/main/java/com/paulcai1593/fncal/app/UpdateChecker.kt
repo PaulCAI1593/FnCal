@@ -14,6 +14,10 @@ import javax.net.ssl.SSLException
  *
  * 更新判定：清单的 versionCode 大于当前 versionCode 才算有更新。
  * 下载与安装交给 [AboutActivity]（系统 DownloadManager + 校验 + ACTION_VIEW）。
+ *
+ * 0.3.1（§B）：jsDelivr 可能返回 CDN 缓存的旧清单（HTTP 200，但 versionCode 落后），
+ * 不能当成「已是最新」。国内源返回的 versionCode ≤ 当前安装版本时，再取一次直通源，
+ * 两源取 versionCode 较大者；直通源失败则沿用国内源结果。
  */
 object UpdateSources {
 
@@ -60,7 +64,7 @@ object UpdateChecker {
     )
 
     sealed class Outcome {
-        /** 有更新。usedFallback = 国内源失败后自动改用了直通。 */
+        /** 有更新。usedFallback = 国内源失败或清单过期后自动改用了直通。 */
         data class Found(
             val manifest: Manifest,
             val source: UpdateSources.Source,
@@ -78,24 +82,52 @@ object UpdateChecker {
 
     /**
      * 检查更新。先试 [preferred]；国内源失败自动改试直通并标记 usedFallback。
-     * 必须在后台线程调用（内部是阻塞 IO）。
+     * 国内源成功但 versionCode ≤ 当前版本（CDN 旧缓存）时，也再取一次直通源，
+     * 两源结果取 versionCode 较大者。必须在后台线程调用（内部是阻塞 IO）。
      */
     fun check(preferred: UpdateSources.Source, currentVersionCode: Long): Outcome {
-        val first = try {
-            val manifest = fetch(preferred)
-            return compare(manifest, currentVersionCode, preferred, false)
+        if (preferred == UpdateSources.Source.DIRECT) {
+            return try {
+                compare(fetch(UpdateSources.Source.DIRECT), currentVersionCode, UpdateSources.Source.DIRECT, false)
+            } catch (e: Exception) {
+                Outcome.Failure(describe(e))
+            }
+        }
+        return checkFromCn(currentVersionCode)
+    }
+
+    /** 国内源优先；失败或清单过期时兜底直通。 */
+    private fun checkFromCn(currentVersionCode: Long): Outcome {
+        val cn = try {
+            fetch(UpdateSources.Source.CN)
         } catch (e: Exception) {
-            describe(e)
+            // 原有兜底：国内源失败时改走直通；两源都失败就报错。
+            val cnError = describe(e)
+            return try {
+                compare(
+                    fetch(UpdateSources.Source.DIRECT),
+                    currentVersionCode,
+                    UpdateSources.Source.DIRECT,
+                    true,
+                )
+            } catch (direct: Exception) {
+                Outcome.Failure(cnError + "；直通也失败：" + describe(direct))
+            }
         }
-        if (preferred != UpdateSources.Source.CN) {
-            return Outcome.Failure(first)
+        if (cn.versionCode.toLong() > currentVersionCode) {
+            return compare(cn, currentVersionCode, UpdateSources.Source.CN, false)
         }
-        return try {
-            val manifest = fetch(UpdateSources.Source.DIRECT)
-            compare(manifest, currentVersionCode, UpdateSources.Source.DIRECT, true)
+        // 0.3.1（§B）：国内源 ≤ 当前版本 → 再取直通源；两源取 versionCode 较大者。
+        val direct = try {
+            fetch(UpdateSources.Source.DIRECT)
         } catch (e: Exception) {
-            Outcome.Failure(first + "；直通也失败：" + describe(e))
+            null
         }
+        if (direct == null || cn.versionCode >= direct.versionCode) {
+            // 直通也取不到或并不更新：沿用国内源结果，最终来源仍是国内源。
+            return compare(cn, currentVersionCode, UpdateSources.Source.CN, false)
+        }
+        return compare(direct, currentVersionCode, UpdateSources.Source.DIRECT, true)
     }
 
     private fun compare(

@@ -52,8 +52,8 @@ jobs:
           AAPT="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/aapt"
           # 0.3.0（§A5）：版本号必须真的打进包里，避免 tag 与包内容对不上。
           "$AAPT" dump badging "$APK" | tee badging.txt | head -6
-          grep -q "versionCode='300'" badging.txt
-          grep -q "versionName='0.3.0'" badging.txt
+          grep -q "versionCode='301'" badging.txt
+          grep -q "versionName='0.3.1'" badging.txt
           # 0.2.1（§S1）：打印签名证书指纹；同一签名的包才能覆盖升级。
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner"
           "$APKSIGNER" verify --print-certs "$APK" | tee apk-signature.txt
@@ -73,9 +73,9 @@ jobs:
         run: |
           set -e
           APK=app/build/outputs/apk/debug/app-debug.apk
-          OUT=FnCal-Android-0.3.0.apk
+          OUT=FnCal-Android-0.3.1.apk
           cp "$APK" "$OUT"
-          TAG=android-v0.3.0
+          TAG=android-v0.3.1
           if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$OUT"; then
             echo "资产 $OUT 已存在，跳过覆盖（已发布的包不改字节）"
             exit 0
@@ -84,8 +84,8 @@ jobs:
             echo "release $TAG 已存在，覆盖资产"
           else
             gh release create "$TAG" \
-              --title "FnCal Android 0.3.0" \
-              --notes "安卓外壳测试包（固定测试签名，可直接覆盖升级）。本版新增五款桌面卡片（迷你月历 / 单日日程 / 月视图 / 四日视图 / 日程列表）：卡片跟随 App 登录态，登录后自动取数，每 30 分钟刷新，断网显示缓存与上次更新时间；点卡片直接打开对应视图与日期。地址页标题上方加了 FnCal 标志，状态栏与手势条保持透明。到点提醒不在本版。" \
+              --title "FnCal Android 0.3.1" \
+              --notes "安卓外壳测试包（固定测试签名，可直接覆盖升级）。本版修复「检测更新还显示 0.2.0」：国内源返回 CDN 旧清单时改用直通源，两源取较新的一份，不再把旧清单当成最新。桌面卡片、登录态与系统栏行为不变。到点提醒不在本版。" \
               --latest=false
           fi
           gh release upload "$TAG" "$OUT" --clobber

@@ -50,7 +50,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_ABOUT = 2
         private const val DOUBLE_BACK_WINDOW_MS = 2_000L
         // 0.3.0 §D：UA 带机型，服务端「我的安全」因此能显示是哪台手机。
-    private val UA_SUFFIX = " FnCalAndroid/0.3.0" + DeviceName.suffix()
+    private val UA_SUFFIX = " FnCalAndroid/0.3.1" + DeviceName.suffix()
     }
 
     private lateinit var webView: WebView
