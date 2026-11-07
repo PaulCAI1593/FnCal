@@ -435,13 +435,13 @@
 </header>
 <main>
   <section class="hero wrap">
-    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.5.12</p>
+    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.6.4</p>
     <h1>日历留在自己的 NAS 上</h1>
     <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
-      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-0.5.12.fpk">下载安装包 0.5.12</a>
-      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-MCP-Skill-0.5.12.zip">下载 AI 技能包</a>
-      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/SHA256SUMS.txt">下载校验文件</a>
+      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.4/FnCal-0.6.4.fpk">下载安装包 0.6.4</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.4/FnCal-MCP-Skill-0.6.4.zip">下载 AI 技能包</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.4/SHA256SUMS.txt">下载校验文件</a>
     </div>
     <p style="margin-top:16px;font-size:var(--t-md);color:var(--ink-3)">安装包 713,701 B · 技能包 26,202 B · 校验文件 176 B。先看 <a href="#ai-abilities">两条 AI 能力</a>、<a href="#ai">四步接入</a> 与 <a href="#features">六条特色</a>。</p>
     <dl class="spec">
@@ -482,9 +482,9 @@
       <div class="shots2">
         <figure class="shot">
           <div class="shot__frame">
-            <img src="screenshots/ai-credentials.png" alt="FnCal 设置里的 AI 页签：逐个日历设为不可见、只读或读写，并选择写入模式提案或直接写入" width="900" height="900">
+            <img src="screenshots/settings-general.png" alt="FnCal 设置的一般页：主题、主题色、24 小时制、农历、中国法定节日、每周开始日、显示周数、周数算法与默认日历" width="900" height="900">
           </div>
-          <figcaption>「设置 → AI」页签：逐个日历设「不可见 / 只读 / 读写」，再选写入模式「提案 / 直接写入」。</figcaption>
+          <figcaption>「设置 → 一般」页：主题、时间与日历显示的口味，都在这里调。</figcaption>
         </figure>
         <figure class="shot">
           <div class="shot__frame">
@@ -741,7 +741,7 @@
           <p>飞牛 OS 用户走应用中心；其他环境用 Docker。装之前先核对包的 SHA-256。</p>
         </div>
         <ol class="steps">
-          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-0.5.12.fpk">Release 下载 <code>FnCal-0.5.12.fpk</code></a>，核对哈希后再装。</div></li>
+          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.4/FnCal-0.6.4.fpk">Release 下载 <code>FnCal-0.6.4.fpk</code></a>，核对哈希后再装。</div></li>
           <li><div><strong>安装向导</strong><br>填一个空闲端口（1024 以上，避开 5232）与管理员用户名、密码；两步都必填。</div></li>
           <li><div><strong>打开并登录</strong><br>装完点桌面图标，浏览器新标签打开 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用刚设的账号登录。</div></li>
         </ol>
@@ -755,10 +755,10 @@
       </div>
       <div>
         <pre class="code"><span># 先核对哈希（Linux / macOS）</span>
-sha256sum FnCal-0.5.12.fpk
+sha256sum FnCal-0.6.4.fpk
 
 <span># Windows PowerShell</span>
-Get-FileHash .\FnCal-0.5.12.fpk -Algorithm SHA256
+Get-FileHash .\FnCal-0.6.4.fpk -Algorithm SHA256
 
 <span># 期望值</span>
 4C7BD8D1C6139189C977BB34761BEEC62AD432CAB7B39DFA844A581D29BEA391</pre>
@@ -792,7 +792,7 @@ Get-FileHash .\FnCal-0.5.12.fpk -Algorithm SHA256
           <pre class="code code--wrap">读这份文件，当作我的 FnCal 日历使用说明，读完记住：
 https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/skills/fncal-mcp/SKILL.md
 拉完告诉我版本号，后面的操作按这份说明来。</pre>
-          这个地址打不开，就让它换 <a href="https://gh-proxy.com/https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md">gh-proxy 镜像</a>。客户端不能联网，就用 Release 里的 <code>FnCal-MCP-Skill-0.5.12.zip</code> 解压给它。
+          这个地址打不开，就让它换 <a href="https://gh-proxy.com/https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md">gh-proxy 镜像</a>。客户端不能联网，就用 Release 里的 <code>FnCal-MCP-Skill-0.6.4.zip</code> 解压给它。
         </div></li>
         <li><div>
           <strong>填地址与令牌</strong><br>
@@ -832,7 +832,7 @@ https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/skills/fncal-mcp/SKILL.md
         </div>
         <div class="feat__row">
           <dt>403 · UA</dt>
-          <dd>正文含 <code>browser_signature_banned</code>：前面的 Cloudflare 拦了客户端默认 User-Agent。给客户端设一个普通 UA，例如 <code>FnCal-MCP/0.5.12</code>，再重试。</dd>
+          <dd>正文含 <code>browser_signature_banned</code>：前面的 Cloudflare 拦了客户端默认 User-Agent。给客户端设一个普通 UA，例如 <code>FnCal-MCP/0.6.4</code>，再重试。</dd>
         </div>
         <div class="feat__row">
           <dt>429</dt>
@@ -912,6 +912,22 @@ https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/skills/fncal-mcp/SKILL.md
           <li><strong>要上公网就套 HTTPS 反向代理。</strong>开启「通过反向代理提供 HTTPS」的前提是请求确实经可信反代以 HTTPS 到达；开启后 HTTP 访问会 301 到 443。内置 HTTPS 端口 5243。</li>
           <li><strong>AI 的权限逐个日历划。</strong>「不可见」的日历对 AI 等同于不存在，连名字都读不到。</li>
         </ul>
+        <h3 class="sub">权限分两套，分别设置</h3>
+        <p>CalDAV 专用密码与 AI 凭据各有一套日历权限：给 CalDAV 客户端开的日历，不会自动放给 AI；改一边不影响另一边。</p>
+        <div class="shots2">
+          <figure class="shot">
+            <div class="shot__frame">
+              <img src="screenshots/permissions-caldav.png" alt="FnCal 设置 CalDAV 页的权限表：每个日历一行，可选可读写、只读或不可见" width="900" height="900">
+            </div>
+            <figcaption>CalDAV 页：给 CalDAV 客户端逐日历设「可读写 / 只读 / 不可见」。</figcaption>
+          </figure>
+          <figure class="shot">
+            <div class="shot__frame">
+              <img src="screenshots/permissions-ai.png" alt="FnCal 设置 AI 页的日历授权：全部设为三档，逐个日历可选不可见、只读或读写" width="900" height="900">
+            </div>
+            <figcaption>AI 页：另一套权限，逐日历设「不可见 / 只读 / 读写」，再选写入模式。</figcaption>
+          </figure>
+        </div>
         <h3 class="sub">常见问题</h3>
         <div style="margin-top:12px">
           <details class="faq">
@@ -932,33 +948,37 @@ https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/skills/fncal-mcp/SKILL.md
       <div class="sec__head">
         <p class="kicker">Releases</p>
         <h2>版本与下载</h2>
-        <p>当前版本 0.5.12（2026-11-06）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
+        <p>当前版本 0.6.4（2026-11-07）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
       </div>
       <div class="assets">
         <div class="asset">
-          <div class="asset__name">安装包 <code>FnCal-0.5.12.fpk</code></div>
-          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.5.12.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-0.5.12.fpk">下载</a>
-          <div class="asset__meta">713,701 B · SHA-256 4C7BD8D1C6139189C977BB34761BEEC62AD432CAB7B39DFA844A581D29BEA391</div>
+          <div class="asset__name">安装包 <code>FnCal-0.6.4.fpk</code></div>
+          <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.6.4.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.4/FnCal-0.6.4.fpk">下载</a>
+          <div class="asset__meta">733,967 B · SHA-256 260AFD739A675DB4756DEF49C149CAD5B4E4BE4DA0A4073611D0A8F2F6409295</div>
         </div>
         <div class="asset">
-          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.5.12.zip</code></div>
-          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.5.12.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/FnCal-MCP-Skill-0.5.12.zip">下载</a>
-          <div class="asset__meta">26,202 B · SHA-256 E2E1DD59679CD6775607F31E8DCE6D2C01B5168B7BEE1094172142B3770BF139</div>
+          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.6.4.zip</code></div>
+          <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.6.4.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.4/FnCal-MCP-Skill-0.6.4.zip">下载</a>
+          <div class="asset__meta">26,201 B · SHA-256 C04FA4FF0EED9FEFE50F5429DB5CD1D07E56D5E8D5B8C393AC6EC7C347465111</div>
         </div>
         <div class="asset">
           <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
-          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.5.12/SHA256SUMS.txt">下载</a>
-          <div class="asset__meta">176 B · 含上面两个文件的哈希，可一条命令核对</div>
+          <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.4/SHA256SUMS.txt">下载</a>
+          <div class="asset__meta">174 B · 含上面两个文件的哈希，可一条命令核对</div>
         </div>
       </div>
       <p style="margin-top:24px;font-size:var(--t-md);color:var(--ink-2)">全部版本：<a href="https://github.com/PaulCAI1593/FnCal/releases">Releases</a> · 更新内容：<a href="https://github.com/PaulCAI1593/FnCal/blob/main/CHANGELOG.md">CHANGELOG</a> · 源码与文档：<a href="https://github.com/PaulCAI1593/FnCal">GitHub 仓库</a></p>
-      <h3 class="sub">0.5.12 改了什么</h3>
+      <h3 class="sub">0.6.4 改了什么</h3>
       <ul class="rules">
-        <li><strong>手机长按菜单不再被过早关掉。</strong>滚动、指针移动、窗口变化与失焦都不再触发关闭。</li>
-        <li><strong>菜单打开后保持键盘焦点。</strong>聚焦时不动页面滚动位置。</li>
-        <li><strong>加了关闭原因诊断。</strong>需要排查时在地址后加 <code>?ctxdebug=1</code>。</li>
-        <li><strong>接口、数据结构与 CalDAV 行为不变。</strong>已有日历数据与客户端配置不受影响。</li>
+        <li><strong>设置页签从 5 个收成 4 个。</strong>「日历」页并进 CalDAV 页，顺序是日历设置 → 地址 → 提示 → 同步状态；页首头头像块撤掉。</li>
+        <li><strong>诊断包移到「安全设置 → 审计」</strong>，组名「系统诊断」，仅管理员可见；内容仍只含版本、配置结构与计数，不含日程与密钥。</li>
+        <li><strong>我的安全新增「登录设备与接入」。</strong>网页、安卓壳、MCP 接入各一行，显示机型与最近使用时间，每条可单独撤销，撤销后那条请求立即失效。</li>
+        <li><strong>手机顶栏直接放设置按钮</strong>，不再收进头像菜单；窄屏 320–390 标题不截断。</li>
+        <li><strong>周 / 四日 / 日视图卡片可多行。</strong>按高度优先名称，再时间、地点，每项至少一行；矮卡片仍单行。</li>
+        <li><strong>桌面卡片跟随 App 登录态。</strong>安卓壳里五款只读卡片，登录后自动取数，约 30 分钟刷新，不需要单独令牌。</li>
+        <li><strong>月视图跨天名称按行段显示</strong>，日号行字号整页统一；放不下时在段末省略。</li>
       </ul>
+      <p style="margin-top:8px;font-size:var(--t-sm);color:var(--ink-3)">0.5.13 至 0.6.3 是测试包，未对外发布，内容已并入本版。</p>
     </div>
   </section>
 </main>
