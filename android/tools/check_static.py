@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""FnCal 安卓外壳 v0.2.1 · 静态自检（本机不能编译，只能做这些）。
+"""FnCal 安卓外壳 v0.2.2 · 静态自检（本机不能编译，只能做这些）。
 
 检查项：
   1. 所有 XML 用 xml.etree 解析；
@@ -11,7 +11,7 @@
   6. Gradle 关键配置断言（版本、包名、SDK、JVM target、依赖白名单、固定测试签名）；
   7. 主题令牌：浅色 / 深色值只能是范围文档列出的那些；状态栏与导航栏必须透明；
   8. 布局：根容器不得 fitsSystemWindows="true" 或写死 paddingTop；必须有 shell_root；
-     卡片 / 按钮口径（9dp 卡片、44dp 按钮、16-13-12sp 字级）；
+     卡片 / 按钮 / 排版口径（9dp 卡片、48dp 主按钮、20-13-12sp 字级、页头 6dp、组间 18dp、留白 20dp）；
   9. 确认没有 gradle-wrapper.jar / gradlew，也没有遗留的 GlassSurface.kt。
 
 用法：C:\\Python314\\python.exe projects/CalDAV/android/tools/check_static.py
@@ -331,9 +331,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 201": app_gradle,
-        'versionName = "0.2.1"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.2.1")': app_gradle,
+        "versionCode = 202": app_gradle,
+        'versionName = "0.2.2"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.2.2")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -418,20 +418,27 @@ BINARY_ALLOW = {
     "keystore/fncal-test.keystore",
 }
 
-# 0.2.1（§S2）：范围文档列出的令牌值，浅色 / 深色。不得自换色。
+# 0.2.2：真源 `code/app/api/approval-page.mjs` 的渐变与玻璃浮层令牌。
+# 浅色渐变 #1d73d6 → #1094b7(52%) → #02b497，白光高光 22%；
+# 玻璃层 86% 白 + 55% 白描边（无 blur 回退 96%）；深色对应 9% 高光与 82% 深底。
 COLOR_TOKENS_LIGHT = {
     "surface_2": "#F5F6F8",
     "surface_3": "#ECEEF2",
     "border": "#E2E5EB",
     "text": "#14161C",
     "text_2": "#4B5162",
-    "text_3": "#656C7A",
+    "text_3": "#5F6675",
     "accent": "#2F5E9E",
     "accent_contrast": "#FFFFFF",
-    "bg_grad_start": "#EAF1F8",
-    "bg_grad_end": "#E3F0EA",
-    "glow_blue": "#1A2F5E9E",
-    "glow_teal": "#1A12A594",
+    "accent_text": "#2F5E9E",
+    "bg_grad_start": "#1D73D6",
+    "bg_grad_mid": "#1094B7",
+    "bg_grad_end": "#02B497",
+    "highlight": "#38FFFFFF",
+    "highlight_clear": "#00FFFFFF",
+    "glass_fill": "#DBFFFFFF",
+    "glass_stroke": "#8CFFFFFF",
+    "glass_fill_solid": "#F5FFFFFF",
 }
 COLOR_TOKENS_NIGHT = {
     "surface_2": "#1A1C24",
@@ -440,10 +447,15 @@ COLOR_TOKENS_NIGHT = {
     "text": "#F4F6FA",
     "text_2": "#A7ADBC",
     "text_3": "#8A91A2",
-    "bg_grad_start": "#101A22",
-    "bg_grad_end": "#0E2422",
-    "glow_blue": "#2E3E7BB8",
-    "glow_teal": "#2E12A594",
+    "accent_text": "#93C5FD",
+    "bg_grad_start": "#0D2A45",
+    "bg_grad_mid": "#0B3A4D",
+    "bg_grad_end": "#083A35",
+    "highlight": "#17FFFFFF",
+    "highlight_clear": "#00FFFFFF",
+    "glass_fill": "#D116181F",
+    "glass_stroke": "#1AFFFFFF",
+    "glass_fill_solid": "#F516181F",
     "error_red": "#FFB4AB",
 }
 
@@ -526,11 +538,115 @@ def check_layouts() -> None:
 
     for name in ("activity_address.xml", "activity_about.xml"):
         text = (layouts / name).read_text(encoding="utf-8")
-        for needle in ('@drawable/bg_card', '44dp', '16sp', '12sp'):
+        for needle in ('@drawable/bg_card', '48dp', '20sp', '13sp', '12sp'):
             if needle in text:
                 ok("layout " + name + " has " + needle)
             else:
                 fail("layout " + name + " missing " + needle)
+
+    # 0.2.2 排版口径：页头 / 分组 / 表单 / 留白。逐条断言，防止后续改版悄悄打回旧值。
+    TYPE_SCALE = ("20sp", "13sp", "12sp")
+    for name in ("activity_address.xml", "activity_about.xml"):
+        text = (layouts / name).read_text(encoding="utf-8")
+        for size in TYPE_SCALE:
+            if 'android:textSize="' + size + '"' in text:
+                ok("type scale " + name + " " + size)
+            else:
+                fail("type scale " + name + " missing " + size)
+        # 任何字号不得小于 12sp（用户明确要求：辅助 12 / 正文 13 / 标题 20）。
+        sizes = [int(m) for m in re.findall(r'android:textSize="(\d+)sp"', text)]
+        if sizes and min(sizes) < 12:
+            fail("text size below 12sp in " + name + ": " + repr(min(sizes)))
+        else:
+            ok("type scale " + name + " all >= 12sp")
+        # 标题 / 分组 / 主按钮为 600 字重：API 28+ 走 textFontWeight，24–27 用 bold 兜底。
+        weight = text.count('android:textFontWeight="600"')
+        if weight >= (2 if name == "activity_address.xml" else 5):
+            ok("weight 600 " + name + " count " + str(weight))
+        else:
+            fail("weight 600 " + name + " too few: " + str(weight))
+        for needle in ('android:layout_marginTop="18dp"', 'android:layout_marginBottom="8dp"',
+                       'android:paddingLeft="20dp"', 'android:paddingRight="20dp"',
+                       'android:paddingBottom="24dp"'):
+            if needle in text:
+                ok("spacing " + name + " has " + needle)
+            else:
+                fail("spacing " + name + " missing " + needle)
+        for needle in ('android:paddingLeft="14dp"', 'android:paddingTop="12dp"',
+                       'android:paddingRight="14dp"', 'android:paddingBottom="12dp"'):
+            if needle in text:
+                ok("card padding " + name + " has " + needle)
+            else:
+                fail("card padding " + name + " missing " + needle)
+
+    # 输入框 48dp / 14dp 内距；主按钮全宽 48dp；页头标题 20sp 且与副标题 6dp。
+    address = (layouts / "activity_address.xml").read_text(encoding="utf-8")
+    for needle in ('android:id="@+id/input_address"', 'android:layout_height="48dp"',
+                   'android:paddingLeft="14dp"', 'android:layout_marginTop="6dp"'):
+        if needle in address:
+            ok("form address has " + needle)
+        else:
+            fail("form address missing " + needle)
+    if re.search(r'id="@\+id/btn_connect".*?android:layout_height="48dp"', address, re.S):
+        ok("primary button 48dp address")
+    else:
+        fail("primary button must be 48dp: address")
+    about = (layouts / "activity_about.xml").read_text(encoding="utf-8")
+    if re.search(r'id="@\+id/btn_check_update".*?android:layout_height="48dp"', about, re.S):
+        ok("primary button 48dp about")
+    else:
+        fail("primary button must be 48dp: about")
+    for group in ("group_service", "group_update", "group_desktop", "group_about"):
+        if "@string/" + group in about:
+            ok("about group " + group)
+        else:
+            fail("about group missing " + group)
+    if 'android:ellipsize="middle"' in about and 'maxLines="1"' in about and 'android:minHeight="48dp"' in about:
+        ok("address row ellipsize middle, single line")
+    else:
+        fail("address row must ellipsize middle and stay single line")
+
+
+    # 0.2.2：两页都必须有「一层」玻璃容器与 backdrop 位图；旧的 blur_layer 不许回来。
+    for name in ("activity_address.xml", "activity_about.xml"):
+        text = (layouts / name).read_text(encoding="utf-8")
+        for needle in ('@+id/backdrop', '@+id/glass_card', '@drawable/bg_glass_card'):
+            if needle in text:
+                ok("glass layout " + name + " has " + needle)
+            else:
+                fail("glass layout " + name + " missing " + needle)
+        if "blur_layer" in text:
+            fail("legacy blur_layer still in " + name)
+        if text.count('@+id/glass_card') != 1:
+            fail("glass container must be exactly one layer in " + name)
+
+    glass = (APP / "res" / "drawable" / "bg_glass_card.xml").read_text(encoding="utf-8")
+    for needle in ('android:radius="16dp"', 'android:width="1dp"', "@color/glass_fill", "@color/glass_stroke"):
+        if needle in glass:
+            ok("glass drawable has " + needle)
+        else:
+            fail("glass drawable missing " + needle)
+
+    solid = (APP / "res" / "drawable" / "bg_glass_solid.xml").read_text(encoding="utf-8")
+    for needle in ('android:radius="16dp"', "@color/glass_fill_solid"):
+        if needle in solid:
+            ok("glass fallback has " + needle)
+        else:
+            fail("glass fallback missing " + needle)
+
+    gradient = (APP / "res" / "drawable" / "bg_shell_gradient.xml").read_text(encoding="utf-8")
+    for needle in ('android:angle="315"', "@color/bg_grad_start", "@color/bg_grad_mid", "@color/bg_grad_end"):
+        if needle in gradient:
+            ok("gradient has " + needle)
+        else:
+            fail("gradient missing " + needle)
+
+    glow = (APP / "res" / "drawable" / "bg_shell_glow.xml").read_text(encoding="utf-8")
+    for needle in ('android:centerX="0.62"', 'android:centerY="0.18"', "@color/highlight"):
+        if needle in glow:
+            ok("highlight has " + needle)
+        else:
+            fail("highlight missing " + needle)
 
     card = (APP / "res" / "drawable" / "bg_card.xml").read_text(encoding="utf-8")
     for needle in ('android:radius="9dp"', 'android:width="1dp"', "@color/surface_2", "@color/border"):

@@ -8,16 +8,23 @@
     <color name="text">#F4F6FA</color>
     <color name="text_2">#A7ADBC</color>
     <color name="text_3">#8A91A2</color>
+    <color name="accent_text">#93C5FD</color>
     <color name="accent">#2F5E9E</color>
     <color name="accent_contrast">#FFFFFF</color>
 
-    <color name="bg_grad_start">#101A22</color>
-    <color name="bg_grad_end">#0E2422</color>
-    <!-- 深色光斑从 10% 提到 18%：深底上 10% 几乎看不见。 -->
-    <color name="glow_blue">#2E3E7BB8</color>
-    <color name="glow_blue_clear">#003E7BB8</color>
-    <color name="glow_teal">#2E12A594</color>
-    <color name="glow_teal_clear">#0012A594</color>
+    <!-- 0.2.2（真源 approval-page.mjs:181-182）：白色 9% 高光 +
+         135° 深蓝绿渐变。 -->
+    <color name="bg_grad_start">#0D2A45</color>
+    <color name="bg_grad_mid">#0B3A4D</color>
+    <color name="bg_grad_end">#083A35</color>
+    <color name="highlight">#17FFFFFF</color>
+    <color name="highlight_clear">#00FFFFFF</color>
+
+    <!-- 0.2.2 玻璃浮层（真源 :209-211）：82% 深底 + 10% 白描边。
+         无 blur 的 API 24–30 用 96% 深底（真源 :223-225）。 -->
+    <color name="glass_fill">#D116181F</color>
+    <color name="glass_stroke">#1AFFFFFF</color>
+    <color name="glass_fill_solid">#F516181F</color>
 
     <!-- 深色卡片上的错误文案：原 #B3261E 在 #1A1C24 上约 2.3:1，不可读。 -->
     <color name="error_red">#FFB4AB</color>

@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 0.2.1（§S2）：两页共用的背景渐变。浅色 #EAF1F8 → #E3F0EA，深色由
-     values-night/colors.xml 覆盖；angle=270 即从上到下。 -->
+<!-- 0.2.2（真源 approval-page.mjs:174-176 / 180-182）：背景 = 135° 线性渐变。
+     浅色 #1d73d6 → #1094b7(52%) → #02b497，深色由 values-night 覆盖。
+     CSS 135deg（左上 → 右下）对应 Android angle=315。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <gradient
-        android:angle="270"
+        android:angle="315"
+        android:centerColor="@color/bg_grad_mid"
+        android:centerY="0.52"
         android:endColor="@color/bg_grad_end"
         android:startColor="@color/bg_grad_start"
         android:type="linear" />

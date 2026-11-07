@@ -52,6 +52,7 @@ class AddressActivity : AppCompatActivity() {
     private lateinit var buttonOpenAnyway: Button
     private lateinit var progress: ProgressBar
     private lateinit var switchSelfSigned: SwitchCompat
+    private lateinit var statusText: TextView
 
     private var busy = false
     private var pendingUrl: String? = null
@@ -69,14 +70,15 @@ class AddressActivity : AppCompatActivity() {
         setContentView(R.layout.activity_address)
         // 0.2.1（§S2-2b）：edge-to-edge + 背景光斑模糊 + 用 insets 补系统栏内距。
         ShellChrome.applyWindow(this)
-        ShellChrome.installBlurLayer(this)
-        ShellChrome.applyInsets(findViewById(R.id.shell_root))
+        ShellChrome.installBackdrop(this)
+        ShellChrome.applyInsets(findViewById(R.id.shell_body))
         input = findViewById(R.id.input_address)
         errorText = findViewById(R.id.text_error)
         buttonConnect = findViewById(R.id.btn_connect)
         buttonOpenAnyway = findViewById(R.id.btn_open_anyway)
         progress = findViewById(R.id.progress_connect)
         switchSelfSigned = findViewById(R.id.switch_self_signed)
+        statusText = findViewById(R.id.text_status)
 
         input.setText(saved ?: "http://")
         input.setSelection(input.text.length)
@@ -181,7 +183,10 @@ class AddressActivity : AppCompatActivity() {
                 ShellPrefs.setServerVersion(this, outcome.version)
                 ShellPrefs.setAllowSelfSigned(this, switchSelfSigned.isChecked)
                 setBusy(false)
-                openMain(baseUrl)
+                // 0.2.2：先亮一行成功状态，再进主界面；探活成功后用户会看到这一行。
+                statusText.text = getString(R.string.probe_success, outcome.version)
+                statusText.visibility = View.VISIBLE
+                statusText.postDelayed({ if (!isFinishing) openMain(baseUrl) }, 400)
             }
 
             is Outcome.Failure -> {
@@ -219,10 +224,12 @@ class AddressActivity : AppCompatActivity() {
     private fun clearInputError() {
         errorText.visibility = View.GONE
         buttonOpenAnyway.visibility = View.GONE
+        statusText.visibility = View.GONE
     }
 
     private fun setBusy(value: Boolean) {
         busy = value
+        if (value) statusText.visibility = View.GONE
         buttonConnect.isEnabled = !value
         buttonConnect.text = getString(if (value) R.string.connecting else R.string.connect)
         switchSelfSigned.isEnabled = !value

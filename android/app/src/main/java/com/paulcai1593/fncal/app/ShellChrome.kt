@@ -2,38 +2,38 @@ package com.paulcai1593.fncal.app
 
 import android.app.Activity
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.os.Build
 import android.view.View
+import android.widget.ImageView
 import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 
 /**
- * 0.2.1（范围文档 §S2-2b）：三页共用的沉浸式外壳与背景处理。
+ * 0.2.2（真源 `code/app/api/approval-page.mjs`）：三页共用的沉浸式外壳与背景。
  *
- * 三件事：
  * 1. [applyWindow] edge-to-edge：`setDecorFitsSystemWindows(window, false)`，
- *    状态栏 / 导航栏透明；API 29+ 关掉导航栏对比度强制（手势条下不出灰条）；
- *    状态栏与导航栏图标明暗跟随系统主题（深色主题用浅色图标）。
- * 2. [applyInsets] 用 WindowInsets 给根容器补上下内距：顶部补状态栏，底部取
- *    「导航栏 / 手势条」与「输入法」的较大值——不写死 24dp，键盘弹出只压内容区。
- * 3. [installBlurLayer] 只给背景光斑层做模糊：API 31+ 用 RenderEffect 真模糊，
- *    API 24–30 降级为半透明光斑（多层叠加观感），不崩、不黑块。
+ *    状态栏 / 导航栏透明；API 29+ 关掉导航栏对比度强制；图标明暗跟随主题。
+ * 2. [applyInsets] 用 WindowInsets 给内容容器补上下内距，不写死 24dp；键盘只压内容区。
+ *    地址页 / 关于页传 `shell_body`（ScrollView），背景 `backdrop` 才能铺满系统栏；
+ * 3. [installBackdrop] 把「渐变 + 白光高光」画成一张位图放进 backdrop，API 31+
+ *    用 RenderEffect 做真模糊（半径 18dp，对齐真源 `blur(18px)`）；API 24–30
+ *    没有 backdrop-filter，按真源 `@supports` 回退把玻璃层提高到 96% 不透明。
  *
- * 卡片本身不模糊（§S2）。
+ * 卡片本身保持实色、不参与模糊——真源 `.glass` 之外的卡片都是不透明底。
  */
 object ShellChrome {
 
-    /** 真模糊半径；28dp 时 390dp 宽屏上接近 CSS blur(18px) 的观感。 */
-    private const val BLUR_RADIUS_DP = 28f
-
-    /** API 24–30 的降级透明度：光斑淡一些，避免比卡片更抢眼。 */
-    private const val FALLBACK_LAYER_ALPHA = 0.55f
+    /** 真模糊半径；18dp 对齐真源 `backdrop-filter: blur(18px)`。 */
+    private const val BLUR_RADIUS_DP = 18f
 
     fun applyWindow(activity: Activity) {
         val window = activity.window
@@ -44,7 +44,7 @@ object ShellChrome {
         @Suppress("DEPRECATION")
         window.navigationBarColor = Color.TRANSPARENT
 
-        // 三键导航时系统默认给导航栏加对比度遮罩，深色渐变下会压出一条灰带。
+        // 三键导航时系统默认给导航栏加对比度遮罩，渐变底上会压出一条灰带。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             @Suppress("DEPRECATION")
             window.isNavigationBarContrastEnforced = false
@@ -73,20 +73,35 @@ object ShellChrome {
         ViewCompat.requestApplyInsets(root)
     }
 
-    fun installBlurLayer(activity: Activity) {
-        val layer = activity.findViewById<View>(R.id.blur_layer) ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            applyBlur(layer)
-        } else {
-            layer.alpha = FALLBACK_LAYER_ALPHA
+    fun installBackdrop(activity: Activity) {
+        val host = activity.findViewById<ImageView>(R.id.backdrop) ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            // 无 backdrop-filter：真源用 96% 不透明底保证对比（approval-page.mjs:220-225）。
+            host.setImageResource(R.drawable.bg_shell_gradient)
+            activity.findViewById<View>(R.id.glass_card)
+                ?.setBackgroundResource(R.drawable.bg_glass_solid)
+            return
+        }
+        host.post {
+            if (host.width <= 0 || host.height <= 0) return@post
+            compositeBackdrop(activity, host)
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.S)
-    private fun applyBlur(layer: View) {
-        val density = layer.resources.displayMetrics.density
-        val radius = BLUR_RADIUS_DP * density
-        layer.setRenderEffect(
+    private fun compositeBackdrop(activity: Activity, host: ImageView) {
+        val w = host.width
+        val h = host.height
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        intArrayOf(R.drawable.bg_shell_gradient, R.drawable.bg_shell_glow).forEach { id ->
+            val drawable = ContextCompat.getDrawable(activity, id) ?: return@forEach
+            drawable.setBounds(0, 0, w, h)
+            drawable.draw(canvas)
+        }
+        host.setImageBitmap(bitmap)
+        val radius = BLUR_RADIUS_DP * host.resources.displayMetrics.density
+        host.setRenderEffect(
             RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
         )
     }

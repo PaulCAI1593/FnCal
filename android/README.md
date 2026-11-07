@@ -1,4 +1,4 @@
-# FnCal 安卓外壳 v0.2.1
+# FnCal 安卓外壳 v0.2.2
 
 给自托管 FnCal 一个安卓安装包：首次打开填自己的地址，之后正常登录使用。
 本目录只包含安卓壳；FnCal 网页与后端仍在 `code/`。
@@ -17,9 +17,9 @@
    在仓库根目录的 `android/` 里执行 `gradle assembleDebug --no-daemon`。
 3. 产物：
    - Actions artifact `FnCal-Android-debug`；
-   - Release `android-v0.2.1` 的资产 `FnCal-Android-0.2.1.apk`（固定测试签名）。
+   - Release `android-v0.2.2` 的资产 `FnCal-Android-0.2.2.apk`（固定测试签名）。
 4. 构建自检会打印 `aapt dump badging` 与 `apksigner verify --print-certs`：
-   包名 `com.paulcai1593.fncal.app`、`versionName=0.2.1`、`versionCode=201`，
+   包名 `com.paulcai1593.fncal.app`、`versionName=0.2.2`、`versionCode=202`，
    证书 SHA-256 必须是 `0A:78:89:85:4B:B2:E8:A8:21:53:A1:5D:59:A3:48:67:6D:77:2A:8A:22:F7:C9:71:CF:98:A7:F1:C0:8C:3A:CE`。
 
 ## 签名（0.2.1）
@@ -75,19 +75,42 @@ android/
 （半透明三点）：轻点弹两项菜单，按住可拖动——网页右上角也可能有可点元素
 （通知铃铛等），拖开即可。
 
-## 卡片口径与渐变（0.2.1）
+## 背景与玻璃浮层（0.2.2）
 
-地址页与关于页按网页「审批页」的四项一致性实现（范围文档 §S2），令牌不自换色：
+照网页「审批页」真源 `code/app/api/approval-page.mjs` 实现，两页共用：
+
+- 背景：浅色 22% 白光高光（62% / 18%）+ 135° `#1d73d6 → #1094b7(52%) → #02b497`；
+  深色 9% 高光 + `#0d2a45 → #0b3a4d → #083a35`；两页跟随系统深浅色（DayNight）。
+- 玻璃浮层：只有一层，86% 白底（深色 82% `#16181F`）+ 55% 白 1dp 描边 + 16dp 圆角。
+- 模糊：`ShellChrome.installBackdrop` 把「渐变 + 高光」画成位图放进 `backdrop`，
+  API 31+ 用 `RenderEffect` 模糊 18dp（对齐真源 `blur(18px)`）；API 24–30 没有
+  backdrop-filter，按真源 `@supports` 回退换成 96% 不透明底（`bg_glass_solid`）。
+- 卡片仍是实色 9dp / 1dp 描边 / 内距 14-12（0.2.1 口径不变）。
+
+## 卡片口径（0.2.1 起）
+
+令牌不自换色：
 
 - 卡片：`surface_2`（浅 `#F5F6F8` / 深 `#1A1C24`）+ 1dp `border`（浅 `#E2E5EB` /
   深 `#2A2E3A`）+ 9dp 圆角，内距左右 14dp、上下 12dp，卡片间距 10dp。
-- 字级：标题 16sp / 正文 13sp / 说明 12sp；文字 96% / 72% / 48% 三档。
-- 按钮：主按钮 `accent`（`#2F5E9E`）实底白字、6dp 圆角、高 44dp；次按钮透明 + 1dp 描边。
+- 字级：页面标题 20sp/600、正文与副标题 13sp、说明与分组标题 12sp/600；任何文字不小于 12sp。
+- 按钮：主按钮 `accent`（`#2F5E9E`）实底白字、6dp 圆角、全宽 48dp；次按钮透明 + 1dp 描边、44dp。
 - 输入框：`surface_3` 底 + 1dp 边框 + 6dp 圆角，聚焦边框换 `accent`。
-- 背景：浅色 `#EAF1F8 → #E3F0EA`、深色 `#101A22 → #0E2422`，右上青、左下蓝两团光斑；
-  两页跟随系统深浅色（DayNight + `values-night`），不再固定深色。
-- 模糊只在光斑层（`ShellChrome.installBlurLayer`）：API 31+ `RenderEffect` 28dp，
-  API 24–30 降级为半透明光斑；**卡片本身不模糊**。
+
+## 排版（0.2.2 追加）
+
+照审批页的排版节奏重做地址页与关于页：
+
+- 页头：标题 20sp/600；副标题 13sp/`text_2`；两者间距 6dp。地址页居中，关于页左对齐、副标题单行。
+  页头到首卡 18dp（关于页首个分组标题 10dp + 标题下 8dp = 18dp）。
+- 分组：小标题 12sp/600/`text_3`，与首卡 8dp；分组之间 18dp。关于页四组：服务 / 更新 / 桌面卡片 / 关于。
+- 卡片：9dp 圆角、1dp 描边、内距 14/12、相邻卡片间距 10dp（0.2.1 口径不变）。
+- 表单：标签在输入框上方（12sp/`text_2`），间距 6dp；输入框 48dp、内距 14dp、6dp 圆角；
+  主按钮全宽 48dp、与上一字段 18dp；探活状态行高 20dp、12sp（成功用 `accent_text`，失败用 `error_red`）。
+- 留白：内容左右 20dp，滚动内容底部 24dp，再叠手势条 insets（`ShellChrome.applyInsets(shell_body)`）。
+- 地址：关于页当前地址单行、中间省略；点开弹窗看完整值。
+- 对比度：浅色 14.97 / 6.56 / 4.77（`text_3` 由 `#656C7A` 调到 `#5F6675`，压在玻璃最深处从 4.37 升到 4.77）；
+  深色 15.98 / 7.70 / 5.48、成功行 `#93C5FD` 9.59；全部 ≥4.5:1。
 
 ## 沉浸式（0.2.1 §S2-2b）
 

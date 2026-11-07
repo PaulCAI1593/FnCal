@@ -60,18 +60,34 @@ class AboutActivity : AppCompatActivity() {
         setContentView(R.layout.activity_about)
         // 0.2.1（§S2-2b）：与地址页同一套 edge-to-edge + 光斑模糊 + insets 内距。
         ShellChrome.applyWindow(this)
-        ShellChrome.installBlurLayer(this)
-        ShellChrome.applyInsets(findViewById(R.id.shell_root))
+        ShellChrome.installBackdrop(this)
+        ShellChrome.applyInsets(findViewById(R.id.shell_body))
 
         val appVersion = try {
             packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
         } catch (e: Exception) {
             BuildConfig.VERSION_NAME
         }
+        val serverVersion = ShellPrefs.serverVersion(this)
         findViewById<TextView>(R.id.text_app_version).text = appVersion
         findViewById<TextView>(R.id.text_server_version).text =
-            ShellPrefs.serverVersion(this) ?: getString(R.string.about_server_version_unknown)
-        findViewById<TextView>(R.id.text_address).text = ShellPrefs.baseUrl(this) ?: "-"
+            serverVersion ?: getString(R.string.about_server_version_unknown)
+        findViewById<TextView>(R.id.text_connection_status).text =
+            getString(
+                if (serverVersion.isNullOrBlank()) R.string.about_status_unknown
+                else R.string.about_status_connected
+            )
+        val baseUrl = ShellPrefs.baseUrl(this) ?: "-"
+        val addressView = findViewById<TextView>(R.id.text_address)
+        addressView.text = baseUrl
+        // 0.2.2：单行中间省略；点开弹窗看完整值，避免长地址被截断后无从核对。
+        addressView.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.about_address_dialog_title)
+                .setMessage(baseUrl)
+                .setPositiveButton(R.string.about_ok, null)
+                .show()
+        }
 
         findViewById<Button>(R.id.btn_change_address).setOnClickListener {
             clearCookiesAndCache()

@@ -1,27 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 0.2.1（§S2）：两团径向光斑。右上青、左下蓝；颜色与浓度跟随明暗
-     （浅色 10%，深色 18%）。只有这一层做模糊，卡片不模糊。 -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <shape android:shape="rectangle">
-            <gradient
-                android:centerX="0.86"
-                android:centerY="0.10"
-                android:endColor="@color/glow_teal_clear"
-                android:gradientRadius="360dp"
-                android:startColor="@color/glow_teal"
-                android:type="radial" />
-        </shape>
-    </item>
-    <item>
-        <shape android:shape="rectangle">
-            <gradient
-                android:centerX="0.10"
-                android:centerY="0.92"
-                android:endColor="@color/glow_blue_clear"
-                android:gradientRadius="340dp"
-                android:startColor="@color/glow_blue"
-                android:type="radial" />
-        </shape>
-    </item>
-</layer-list>
+<!-- 0.2.2（真源 approval-page.mjs:175 / 181）：白色径向高光，中心在 62% / 18%，
+     到 62% 半径处淡出。浅色 22% 白，深色 9% 白（values-night 覆盖）。
+     这一层与背景渐变一起被 RenderEffect 模糊（API 31+）。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:centerX="0.62"
+        android:centerY="0.18"
+        android:endColor="@color/highlight_clear"
+        android:gradientRadius="430dp"
+        android:startColor="@color/highlight"
+        android:type="radial" />
+</shape>

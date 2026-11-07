@@ -6,13 +6,15 @@
     <string name="title_address">连接你的 FnCal</string>
     <string name="address_label">服务器地址</string>
     <string name="address_hint">http://192.168.1.10:5581</string>
-    <string name="address_help">填你自己的 FnCal 地址，例如 http://192.168.1.10:5581。局域网地址用 http，公网地址建议 https。地址后面可以带反代的子路径。</string>
+    <string name="address_help">填你自己的 FnCal 地址。局域网用 http，公网建议 https，可带反代子路径。</string>
     <string name="allow_self_signed">允许自签证书（仅对当前地址）</string>
-    <string name="self_signed_help">开启后，这个地址的证书错误不拦。只在你确认为自己的服务器时使用。</string>
+    <string name="self_signed_help">只在你确认为自己的服务器时开启。</string>
     <string name="connect">连接</string>
     <string name="connecting">正在连接…</string>
     <string name="open_anyway">仍然打开</string>
     <string name="probe_success">已连接 FnCal %1$s</string>
+    <string name="address_subtitle">先连上服务器，再进入日历</string>
+    <string name="group_connection">连接设置</string>
 
     <!-- 地址错误 -->
     <string name="error_empty">请输入服务器地址</string>
@@ -54,14 +56,25 @@
     <string name="about_change_address">修改地址</string>
     <string name="about_clear_data">清除 Cookie 与缓存</string>
     <string name="about_cleared">已清除 Cookie 与缓存</string>
-    <string name="about_license">本应用是 FnCal 的安卓外壳。网页与后端代码在项目仓库开源，遵循仓库里的开源许可。</string>
+    <string name="about_license">网页与后端代码在项目仓库开源，遵循仓库里的开源许可。</string>
+    <string name="about_subtitle">外壳版本、更新与缓存</string>
+    <string name="group_service">服务</string>
+    <string name="group_update">更新</string>
+    <string name="group_desktop">桌面卡片</string>
+    <string name="group_about">关于</string>
+    <string name="about_connection_status">连接状态</string>
+    <string name="about_status_connected">已连接</string>
+    <string name="about_status_unknown">未连接</string>
+    <string name="about_desktop_hint">桌面卡片设置将在后续版本提供。当前版本请用网页端。</string>
+    <string name="about_address_dialog_title">完整地址</string>
+    <string name="about_ok">确定</string>
 
     <!-- 0.2.0（§B4）：检查更新 -->
     <string name="update_section">更新</string>
     <string name="update_source_label">更新源</string>
     <string name="update_source_cn">国内源</string>
     <string name="update_source_direct">直通</string>
-    <string name="update_note">点「检查更新」才会连接 GitHub 取版本号；国内源失败时自动改试直通。</string>
+    <string name="update_note">只在点「检查更新」时联网取版本号；国内源失败自动改试直通。</string>
     <string name="check_update">检查更新</string>
     <string name="update_checking">正在检查更新…</string>
     <string name="update_retry">重试</string>
@@ -83,6 +96,6 @@
     <string name="update_verify_failed">安装包校验失败，已删除文件</string>
     <string name="update_need_permission">需要允许安装未知来源应用后再试</string>
     <string name="update_check_failed">检查更新失败：%1$s</string>
-    <string name="update_signature_note">测试签名：同一签名的版本可直接覆盖升级；换正式签名或跨过 0.2.0 之前版本升级时，需先卸载一次。</string>
+    <string name="update_signature_note">测试签名：同签名可直接覆盖；换正式签名或跨过 0.2.0 之前版本需先卸载一次。</string>
     <string name="update_install_started">已打开安装器</string>
 </resources>

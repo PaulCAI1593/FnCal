@@ -69,14 +69,14 @@ jobs:
         run: |
           set -e
           APK=android/app/build/outputs/apk/debug/app-debug.apk
-          OUT=FnCal-Android-0.2.1.apk
+          OUT=FnCal-Android-0.2.2.apk
           cp "$APK" "$OUT"
-          TAG=android-v0.2.1
+          TAG=android-v0.2.2
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG 已存在，覆盖资产"
           else
             gh release create "$TAG" \
-              --title "FnCal Android 0.2.1" \
+              --title "FnCal Android 0.2.2" \
               --notes "安卓外壳测试包（固定测试签名，可直接覆盖升级）。本版地址页与关于页对齐网页审批页的卡片口径、跟随系统深浅色；状态栏与底部手势条沉浸式，三页内容留在安全区内。到点提醒不在本版。" \
               --latest=false
           fi

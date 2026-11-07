@@ -45,7 +45,7 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_REFRESH = 1
         private const val MENU_ABOUT = 2
         private const val DOUBLE_BACK_WINDOW_MS = 2_000L
-        private const val UA_SUFFIX = " FnCalAndroid/0.2.1"
+        private const val UA_SUFFIX = " FnCalAndroid/0.2.2"
     }
 
     private lateinit var webView: WebView

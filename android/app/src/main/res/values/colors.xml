@@ -14,15 +14,23 @@
     <color name="border">#E2E5EB</color>
     <color name="text">#14161C</color>
     <color name="text_2">#4B5162</color>
-    <color name="text_3">#656C7A</color>
+    <color name="text_3">#5F6675</color>
     <color name="accent">#2F5E9E</color>
     <color name="accent_contrast">#FFFFFF</color>
+    <!-- 0.2.2 排版：成功状态行用浅色主题的强调色；深色主题换成更亮的蓝，保证 ≥4.5:1。 -->
+    <color name="accent_text">#2F5E9E</color>
 
-    <!-- 背景蓝绿渐变 + 两团光斑（光斑只做 10% 叠色，卡片不模糊，模糊只在光斑层）。 -->
-    <color name="bg_grad_start">#EAF1F8</color>
-    <color name="bg_grad_end">#E3F0EA</color>
-    <color name="glow_blue">#1A2F5E9E</color>
-    <color name="glow_blue_clear">#002F5E9E</color>
-    <color name="glow_teal">#1A12A594</color>
-    <color name="glow_teal_clear">#0012A594</color>
+    <!-- 0.2.2（§S2-2 真源 = code/app/api/approval-page.mjs:175-176）：
+         背景 = 白色 22% 径向高光 + 135° 蓝绿线性渐变。深色值在 values-night/colors.xml。 -->
+    <color name="bg_grad_start">#1D73D6</color>
+    <color name="bg_grad_mid">#1094B7</color>
+    <color name="bg_grad_end">#02B497</color>
+    <color name="highlight">#38FFFFFF</color>
+    <color name="highlight_clear">#00FFFFFF</color>
+
+    <!-- 0.2.2 玻璃浮层（真源 :201-205）：86% 白底 + 55% 白描边 + 16dp 圆角。
+         API 24–30 无 backdrop-filter 等价位（:220-222）：96% 白底，保证对比度。 -->
+    <color name="glass_fill">#DBFFFFFF</color>
+    <color name="glass_stroke">#8CFFFFFF</color>
+    <color name="glass_fill_solid">#F5FFFFFF</color>
 </resources>
