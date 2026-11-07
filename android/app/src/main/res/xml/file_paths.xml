@@ -3,9 +3,14 @@
   0.2.0 更新安装包的共享路径：DownloadManager 把 APK 写到
   getExternalFilesDir(DIRECTORY_DOWNLOADS)/FnCal/updates/，这里按同一相对路径
   暴露给包安装器（ACTION_VIEW 需要 content:// + FLAG_GRANT_READ_URI_PERMISSION）。
+  0.3.4（§A）：DownloadManager 若回报 content:// 落盘 URI，App 会把包复制到
+  cacheDir/updates/再安装，这条 cache-path 让 FileProvider 也能共享它。
 -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-files-path
         name="updates"
         path="Download/FnCal/updates/" />
+    <cache-path
+        name="updates_cache"
+        path="updates/" />
 </paths>

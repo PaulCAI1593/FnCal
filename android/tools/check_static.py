@@ -275,11 +275,13 @@ def check_urls() -> None:
         "http://",
     }
     # 0.2.0（§B4）：更新只允许这四个域名，其它外链仍报错。
+    # 0.3.4（§11）：新增 GitHub Pages 清单域名 paulcai1593.github.io。
     allowed_hosts = {
         "cdn.jsdelivr.net",
         "raw.githubusercontent.com",
         "gh-proxy.com",
         "github.com",
+        "paulcai1593.github.io",
     }
     count = 0
     for path in sorted(ROOT.rglob("*")):
@@ -350,9 +352,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 303": app_gradle,
-        'versionName = "0.3.3"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.3")': app_gradle,
+        "versionCode = 304": app_gradle,
+        'versionName = "0.3.4"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.4")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -795,12 +797,17 @@ def check_widgets() -> None:
             ok("widget renderer kind " + kind)
         else:
             fail("widget renderer missing kind " + kind)
-    # 正文 10sp / 标题 12sp；任何绘制字号都不得低于 10sp（用户要求不许裁一半、不许更小）。
+    # 正文 10sp / 标题 12sp；0.3.4 §9 起允许四日视图的时间轴刻度用 9sp，
+    # §10 起允许日程卡的时间与地点用 9sp（辅助信息，范围文档明确允许）。
     sizes = [float(x) for x in re.findall(r"\bpaint\((\d+(?:\.\d+)?)f", renderer)]
-    if sizes and min(sizes) < 10:
-        fail("widget text below 10sp: " + repr(min(sizes)))
+    if sizes and min(sizes) < 9:
+        fail("widget text below 9sp: " + repr(min(sizes)))
     else:
-        ok("widget text all >= 10sp")
+        ok("widget text all >= 9sp (ticks/meta) / 10sp body")
+    if 'paint(9f, colorText3)' in renderer and "tickPaint" in renderer:
+        ok("widget 9sp text is meta/tick colorText3")
+    else:
+        fail("widget 9sp text must use paint(9f, colorText3)")
 
     provider = (kt / "FnCalWidgetProvider.kt").read_text(encoding="utf-8")
     for needle in (
@@ -894,7 +901,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.3"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.4"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -915,14 +922,64 @@ def check_widgets() -> None:
     else:
         fail("about widget missing login state copy")
 
-    # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。
+    # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。0.3.4 起 workflow 由总监单独
+    # 改（他正在推 Release 正文），升号过渡期规则见 workflow_version_status()。
+    import json
+
+    manifest = json.loads((ROOT / "update.json").read_text(encoding="utf-8"))
+    wf_ok, wf_note = workflow_version_status(
+        str(manifest.get("versionName", "")), int(manifest.get("versionCode", 0))
+    )
+    if wf_ok:
+        ok("workflow release names (" + wf_note + ")")
+    else:
+        fail("workflow release names: " + wf_note)
+
+
+def workflow_version_status(name: str, code: int) -> tuple[bool, str]:
+    """0.3.4 起：workflow 版本串自洽性检查（总监单独维护该文件）。
+
+    升号过渡期允许 workflow 停在上一个版本，但要求它自己的 tag / 资产名 /
+    badging 三者版本一致，且 (versionName, versionCode) 属于 {当前, 上一版}。
+    总监把 workflow 升到当前版本后，过渡分支自动失效。
+    """
     workflow = ROOT.parent / ".github" / "workflows" / "android.yml"
-    wf = workflow.read_text(encoding="utf-8") if workflow.is_file() else ""
-    for needle in ("TAG=android-v0.3.3", "OUT=FnCal-Android-0.3.3.apk", "versionCode='303'", "versionName='0.3.3'"):
-        if needle in wf:
-            ok("workflow has " + needle)
-        else:
-            fail("workflow missing " + needle)
+    if not workflow.is_file():
+        return False, "android.yml missing"
+    wf = workflow.read_text(encoding="utf-8")
+    allowed = {name: code}
+    if name == "0.3.4":
+        allowed["0.3.3"] = 303
+    tags = set(re.findall(r"TAG=android-v(\d+\.\d+\.\d+)", wf))
+    outs = set(re.findall(r"OUT=FnCal-Android-(\d+\.\d+\.\d+)\.apk", wf))
+    badges = set(re.findall(r"versionName='(\d+\.\d+\.\d+)'", wf))
+    codes = set(re.findall(r"versionCode='(\d+)'", wf))
+    if not (len(tags) == 1 and len(outs) == 1 and len(badges) == 1 and len(codes) == 1):
+        return False, "workflow strings incomplete or duplicated: %s %s %s %s" % (
+            sorted(tags),
+            sorted(outs),
+            sorted(badges),
+            sorted(codes),
+        )
+    version = tags.pop()
+    badge_version = badges.pop()
+    out_version = outs.pop()
+    wf_code = int(codes.pop())
+    if not (version == badge_version == out_version):
+        return False, "workflow tag / apk / badging disagree: %s %s %s" % (
+            version,
+            out_version,
+            badge_version,
+        )
+    if allowed.get(version) != wf_code:
+        return False, "workflow version/code %s/%d not in %s" % (
+            version,
+            wf_code,
+            sorted(allowed.items()),
+        )
+    if version != name:
+        return True, "workflow still on " + version + " (pending workflow update by director)"
+    return True, "workflow on " + version
 
 
 def check_shell_surface() -> None:
@@ -1002,13 +1059,13 @@ def check_widget_layout() -> None:
     else:
         fail("mini month must not gate dots on roomForDot")
 
-    # ② 圆点直径与卡片高度挂钩，日号基线随圆点上移。
+    # ② 圆点直径与卡片高度挂钩；0.3.4 §7.1 起整卡统一预留圆点带，基线与有无事件无关。
     for needle in (
         "val dotDp = roundToOneDecimal",
         "(heightDp - 110f) * 0.025f",
         "coerceIn(2f, 3f)",
-        "val dotShift = if (hasEvents) dp(dotDp + 1f) else 0f",
-        "val baseline = cy + sp(3.6f) - dotShift",
+        "val dotBand = dp(dotDp + 0.5f)",
+        "val baseline = cy + sp(3.6f) - dotBand",
         "top + cellH - dp(dotDp / 2f + 0.5f)",
         # 0.3.3 总监修订：2×2 档不画圆底（会包不住日号），改强调色加粗日号。
         "if (isToday && isSmall) {",
@@ -1050,21 +1107,252 @@ def check_widget_layout() -> None:
     else:
         fail("month name mode must be one exclusive branch")
 
+    # ⑤ 0.3.4 §7.3：迷你月历不再逐格顶基线；今天圆底随 dotBand 上移；
+    # 月视图名称模式色点直径 4dp（半径 2dp），名称起点 6.5dp、宽 cellW - 8dp。
+    if "if (hasEvents) dp(dotDp" in renderer:
+        fail("mini month must not shift baseline per cell (0.3.4 §7.1)")
+    else:
+        ok("mini month baseline is uniform (no per-cell shift)")
+    for needle in (
+        "canvas.drawCircle(cx, cy - dotBand, radius, solid(colorAccent))",
+        "minOf(cellW, cellH - dotBand - dp(1f)) / 2f - dp(0.5f)",
+    ):
+        if needle in renderer:
+            ok("mini month today circle has " + needle)
+        else:
+            fail("mini month today circle missing " + needle)
+    name_block = renderer.split("// 名称模式")[-1][:1200]
+    for needle in ("left + dp(3.5f)", "dp(2f)", "left + dp(6.5f)", "cellW - dp(7f)"):
+        if needle in name_block:
+            ok("month name dot 4dp has " + needle)
+        else:
+            fail("month name dot 4dp missing " + needle)
+    # 0.3.4 §7.2（B）：名称宽 25.57dp（cellW - 7dp），按 TextPaint 实测截断。
+    if "val nameWidth = cellW - dp(7f)" in renderer:
+        ok("month name width is cellW - 7dp (25.57dp at 4x4)")
+    else:
+        fail("month name width must be cellW - 7dp")
+    if "fitLabel(" in name_block and "paint.measureText(candidate) <= maxWidth" in renderer:
+        ok("month name truncation measures real glyph width")
+    else:
+        fail("month name truncation must use measureText")
+    if "chars >= 2" in renderer or "length >= 2" in renderer:
+        fail("month name must not hard-code a 2-character threshold")
+    else:
+        ok("month name has no hard-coded character threshold")
+
+
+def check_update_install() -> None:
+    """0.3.4（§A–§E）：下载完成后按实际落盘 URI 安装，失败带原因码，可续装。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    about = (kt / "AboutActivity.kt").read_text(encoding="utf-8")
+    markers = (
+        # A：读 COLUMN_LOCAL_URI，content:// 复制到缓存再装
+        "COLUMN_LOCAL_URI",
+        "private fun apkFromLocalUri(localUri: String?): File?",
+        "contentResolver.openInputStream(uri)",
+        "private fun copyToCache(uri: Uri): File?",
+        # B：下载前清同名包；目标已存在时重试一次
+        "private fun cleanBeforeDownload(apkName: String)",
+        "DM_ERROR_FILE_ALREADY_EXISTS",
+        "retriedAfterExists",
+        # C：失败带 DownloadManager 原因码
+        "private fun finishDownloadWithFailure(reason: Int = 0)",
+        "R.string.update_download_failed_reason",
+        # D：已有正确包直接装；授权页返回续装一次
+        "private fun existingValidApk(apkName: String, versionCode: Int): File?",
+        "pendingInstallArmed = true",
+        "resumePendingInstall()",
+        # E：诊断行
+        "R.id.text_update_diag",
+        "R.string.update_diag",
+    )
+    for marker in markers:
+        if marker in about:
+            ok("update install has " + marker)
+        else:
+            fail("update install missing " + marker)
+    paths = (APP / "res" / "xml" / "file_paths.xml").read_text(encoding="utf-8")
+    if 'name="updates_cache"' in paths and 'path="updates/"' in paths:
+        ok("file provider shares cache updates dir")
+    else:
+        fail("file_paths.xml must declare cache-path updates/")
+    strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
+    for key, text in (
+        ("update_download_failed_reason", "下载失败（原因 %1$d），请重试"),
+        ("update_diag", "DM 状态 %1$d · 原因 %2$d · 落盘 %3$s"),
+    ):
+        if ('<string name="' + key + '">' + text + "</string>") in strings:
+            ok("strings has " + key)
+        else:
+            fail("strings missing " + key)
+    layout = (APP / "res" / "layout" / "activity_about.xml").read_text(encoding="utf-8")
+    if 'android:id="@+id/text_update_diag"' in layout:
+        ok("about layout has update diag row")
+    else:
+        fail("about layout missing update diag row")
+
+
+def check_widget_week_start() -> None:
+    """0.3.4（§8）：卡片跟随网页设置「每周开始日」，不再写死周一。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    client = (kt / "WidgetClient.kt").read_text(encoding="utf-8")
+    for needle in (
+        # 读 KV 单键 `cal:settings`；失败返回 null，不影响取数。
+        '"/api/v1/kv/cal:settings"',
+        "fun weekStartsOn(context: Context): Int?",
+        'optInt("weekStartsOn", -1)',
+        "if (raw == 0 || raw == 1) raw else null",
+    ):
+        if needle in client:
+            ok("week start client has " + needle)
+        else:
+            fail("week start client missing " + needle)
+    prefs = (kt / "WidgetPrefs.kt").read_text(encoding="utf-8")
+    for needle in (
+        'KEY_WEEK_START = "week_starts_on"',
+        "fun weekStartsOn(context: Context): Int",
+        "fun saveWeekStartsOn(context: Context, value: Int)",
+    ):
+        if needle in prefs:
+            ok("week start prefs has " + needle)
+        else:
+            fail("week start prefs missing " + needle)
+    data = (kt / "WidgetData.kt").read_text(encoding="utf-8")
+    for needle in (
+        "val weekStartsOn: Int = 0",
+        "fun weekdayIndex(millis: Long, weekStartsOn: Int): Int",
+        "fun normalizedWeekStart(value: Int): Int",
+        "fun weekLabels(weekStartsOn: Int): Array<String>",
+        "fun monthGridStart(monthMillis: Long, weekStartsOn: Int = 0): Long",
+        "addDays(first, -weekdayIndex(first, weekStartsOn))",
+    ):
+        if needle in data:
+            ok("week start data has " + needle)
+        else:
+            fail("week start data missing " + needle)
+    # 写死的中文星期数组只允许存在于 CalKit.weekLabels() 的两个分支里。
+    mono = data.count('arrayOf("一", "二", "三", "四", "五", "六", "日")')
+    sun = data.count('arrayOf("日", "一", "二", "三", "四", "五", "六")')
+    if mono == 1 and sun == 1:
+        ok("week label arrays live only in CalKit.weekLabels")
+    else:
+        fail("week label arrays must appear exactly once each in CalKit.weekLabels")
+    renderer = (kt / "WidgetRenderer.kt").read_text(encoding="utf-8")
+    if 'arrayOf("一"' in renderer or 'arrayOf("日"' in renderer:
+        fail("renderer must not hard-code Chinese weekday arrays")
+    else:
+        ok("renderer has no hard-coded weekday array")
+    for needle in (
+        "CalKit.weekLabels(snapshot.weekStartsOn)",
+        "CalKit.monthGridStart(monthStart, snapshot.weekStartsOn)",
+        # 周末底色跟周首走，不能再按列号写死。
+        "CalKit.weekdayIndex(dayMillis, snapshot.weekStartsOn) >= 5",
+    ):
+        if needle in renderer:
+            ok("renderer week start has " + needle)
+        else:
+            fail("renderer week start missing " + needle)
+    if renderer.count("CalKit.weekLabels(snapshot.weekStartsOn)") == 2:
+        ok("both mini month and month use the same week labels")
+    else:
+        fail("week labels must be used by mini month and month (exactly 2)")
+    repository = (kt / "WidgetRepository.kt").read_text(encoding="utf-8")
+    if "WidgetClient.weekStartsOn(context)?.let" in repository:
+        ok("repository refreshes week start without failing the summary")
+    else:
+        fail("repository must refresh week start best-effort")
+
+
+def check_widget_four_day_gutter() -> None:
+    """0.3.4（§9）：四日视图左侧时间轴槽与 6/12/18 刻度。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    renderer = (kt / "WidgetRenderer.kt").read_text(encoding="utf-8")
+    for needle in (
+        "val gutterW = if (isSmall) 0f else if (isLarge) dp(24f) else dp(20f)",
+        "val columnW = (w - pad * 2 - gutterW) / 4f",
+        "for (hour in intArrayOf(6, 12, 18))",
+        "canvas.drawLine(pad + gutterW, y, w - pad, y, gridLine)",
+        "drawTextRight(label, pad + gutterW - dp(2f), y + sp(3.2f), tickPaint)",
+        'val label = if (isLarge) "$hour:00" else "$hour"',
+        "paint(9f, colorText3)",
+        "pad + gutterW + columnW * col",
+        "canvas.drawCircle(pad + gutterW + dp(1.5f), y, dp(2f), solid(colorAccent))",
+    ):
+        if needle in renderer:
+            ok("four day gutter has " + needle)
+        else:
+            fail("four day gutter missing " + needle)
+
+
+def check_widget_agenda_frames() -> None:
+    """0.3.4（§10）：今日日程与日程列表的事件框、圆点、时间列与字号。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    renderer = (kt / "WidgetRenderer.kt").read_text(encoding="utf-8")
+    for needle in (
+        # 框：6dp 圆角、事件色 alpha 浅色 26 / 深色 20（text_3 对比度 ≥4.5）、无描边。
+        "private fun drawEventFrame(",
+        "private val darkTheme",
+        "alpha = if (darkTheme) 20 else 26",
+        "canvas.drawRoundRect(rect, dp(6f), dp(6f), frameFill)",
+        # 圆点：4dp 实心，圆心 = 基线 − 3.4sp。
+        "val dotR = dp(2f)",
+        "canvas.drawCircle(dotCx, dotCy, dotR, solid(eventColor))",
+        "val dotCy = baseline - sp(3.4f)",
+        # 时间列：2×2 24dp / 3×3 30dp / 4×4 34dp；等宽数字。
+        "val timeCol = if (isSmall) dp(24f) else if (isLarge) dp(34f) else dp(30f)",
+        "val timeCol = if (isLarge) dp(34f) else dp(30f)",
+        'fontFeatureSettings = "tnum"',
+        # 地点第二行：标题基线 + 11.5sp。
+        "baseline + sp(11.5f)",
+        # 行高吸附 1dp；带地点门槛 28dp；溢出「还有 N 条」9sp 右对齐。
+        "snapDp(listH / rowsCap)",
+        "rowH >= dp(28f)",
+        "rowsCap -= 1",
+        "drawTextRight(more, w - pad, h - pad - dp(2f), metaPaintNoTnum)",
+    ):
+        if needle in renderer:
+            ok("agenda frame has " + needle)
+        else:
+            fail("agenda frame missing " + needle)
+    # 字号：事件标题 10sp medium，时间/地点 9sp colorText3；两张卡都用。
+    if renderer.count("paint(10f, colorText, mediumWeight = true)") >= 2:
+        ok("agenda titles are 10sp medium in both cards")
+    else:
+        fail("agenda titles must be 10sp medium in both cards")
+    if renderer.count("paint(9f, colorText3)") >= 2:
+        ok("agenda time/location are 9sp colorText3")
+    else:
+        fail("agenda time/location must be 9sp colorText3")
+    # 精致约束：不加阴影/描边。
+    if "setShadowLayer" in renderer or "frameFill" in renderer and "STROKE" in renderer.split("frameFill")[1][:400]:
+        fail("agenda frame must not add shadow or stroke")
+    else:
+        ok("agenda frame has no shadow or stroke")
+
 
 def check_update_fallback() -> None:
-    """0.3.1（§B）：检测更新的 CDN 旧缓存兜底，以及版本串多处一致。"""
+    """0.3.4（§11）：三源链 Pages → 国内源 → 直通，以及版本串多处一致。"""
     import json
 
     kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
     updater = (kt / "UpdateChecker.kt").read_text(encoding="utf-8")
     markers = (
-        # 国内源版本 ≤ 当前版本时再取直通源
-        "0.3.1（§B）：国内源 ≤ 当前版本 → 再取直通源；两源取 versionCode 较大者。",
-        # 两源取 versionCode 较大者
-        "cn.versionCode >= direct.versionCode",
-        "fetch(UpdateSources.Source.DIRECT)",
-        # 两源失败时沿用原有错误文案
-        "直通也失败：",
+        # 三个清单地址，按优先级出现
+        '"https://paulcai1593.github.io/FnCal/update.json"',
+        '"https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/android/update.json"',
+        '"https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/android/update.json"',
+        # Pages 永远第一；用户选的源只决定 Pages 之后先试谁
+        "val checkOrder: List<Source> = listOf(PAGES, CN, DIRECT)",
+        "val order = mutableListOf(UpdateSources.Source.PAGES)",
+        # 严格按 longVersionCode 比较
+        "manifest.versionCode.toLong() > currentVersionCode",
+        # 不比当前新就继续下一个源（0.3.1 的 bug 不能重演）
+        "不判最新，继续下一个源（§11 关键）",
+        # 三源都不新：取版本号最大的候选
+        "if (current == null || manifest.versionCode > current.versionCode)",
+        # 全失败：报第一个失败原因
+        'Outcome.Failure("检查更新失败：" + (firstError ?: "所有更新源都不可用"))',
     )
     for marker in markers:
         if marker in updater:
@@ -1072,11 +1360,28 @@ def check_update_fallback() -> None:
         else:
             fail("update checker missing " + marker)
 
+    # 三个来源文案齐备，关于页的 sourceName 三个分支都在。
+    about = (kt / "AboutActivity.kt").read_text(encoding="utf-8")
+    strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
+    for key in ("update_source_pages", "update_source_cn", "update_source_direct"):
+        if key in strings and ("R.string." + key) in about:
+            ok("update source label " + key)
+        else:
+            fail("update source label missing " + key)
+
+    # 地址顺序：Pages 在 jsDelivr 之前，jsDelivr 在 raw 之前。
+    pages_at = updater.find("MANIFEST_PAGES = ")
+    cn_at = updater.find("MANIFEST_CN = ")
+    direct_at = updater.find("MANIFEST_DIRECT =")
+    if 0 <= pages_at < cn_at < direct_at:
+        ok("manifest sources ordered pages < cn < direct")
+    else:
+        fail("manifest sources must be ordered pages < cn < direct")
+
     gradle = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "update.json").read_text(encoding="utf-8"))
     name = str(manifest.get("versionName", ""))
     code = manifest.get("versionCode")
-    workflow = (ROOT.parent / ".github" / "workflows" / "android.yml").read_text(encoding="utf-8")
     checks = {
         "gradle versionCode": ("versionCode = " + str(code)) in gradle,
         "gradle versionName": ('versionName = "' + name + '"') in gradle,
@@ -1086,15 +1391,41 @@ def check_update_fallback() -> None:
         "widget UA": ('const val VERSION = "' + name + '"')
         in (kt / "WidgetClient.kt").read_text(encoding="utf-8"),
         "update.json apk": manifest.get("apk") == "FnCal-Android-" + name + ".apk",
-        "workflow tag": ("TAG=android-v" + name) in workflow,
-        "workflow apk": ("OUT=FnCal-Android-" + name + ".apk") in workflow,
-        "workflow badging": ("versionName='" + name + "'") in workflow,
     }
     for label, good in checks.items():
         if good:
             ok("version string agrees: " + label)
         else:
             fail("version string mismatch: " + label)
+    # 0.3.4 起 workflow 由总监单独改：过渡期按自洽性规则检查（见 workflow_version_status）。
+    wf_ok, wf_note = workflow_version_status(name, int(code))
+    if wf_ok:
+        ok("workflow version (" + wf_note + ")")
+    else:
+        fail("workflow version: " + wf_note)
+
+    # 0.3.4（§11）：docs/update.json 由 Pages 提供，必须与 android/update.json 同步。
+    # 过渡期：docs 落后（主席还没推）只提示，不判失败；docs 更新反而失败。
+    docs_file = ROOT.parent / "docs" / "update.json"
+    if not docs_file.exists():
+        fail("docs/update.json missing")
+        return
+    docs = json.loads(docs_file.read_text(encoding="utf-8"))
+    same = (
+        docs.get("versionCode") == manifest.get("versionCode")
+        and docs.get("versionName") == manifest.get("versionName")
+        and docs.get("apk") == manifest.get("apk")
+    )
+    if same:
+        ok("docs/update.json matches android/update.json")
+    elif int(docs.get("versionCode") or 0) < int(code):
+        print(
+            "docs/update.json still on "
+            + str(docs.get("versionName"))
+            + " (pending sync by 主席)"
+        )
+    else:
+        fail("docs/update.json is newer than android/update.json")
 
 
 def main() -> int:
@@ -1107,7 +1438,11 @@ def main() -> int:
     check_update_manifest()
     check_shell_surface()
     check_widget_layout()
+    check_widget_week_start()
+    check_widget_four_day_gutter()
+    check_widget_agenda_frames()
     check_update_fallback()
+    check_update_install()
     check_gradle()
     check_theme_tokens()
     check_layouts()

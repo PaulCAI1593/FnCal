@@ -26,7 +26,7 @@ object WidgetRepository {
         val now = System.currentTimeMillis()
         val from = CalKit.monthStart(now)
         val to = CalKit.addDays(from, RANGE_DAYS)
-        return when (val result = WidgetClient.summary(context, from, to, WidgetPrefs.etag(context))) {
+        val ok = when (val result = WidgetClient.summary(context, from, to, WidgetPrefs.etag(context))) {
             is WidgetClient.Result.Ok -> {
                 WidgetPrefs.saveSuccess(context, result.json, result.etag, now)
                 true
@@ -49,5 +49,9 @@ object WidgetRepository {
                 false
             }
         }
+        // 0.3.4 §8：顺带同步「每周开始日」。这条请求失败只是保留上次的值，
+        // 不影响上面的取数结果，也不会让卡片显示错误。
+        WidgetClient.weekStartsOn(context)?.let { WidgetPrefs.saveWeekStartsOn(context, it) }
+        return ok
     }
 }

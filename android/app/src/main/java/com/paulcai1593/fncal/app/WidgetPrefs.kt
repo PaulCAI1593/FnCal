@@ -18,6 +18,7 @@ object WidgetPrefs {
     private const val KEY_ETAG = "cache_etag"
     private const val KEY_UPDATED = "last_updated"
     private const val KEY_ERROR = "last_error"
+    private const val KEY_WEEK_START = "week_starts_on"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -29,6 +30,17 @@ object WidgetPrefs {
     fun lastUpdated(context: Context): Long = prefs(context).getLong(KEY_UPDATED, 0L)
 
     fun lastError(context: Context): String? = prefs(context).getString(KEY_ERROR, null)
+
+    /**
+     * 0.3.4 §8：网页设置里的「每周开始日」——0 = 周日（默认），1 = 周一。
+     * 渲染器没有 Context，读出来随快照一起带给它。
+     */
+    fun weekStartsOn(context: Context): Int =
+        if (prefs(context).getInt(KEY_WEEK_START, 0) == 1) 1 else 0
+
+    fun saveWeekStartsOn(context: Context, value: Int) {
+        prefs(context).edit().putInt(KEY_WEEK_START, if (value == 1) 1 else 0).apply()
+    }
 
     /** 200：换掉缓存与 ETag，并记下本次成功时间。 */
     fun saveSuccess(context: Context, json: String, etag: String?, at: Long) {

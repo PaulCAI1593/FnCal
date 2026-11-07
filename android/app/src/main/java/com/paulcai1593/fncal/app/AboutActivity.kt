@@ -32,8 +32,10 @@ import kotlin.concurrent.thread
  * 以及 0.2.0 新增的「检查更新」（范围文档 §B4）。
  *
  * 更新流程：点按钮 → 后台取清单（国内源失败自动改试直通）→ versionCode 更大才提示
- * → 用户确认 → 系统 DownloadManager 下载到外部私有目录 FnCal/updates → 校验包名与
- * versionCode → ACTION_VIEW 交给系统安装器。未点按钮时没有任何网络请求。
+ * → 用户确认 → 系统 DownloadManager 下载 → **以它回写的 COLUMN_LOCAL_URI 为准取包**
+ * （content:// 先复制进 cacheDir/updates）→ 校验包名与 versionCode → ACTION_VIEW 交给
+ * 系统安装器。未点按钮时没有任何网络请求。
+ * 0.3.4：下载失败带原因码；目标文件已存在时清掉重下一次；磁盘上已有正确包时直接装。
  */
 class AboutActivity : AppCompatActivity() {
 
@@ -41,6 +43,16 @@ class AboutActivity : AppCompatActivity() {
         /** 下载进度的轮询间隔；DownloadManager 没有回调接口，只能 query。 */
         private const val POLL_INTERVAL_MS = 500L
         private const val INSTALL_MIME = "application/vnd.android.package-archive"
+
+        /**
+         * 0.3.4 §B：DownloadManager.ERROR_FILE_ALREADY_EXISTS 的数值（1009）。
+         * 直接引用该常量在个别 SDK 版本上不可见，这里写死；原因码对照表见记录 §5。
+         */
+        private const val DM_ERROR_FILE_ALREADY_EXISTS = 1009
+        /** DownloadManager 写盘的外部私有目录（相对 getExternalFilesDir(DOWNLOADS)）。 */
+        private const val EXTERNAL_UPDATES_DIR = "FnCal/updates"
+        /** content:// 落盘时的复制目录（相对 cacheDir）。 */
+        private const val CACHE_UPDATES_DIR = "updates"
     }
 
     private lateinit var radioSourceCn: RadioButton
@@ -48,6 +60,7 @@ class AboutActivity : AppCompatActivity() {
     private lateinit var buttonCheckUpdate: Button
     private lateinit var progressUpdate: ProgressBar
     private lateinit var textUpdateStatus: TextView
+    private lateinit var textUpdateDiag: TextView
     private lateinit var buttonCancelUpdate: Button
     private lateinit var widgetStatus: TextView
     private lateinit var buttonWidgetRefresh: Button
@@ -57,6 +70,18 @@ class AboutActivity : AppCompatActivity() {
     private var expectedVersionCode = 0
     private var expectedApkName = ""
     private var polling = false
+
+    // ---- 0.3.4 更新收尾状态 ----
+    /** 最近一次「下载并安装」的清单与源：文件已存在时重试一次要复用同一请求。 */
+    private var lastManifest: UpdateChecker.Manifest? = null
+    private var lastSource: UpdateSources.Source = UpdateSources.Source.CN
+    /** ERROR_FILE_ALREADY_EXISTS 的自愈重试是否已用过（本会话只一次）。 */
+    private var retriedAfterExists = false
+    /** 已校验通过、等「安装未知应用」授权后要续装的包。 */
+    private var pendingApk: File? = null
+    private var pendingInstallArmed = false
+    /** 诊断行：最近一次成功取到的落盘位置（只留目录名 + 文件名）。 */
+    private var lastLandedPath = "-"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -165,6 +190,7 @@ class AboutActivity : AppCompatActivity() {
         buttonCheckUpdate = findViewById(R.id.btn_check_update)
         progressUpdate = findViewById(R.id.progress_update)
         textUpdateStatus = findViewById(R.id.text_update_status)
+        textUpdateDiag = findViewById(R.id.text_update_diag)
         buttonCancelUpdate = findViewById(R.id.btn_cancel_update)
         val group = findViewById<RadioGroup>(R.id.group_update_source)
 
@@ -253,17 +279,45 @@ class AboutActivity : AppCompatActivity() {
 
     private fun sourceName(source: UpdateSources.Source): String =
         getString(
-            if (source == UpdateSources.Source.DIRECT) {
-                R.string.update_source_direct
-            } else {
-                R.string.update_source_cn
+            when (source) {
+                UpdateSources.Source.PAGES -> R.string.update_source_pages
+                UpdateSources.Source.DIRECT -> R.string.update_source_direct
+                UpdateSources.Source.CN -> R.string.update_source_cn
             }
         )
 
     private fun startDownload(manifest: UpdateChecker.Manifest, source: UpdateSources.Source) {
-        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         expectedVersionCode = manifest.versionCode
         expectedApkName = manifest.apk
+        lastManifest = manifest
+        lastSource = source
+        retriedAfterExists = false
+
+        // 0.3.4 §D：磁盘上已有同版本的正确包（包名 + versionCode 都对）就直接装，
+        // 不再重下；这也顺带避开「目标文件已存在」导致的失败。
+        val cached = existingValidApk(manifest.apk, manifest.versionCode)
+        if (cached != null) {
+            pendingApk = cached
+            lastLandedPath = landedLabel(cached)
+            updateDiag(-1, 0, lastLandedPath)
+            textUpdateStatus.visibility = View.VISIBLE
+            textUpdateStatus.text = getString(R.string.update_verify)
+            verifyAndInstall(cached)
+            return
+        }
+
+        cleanBeforeDownload(manifest.apk)
+        enqueueDownload(manifest, source)
+    }
+
+    /** 0.3.4 §B：enqueue 前删掉外部私有目录与缓存里的同名包。 */
+    private fun cleanBeforeDownload(apkName: String) {
+        externalApkFile(apkName)?.delete()
+        File(File(cacheDir, CACHE_UPDATES_DIR), apkName).delete()
+    }
+
+    private fun enqueueDownload(manifest: UpdateChecker.Manifest, source: UpdateSources.Source) {
+        val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         val request = DownloadManager.Request(Uri.parse(UpdateSources.apkUrl(source, manifest)))
             .setTitle(getString(R.string.app_name) + " " + manifest.versionName)
             .setDescription(getString(R.string.update_downloading))
@@ -274,12 +328,14 @@ class AboutActivity : AppCompatActivity() {
             .setDestinationInExternalFilesDir(
                 this,
                 Environment.DIRECTORY_DOWNLOADS,
-                "FnCal/updates/" + manifest.apk
+                EXTERNAL_UPDATES_DIR + "/" + manifest.apk
             )
             .setAllowedOverMetered(true)
         downloadId = try {
             manager.enqueue(request)
         } catch (e: Exception) {
+            updateDiag(-1, 0, "-")
+            textUpdateStatus.visibility = View.VISIBLE
             textUpdateStatus.text = getString(R.string.update_download_failed)
             return
         }
@@ -326,14 +382,27 @@ class AboutActivity : AppCompatActivity() {
                 return
             }
             val status = it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            val reasonIndex = it.getColumnIndex(DownloadManager.COLUMN_REASON)
+            val reason = if (reasonIndex >= 0) it.getInt(reasonIndex) else 0
+            val uriIndex = it.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
+            val localUri = if (uriIndex >= 0) it.getString(uriIndex) else null
             when (status) {
                 DownloadManager.STATUS_SUCCESSFUL -> {
                     progressUpdate.progress = 100
                     textUpdateStatus.text = getString(R.string.update_verify)
-                    verifyAndInstall()
+                    // 0.3.4 §A：以 DownloadManager 回写的实际落盘 URI 为准。
+                    val file = apkFromLocalUri(localUri)
+                    if (file == null) {
+                        updateDiag(status, reason, "-")
+                        finishDownloadWithFailure()
+                        return
+                    }
+                    lastLandedPath = landedLabel(file)
+                    updateDiag(status, reason, lastLandedPath)
+                    verifyAndInstall(file)
                 }
 
-                DownloadManager.STATUS_FAILED -> finishDownloadWithFailure()
+                DownloadManager.STATUS_FAILED -> onDownloadFailed(reason)
 
                 else -> {
                     val total =
@@ -347,17 +416,41 @@ class AboutActivity : AppCompatActivity() {
                         textUpdateStatus.text =
                             getString(R.string.update_download_progress, percent)
                     }
+                    updateDiag(status, reason, "-")
                     pollDownload()
                 }
             }
         }
     }
 
-    private fun finishDownloadWithFailure() {
+    /** 0.3.4 §B：目标文件已存在时清掉同名包再下一次，只重试一次。 */
+    private fun onDownloadFailed(reason: Int) {
+        updateDiag(DownloadManager.STATUS_FAILED, reason, "-")
+        val manifest = lastManifest
+        if (reason == DM_ERROR_FILE_ALREADY_EXISTS && !retriedAfterExists && manifest != null) {
+            retriedAfterExists = true
+            cleanBeforeDownload(expectedApkName)
+            downloadId = -1L
+            enqueueDownload(manifest, lastSource)
+            return
+        }
+        finishDownloadWithFailure(reason)
+    }
+
+    /**
+     * 0.3.4 §C：带 DownloadManager 原因码的失败提示。reason 为 0 时沿用原句
+     * 「下载失败，请重试」；否则显示「下载失败（原因 N），请重试」。
+     */
+    private fun finishDownloadWithFailure(reason: Int = 0) {
         downloadId = -1L
         resetDownloadUi()
         textUpdateStatus.visibility = View.VISIBLE
-        textUpdateStatus.text = getString(R.string.update_download_failed)
+        textUpdateStatus.text =
+            if (reason != 0) {
+                getString(R.string.update_download_failed_reason, reason)
+            } else {
+                getString(R.string.update_download_failed)
+            }
     }
 
     private fun resetDownloadUi() {
@@ -367,14 +460,93 @@ class AboutActivity : AppCompatActivity() {
         buttonCheckUpdate.setText(R.string.check_update)
     }
 
-    private fun downloadedApkFile(): File? {
+    private fun externalApkFile(apkName: String): File? {
         val dir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: return null
-        return File(File(dir, "FnCal/updates"), expectedApkName)
+        return File(File(dir, EXTERNAL_UPDATES_DIR), apkName)
     }
 
-    private fun verifyAndInstall() {
-        val file = downloadedApkFile()
-        if (file == null || !file.isFile) {
+    private fun cachedApkFile(apkName: String): File =
+        File(File(cacheDir, CACHE_UPDATES_DIR), apkName)
+
+    /** 0.3.4 §D：目标版本的正确包已在磁盘（包名 + versionCode 都对）时不再下载。 */
+    private fun existingValidApk(apkName: String, versionCode: Int): File? {
+        val candidates = mutableListOf<File>()
+        externalApkFile(apkName)?.let { candidates.add(it) }
+        candidates.add(cachedApkFile(apkName))
+        for (file in candidates) {
+            if (isValidApk(file, versionCode)) {
+                return file
+            }
+        }
+        return null
+    }
+
+    private fun isValidApk(file: File, versionCode: Int): Boolean {
+        if (!file.isFile || file.length() <= 0L) {
+            return false
+        }
+        val info = try {
+            packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+        } catch (e: Exception) {
+            null
+        } ?: return false
+        return info.packageName == packageName && archiveVersionCode(info) == versionCode.toLong()
+    }
+
+    /**
+     * 0.3.4 §A：DownloadManager 成功时给出它**实际**写入的 URI。
+     * file:// 直接取文件；content://（多数 ROM 走这条）复制到 cacheDir/updates 再走
+     * 同一套校验。两条路径都在 file_paths.xml 里声明，FileProvider 都能共享。
+     */
+    private fun apkFromLocalUri(localUri: String?): File? {
+        val raw = localUri?.trim()
+        if (raw.isNullOrEmpty()) {
+            return externalApkFile(expectedApkName)
+        }
+        val uri = Uri.parse(raw)
+        if (uri.scheme == "file") {
+            val path = uri.path
+            return if (path.isNullOrEmpty()) null else File(path)
+        }
+        return copyToCache(uri)
+    }
+
+    private fun copyToCache(uri: Uri): File? {
+        val dir = File(cacheDir, CACHE_UPDATES_DIR)
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            return null
+        }
+        val target = File(dir, expectedApkName)
+        return try {
+            val input = contentResolver.openInputStream(uri) ?: return null
+            input.use { source ->
+                target.outputStream().use { sink -> source.copyTo(sink) }
+            }
+            target
+        } catch (e: Exception) {
+            target.delete()
+            null
+        }
+    }
+
+    /** 诊断行：DM 状态 / 原因 / 落盘（只显示目录名 + 文件名）。 */
+    private fun updateDiag(status: Int, reason: Int, landed: String) {
+        if (!::textUpdateDiag.isInitialized) {
+            return
+        }
+        lastDmStatus = status
+        lastDmReason = reason
+        textUpdateDiag.text = getString(R.string.update_diag, status, reason, landed)
+        textUpdateDiag.visibility = View.VISIBLE
+    }
+
+    private fun landedLabel(file: File): String {
+        val parent = file.parentFile?.name ?: "-"
+        return parent + "/" + file.name
+    }
+
+    private fun verifyAndInstall(file: File) {
+        if (!file.isFile) {
             finishDownloadWithFailure()
             return
         }
@@ -393,7 +565,9 @@ class AboutActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()
         ) {
-            // 没有「安装未知应用」权限：先带去系统设置页。
+            // 0.3.4 §D：先记住这个已校验的包，用户从设置页回来由 onResume 续装一次。
+            pendingApk = file
+            pendingInstallArmed = true
             textUpdateStatus.visibility = View.VISIBLE
             textUpdateStatus.text = getString(R.string.update_need_permission)
             Toast.makeText(this, R.string.update_need_permission, Toast.LENGTH_LONG).show()
@@ -411,6 +585,8 @@ class AboutActivity : AppCompatActivity() {
             resetDownloadUi()
             return
         }
+        pendingApk = null
+        pendingInstallArmed = false
         installApk(file)
     }
 
@@ -455,11 +631,37 @@ class AboutActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 0.3.4 §D：从「安装未知应用」设置页返回后，若本次会话还留着已校验的包，
+     * 自动续装一次。未授权时保留待装状态，不重复弹安装器；装完即清。
+     */
+    private fun resumePendingInstall() {
+        if (!pendingInstallArmed) {
+            return
+        }
+        val file = pendingApk ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            return
+        }
+        pendingInstallArmed = false
+        pendingApk = null
+        if (isValidApk(file, expectedVersionCode)) {
+            verifyAndInstall(file)
+        } else {
+            file.delete()
+            finishDownloadWithFailure()
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         // 从网页登录 / 退出后回到这里：状态立刻跟着变，并让卡片取一次新数据。
         renderWidgetState()
         WidgetScheduler.refreshNow(this)
+        // 0.3.4 §D：从「安装未知应用」设置页回来且已授权时，自动续装一次。
+        resumePendingInstall()
     }
 
     override fun onDestroy() {

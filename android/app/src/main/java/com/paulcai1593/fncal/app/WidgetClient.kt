@@ -2,6 +2,7 @@ package com.paulcai1593.fncal.app
 
 import android.content.Context
 import android.webkit.CookieManager
+import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -23,7 +24,7 @@ import javax.net.ssl.X509TrustManager
 object WidgetClient {
 
     private const val TIMEOUT_MS = 10_000
-    private const val VERSION = "0.3.3"
+    private const val VERSION = "0.3.4"
 
     sealed class Result {
         data class Ok(val json: String, val etag: String?) : Result()
@@ -70,19 +71,7 @@ object WidgetClient {
             "&to=" + CalKit.isoDate(to)
         var connection: HttpURLConnection? = null
         return try {
-            val opened = URL(url).openConnection()
-            if (opened is HttpsURLConnection && ShellPrefs.allowSelfSigned(context)) {
-                opened.sslSocketFactory =
-                    trustAllContext().socketFactory as javax.net.ssl.SSLSocketFactory
-                opened.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
-            }
-            connection = opened as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = TIMEOUT_MS
-            connection.readTimeout = TIMEOUT_MS
-            connection.setRequestProperty("Cookie", cookie)
-            connection.setRequestProperty("User-Agent", userAgent())
-            connection.setRequestProperty("Accept", "application/json")
+            connection = prepare(context, url, cookie)
             if (!etag.isNullOrBlank()) connection.setRequestProperty("If-None-Match", etag)
             when (val code = connection.responseCode) {
                 200 -> {
@@ -102,6 +91,50 @@ object WidgetClient {
             Result.Failed("network")
         } finally {
             connection?.disconnect()
+        }
+    }
+
+    /**
+     * 0.3.4 §8：读网页设置里的「每周开始日」——`GET /api/v1/kv/cal:settings`。
+     *
+     * 只认 `value.weekStartsOn` 的 0（周日）/ 1（周一）。没写过（404）、网络失败、
+     * JSON 解析失败都返回 null：调用方保留上次的值，这次请求失败**不得**让整次
+     * 卡片刷新失败。所以它不走 [Result]，也从不抛异常。
+     */
+    fun weekStartsOn(context: Context): Int? {
+        val base = ShellPrefs.baseUrl(context) ?: return null
+        val cookie = sessionCookie(context)
+        if (cookie.isEmpty()) return null
+        val url = base.trimEnd('/') + "/api/v1/kv/cal:settings"
+        var connection: HttpURLConnection? = null
+        return try {
+            connection = prepare(context, url, cookie)
+            if (connection.responseCode != 200) return null
+            val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val raw = JSONObject(body).optJSONObject("value")?.optInt("weekStartsOn", -1)
+            if (raw == 0 || raw == 1) raw else null
+        } catch (e: Exception) {
+            null
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    /** 建连与公共头：Cookie、UA、Accept，以及「用户允许自签证书」时的放行。 */
+    private fun prepare(context: Context, url: String, cookie: String): HttpURLConnection {
+        val opened = URL(url).openConnection()
+        if (opened is HttpsURLConnection && ShellPrefs.allowSelfSigned(context)) {
+            opened.sslSocketFactory =
+                trustAllContext().socketFactory as javax.net.ssl.SSLSocketFactory
+            opened.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, _ -> true }
+        }
+        return (opened as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = TIMEOUT_MS
+            readTimeout = TIMEOUT_MS
+            setRequestProperty("Cookie", cookie)
+            setRequestProperty("User-Agent", userAgent())
+            setRequestProperty("Accept", "application/json")
         }
     }
 

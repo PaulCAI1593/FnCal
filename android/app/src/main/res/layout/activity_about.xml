@@ -322,6 +322,19 @@
                         android:textSize="12sp"
                         android:visibility="gone" />
 
+                    <!-- 0.3.4（§E）：诊断行，只在更新流程里出现；12sp 是布局下限。 -->
+                    <TextView
+                        android:id="@+id/text_update_diag"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:ellipsize="end"
+                        android:lineSpacingExtra="2dp"
+                        android:maxLines="2"
+                        android:textColor="@color/text_3"
+                        android:textSize="12sp"
+                        android:visibility="gone" />
+
                     <Button
                         android:id="@+id/btn_cancel_update"
                         android:layout_width="match_parent"

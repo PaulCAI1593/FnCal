@@ -29,6 +29,8 @@ data class WidgetSnapshot(
     val fromDate: String?,
     val toDate: String?,
     val events: List<WidgetEvent>,
+    /** 0.3.4 §8：0 = 周日为一周之始，1 = 周一。由网页设置 `cal:settings` 带来。 */
+    val weekStartsOn: Int = 0,
 ) {
     /**
      * 与某一天相交的事件：`start < dayEnd && end > dayStart`。
@@ -43,7 +45,7 @@ data class WidgetSnapshot(
          * 0.6.0 接口回的是 `{ok, version, generatedAt, timeZone, from, to, privacy, calendars, events, truncated?}`；
          * 这里只认 events/from/to/generatedAt。逐条容错：坏事件跳过，不让整张卡片变空。
          */
-        fun parse(raw: String?): WidgetSnapshot? {
+        fun parse(raw: String?, weekStartsOn: Int = 0): WidgetSnapshot? {
             if (raw.isNullOrBlank()) return null
             return try {
                 val root = JSONObject(raw)
@@ -83,6 +85,7 @@ data class WidgetSnapshot(
                     fromDate = root.optString("from", "").ifBlank { null },
                     toDate = root.optString("to", "").ifBlank { null },
                     events = events,
+                    weekStartsOn = normalizedWeekStart(weekStartsOn),
                 )
             } catch (e: Exception) {
                 null
@@ -183,10 +186,26 @@ object CalKit {
         timeInMillis = millis
     }.getActualMaximum(Calendar.DAY_OF_MONTH)
 
-    /** 周一 = 0 … 周日 = 6。 */
-    fun weekdayIndex(millis: Long): Int = Calendar.getInstance().apply {
+    /**
+     * 0.3.4 §8：一周里的第几天，0 = 该周第一天。
+     * `weekStartsOn` 0 = 周日（Calendar 的 DAY_OF_WEEK 原序）、1 = 周一。
+     */
+    fun weekdayIndex(millis: Long, weekStartsOn: Int): Int = Calendar.getInstance().apply {
         timeInMillis = millis
-    }.let { cal -> (cal.get(Calendar.DAY_OF_WEEK) + 5) % 7 }
+    }.let { cal ->
+        ((cal.get(Calendar.DAY_OF_WEEK) - 1 - normalizedWeekStart(weekStartsOn)) + 7) % 7
+    }
+
+    /** 只接受 0 / 1，其它值按 0（周日）处理，与网页设置的缺省一致。 */
+    fun normalizedWeekStart(value: Int): Int = if (value == 1) 1 else 0
+
+    /** 表头：周一为首 → 一…日；周日为首 → 日一二三四五六。 */
+    fun weekLabels(weekStartsOn: Int): Array<String> =
+        if (normalizedWeekStart(weekStartsOn) == 1) {
+            arrayOf("一", "二", "三", "四", "五", "六", "日")
+        } else {
+            arrayOf("日", "一", "二", "三", "四", "五", "六")
+        }
 
     fun hourOf(millis: Long): Int = Calendar.getInstance().apply { timeInMillis = millis }
         .get(Calendar.HOUR_OF_DAY)
@@ -220,8 +239,8 @@ object CalKit {
         return labels[index.coerceIn(0, 6)]
     }
 
-    fun monthGridStart(monthMillis: Long): Long {
+    fun monthGridStart(monthMillis: Long, weekStartsOn: Int = 0): Long {
         val first = monthStart(monthMillis)
-        return addDays(first, -weekdayIndex(first))
+        return addDays(first, -weekdayIndex(first, weekStartsOn))
     }
 }
