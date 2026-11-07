@@ -1,13 +1,14 @@
 {
-  "versionCode": 305,
-  "versionName": "0.3.5",
+  "versionCode": 306,
+  "versionName": "0.3.6",
   "releasedAt": "2026-11-08",
-  "apk": "FnCal-Android-0.3.5.apk",
+  "apk": "FnCal-Android-0.3.6.apk",
+  "apkCn": "https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk",
   "notes": [
+    "检查更新改为两源：先试 Gitee 镜像，清单过期或不可用再试 GitHub 直通",
+    "下载失败自动换一个源再试一次：清单里的 Gitee 附件（apkCn）与 GitHub Release 包互为备份，两次都失败才报原因码",
     "关于页会刷新服务器版本：升级 fpk 后不用重连地址，打开关于页就能看到新版本",
-    "应用内更新：下载完成直接进入安装，不再误报「下载失败」；检查更新依次试 Pages、国内源、直通",
-    "更新失败时显示 DownloadManager 原因码；已下载好的同版本包可续装",
-    "迷你月历：一排日号基线统一；月视图日程前的色点放大到 4dp",
+    "应用内更新：下载完成直接进入安装，不再误报「下载失败」",
     "桌面卡片按设置里的「每周开始日」排表头；四日视图左侧加时间轴刻度",
     "两张日程卡改为圆点 + 时间 + 标题 + 地点的框式排版"
   ]
