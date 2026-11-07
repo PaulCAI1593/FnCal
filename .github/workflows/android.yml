@@ -67,6 +67,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish release asset
+        working-directory: android
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

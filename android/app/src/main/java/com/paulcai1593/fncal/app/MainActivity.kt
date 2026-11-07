@@ -49,7 +49,8 @@ class MainActivity : AppCompatActivity() {
         private const val MENU_REFRESH = 1
         private const val MENU_ABOUT = 2
         private const val DOUBLE_BACK_WINDOW_MS = 2_000L
-        private const val UA_SUFFIX = " FnCalAndroid/0.3.0"
+        // 0.3.0 §D：UA 带机型，服务端「我的安全」因此能显示是哪台手机。
+    private val UA_SUFFIX = " FnCalAndroid/0.3.0" + DeviceName.suffix()
     }
 
     private lateinit var webView: WebView
@@ -419,6 +420,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        // 0.6.2 §F：壳内登录 / 退出后回来，主动让卡片取一次新数据（Cookie 已更新）。
+        WidgetScheduler.refreshNow(this)
     }
 
     override fun onDestroy() {

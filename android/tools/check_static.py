@@ -731,23 +731,43 @@ def check_widgets() -> None:
         else:
             fail("widget card layout missing " + needle)
 
-    # ③ Kotlin 能力：加密、刷新周期、范围、五款渲染、点击深链。
+    # ③ Kotlin 能力：登录 Cookie 取数、刷新周期、范围、五款渲染、点击深链。
     for name in (
         "WidgetPrefs.kt", "WidgetData.kt", "WidgetClient.kt", "WidgetRepository.kt",
         "WidgetRenderer.kt", "WidgetScheduler.kt", "WidgetWorker.kt",
-        "WidgetRefreshReceiver.kt", "FnCalWidgetProvider.kt",
+        "WidgetRefreshReceiver.kt", "FnCalWidgetProvider.kt", "DeviceName.kt",
     ):
         if (kt / name).is_file():
             ok("widget kotlin " + name)
         else:
             fail("widget kotlin missing " + name)
 
+    # 0.6.2 §F：不再有第二套凭据——WidgetPrefs 里不许出现令牌与 Keystore 加密。
     prefs = (kt / "WidgetPrefs.kt").read_text(encoding="utf-8")
-    for needle in ("AES/GCM/NoPadding", "AndroidKeyStore", "fncal_widget_token"):
+    for forbidden in ("AES/GCM/NoPadding", "AndroidKeyStore", "fncal_widget_token", "token_enc", "hasToken"):
+        if forbidden not in prefs:
+            ok("widget prefs has no " + forbidden)
+        else:
+            fail("widget prefs must not keep a token: " + forbidden)
+    for needle in ("cache_json", "cache_etag", "last_updated", "last_error"):
         if needle in prefs:
             ok("widget prefs has " + needle)
         else:
             fail("widget prefs missing " + needle)
+
+    # 卡片取数：从 CookieManager 取会话 Cookie，按 Cookie 头发送，且整段 try/catch。
+    client = (kt / "WidgetClient.kt").read_text(encoding="utf-8")
+    for needle in (
+        "CookieManager.getInstance().getCookie",
+        'setRequestProperty("Cookie"',
+        'setRequestProperty("User-Agent"',
+        "FnCalWidget/",
+        "catch (e: Exception)",
+    ):
+        if needle in client:
+            ok("widget client has " + needle)
+        else:
+            fail("widget client missing " + needle)
 
     scheduler = (kt / "WidgetScheduler.kt").read_text(encoding="utf-8")
     for needle in (
@@ -842,32 +862,56 @@ def check_widgets() -> None:
         else:
             fail("address logo needs contentDescription or importantForAccessibility")
 
-    # ⑥ 关于页令牌入口 + 保存并测试 / 清除 的接线。
+    # ⑥ 关于页：0.6.2 起只显示登录状态 + 手动刷新（令牌入口已删）。
     about_layout = (APP / "res" / "layout" / "activity_about.xml").read_text(encoding="utf-8")
     for needle in (
-        'android:id="@+id/widget_token"',
-        'android:id="@+id/widget_token_state"',
-        'android:id="@+id/btn_widget_save"',
-        'android:id="@+id/btn_widget_clear"',
+        'android:id="@+id/widget_login_state"',
+        'android:id="@+id/btn_widget_refresh"',
+        '@string/about_widget_refresh',
     ):
         if needle in about_layout:
-            ok("about widget form has " + needle)
+            ok("about widget state has " + needle)
         else:
-            fail("about widget form missing " + needle)
+            fail("about widget state missing " + needle)
+    for gone in ('@+id/widget_token"', '@+id/btn_widget_save"', '@+id/btn_widget_clear"'):
+        if gone not in about_layout:
+            ok("about widget form removed " + gone)
+        else:
+            fail("about widget form must be removed: " + gone)
     about_kt = (kt / "AboutActivity.kt").read_text(encoding="utf-8")
-    for needle in ("WidgetPrefs.setToken", "WidgetRepository.testToday", "WidgetScheduler.ensurePeriodic"):
+    for needle in ("WidgetRepository.signedIn", "WidgetRepository.refresh", "btn_widget_refresh"):
         if needle in about_kt:
             ok("about activity has " + needle)
         else:
             fail("about activity missing " + needle)
+    for gone in ("WidgetPrefs.setToken", "WidgetRepository.testToday", "fncal_wd_"):
+        if gone not in about_kt:
+            ok("about activity no token flow " + gone)
+        else:
+            fail("about activity must not handle tokens: " + gone)
 
-    # ⑦ 点卡片开对应视图：主界面把 hash 交给网页，网页按 hash 切视图与日期。
+    # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.0"', "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.0"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
             fail("main activity missing " + needle)
+    device = (kt / "DeviceName.kt").read_text(encoding="utf-8")
+    for needle in ("Build.MANUFACTURER", "Build.MODEL", "MAX_LENGTH = 40"):
+        if needle in device:
+            ok("device name has " + needle)
+        else:
+            fail("device name missing " + needle)
+    strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
+    if '<string name="widget_no_token">打开 FnCal 登录</string>' in strings:
+        ok("widget placeholder asks for login")
+    else:
+        fail("widget placeholder must ask for login")
+    if 'about_widget_status_signed_out' in strings and 'about_widget_status_signed_in' in strings:
+        ok("about widget has signed-in / signed-out copy")
+    else:
+        fail("about widget missing login state copy")
 
     # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。
     workflow = ROOT.parent / ".github" / "workflows" / "android.yml"

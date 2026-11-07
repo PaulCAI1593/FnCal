@@ -95,18 +95,12 @@ abstract class FnCalWidgetProvider : AppWidgetProvider() {
             AgendaListWidgetProvider::class.java,
         )
 
-        /** 点卡片：没令牌进「关于 → 桌面卡片」，有令牌进主界面并带视图与日期。 */
+        /** 点卡片：进主界面并带视图与日期；未登录时同一入口（网页会显示登录页）。 */
         fun clickIntent(context: Context, linkView: String, appWidgetId: Int): PendingIntent {
-            val intent = if (!WidgetPrefs.hasToken(context)) {
-                Intent(context, AboutActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
-            } else {
-                Intent(context, MainActivity::class.java).apply {
-                    putExtra(MainActivity.EXTRA_VIEW, linkView)
-                    putExtra(MainActivity.EXTRA_DATE, CalKit.isoDate(System.currentTimeMillis()))
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
+            val intent = Intent(context, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_VIEW, linkView)
+                putExtra(MainActivity.EXTRA_DATE, CalKit.isoDate(System.currentTimeMillis()))
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             return PendingIntent.getActivity(context, appWidgetId, intent, flags)

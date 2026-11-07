@@ -53,7 +53,11 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         sketch.background()
 
         val snapshot = WidgetSnapshot.parse(WidgetPrefs.cache(context))
-        if (!WidgetPrefs.hasToken(context) || snapshot == null) {
+        // 0.6.2 §F：卡片跟随 App 登录态。未登录、或会话被撤销（401 → unauthorized）时
+        // 不再画旧日程，避免把过期数据当成现在的安排。
+        val signedIn = WidgetClient.hasSession(context)
+        val revoked = WidgetPrefs.lastError(context) == "unauthorized"
+        if (!signedIn || revoked || snapshot == null) {
             sketch.placeholder()
             return bitmap
         }

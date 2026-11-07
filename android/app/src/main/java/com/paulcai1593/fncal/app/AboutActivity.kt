@@ -15,7 +15,6 @@ import android.webkit.CookieManager
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.widget.Button
-import android.widget.EditText
 import android.widget.ProgressBar
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -50,10 +49,8 @@ class AboutActivity : AppCompatActivity() {
     private lateinit var progressUpdate: ProgressBar
     private lateinit var textUpdateStatus: TextView
     private lateinit var buttonCancelUpdate: Button
-    private lateinit var widgetTokenInput: EditText
     private lateinit var widgetStatus: TextView
-    private lateinit var buttonWidgetSave: Button
-    private lateinit var buttonWidgetClear: Button
+    private lateinit var buttonWidgetRefresh: Button
 
     private val handler = Handler(Looper.getMainLooper())
     private var downloadId = -1L
@@ -114,79 +111,52 @@ class AboutActivity : AppCompatActivity() {
         setupWidgetCard()
     }
 
-    /** 0.3.0（§A1）：桌面卡片令牌。只存本机 Keystore 加密后的密文，界面不回显明文。 */
+    /** 0.6.2 §F：卡片跟随 App 登录态；这里只显示状态并提供手动刷新。 */
     private fun setupWidgetCard() {
-        widgetTokenInput = findViewById(R.id.widget_token)
-        widgetStatus = findViewById(R.id.widget_token_state)
-        buttonWidgetSave = findViewById(R.id.btn_widget_save)
-        buttonWidgetClear = findViewById(R.id.btn_widget_clear)
-        buttonWidgetSave.setOnClickListener { saveAndTestWidget() }
-        buttonWidgetClear.setOnClickListener { clearWidgetToken() }
+        widgetStatus = findViewById(R.id.widget_login_state)
+        buttonWidgetRefresh = findViewById(R.id.btn_widget_refresh)
+        buttonWidgetRefresh.setOnClickListener { refreshWidgetCard() }
+        renderWidgetState()
+    }
 
-        val hasToken = WidgetPrefs.hasToken(this)
-        buttonWidgetClear.visibility = if (hasToken) View.VISIBLE else View.GONE
-        widgetTokenInput.hint = getString(
-            if (hasToken) R.string.about_widget_saved_hint else R.string.about_widget_placeholder
+    private fun renderWidgetState() {
+        val signedIn = WidgetRepository.signedIn(this)
+        widgetStatus.text = getString(
+            if (signedIn) R.string.about_widget_status_signed_in
+            else R.string.about_widget_status_signed_out
+        )
+        widgetStatus.setTextColor(
+            ContextCompat.getColor(this, if (signedIn) R.color.text_2 else R.color.error_red)
         )
     }
 
-    private fun saveAndTestWidget() {
-        val token = widgetTokenInput.text?.toString()?.trim().orEmpty()
-        if (token.isEmpty()) {
-            Toast.makeText(this, R.string.about_widget_empty, Toast.LENGTH_SHORT).show()
-            return
-        }
-        // 本地先挡一次明显不是令牌的输入，避免拿一段乱码去请求服务器。
-        if (!token.startsWith("fncal_wd_")) {
-            showWidgetStatus(getString(R.string.about_widget_invalid), error = true)
-            return
-        }
-
-        buttonWidgetSave.isEnabled = false
-        buttonWidgetSave.setText(R.string.about_widget_saving)
-        showWidgetStatus(getString(R.string.about_widget_saving))
-        thread(name = "fncal-widget-test") {
-            val outcome = WidgetRepository.testToday(this, token)
+    private fun refreshWidgetCard() {
+        buttonWidgetRefresh.isEnabled = false
+        widgetStatus.setTextColor(ContextCompat.getColor(this, R.color.text_2))
+        widgetStatus.text = getString(R.string.about_widget_refreshing)
+        thread(name = "fncal-widget-refresh") {
+            val ok = WidgetRepository.refresh(this)
             runOnUiThread {
-                buttonWidgetSave.isEnabled = true
-                buttonWidgetSave.setText(R.string.about_widget_save)
-                when {
-                    outcome.connected -> {
-                        WidgetPrefs.setToken(this, token)
-                        widgetTokenInput.setText("")
-                        widgetTokenInput.hint = getString(R.string.about_widget_saved_hint)
-                        buttonWidgetClear.visibility = View.VISIBLE
-                        showWidgetStatus(getString(R.string.about_widget_ok, outcome.todayCount))
-                        WidgetScheduler.ensurePeriodic(this)
-                        WidgetScheduler.refreshNow(this)
-                    }
-
-                    outcome.reason == "invalid" ->
-                        showWidgetStatus(getString(R.string.about_widget_invalid), error = true)
-
-                    else -> showWidgetStatus(getString(R.string.about_widget_network), error = true)
+                buttonWidgetRefresh.isEnabled = true
+                renderWidgetState()
+                if (ok) {
+                    val updated = WidgetPrefs.lastUpdated(this)
+                    val at = if (updated > 0) clock(updated) else null
+                    Toast.makeText(
+                        this,
+                        if (at != null) getString(R.string.about_widget_last_updated, at)
+                        else getString(R.string.about_widget_never),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    Toast.makeText(this, R.string.about_widget_refresh_failed, Toast.LENGTH_SHORT).show()
                 }
             }
         }
     }
 
-    private fun clearWidgetToken() {
-        WidgetPrefs.clear(this)
-        WidgetScheduler.refreshNow(this)
-        widgetTokenInput.setText("")
-        widgetTokenInput.hint = getString(R.string.about_widget_placeholder)
-        buttonWidgetClear.visibility = View.GONE
-        showWidgetStatus(getString(R.string.about_widget_cleared))
-    }
-
-    private fun showWidgetStatus(text: String, error: Boolean = false) {
-        widgetStatus.visibility = View.VISIBLE
-        widgetStatus.text = text
-        widgetStatus.setTextColor(
-            ContextCompat.getColor(this, if (error) R.color.error_red else R.color.accent_text)
-        )
-    }
-
+    private fun clock(ms: Long): String =
+        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(ms))
     // ---- 检查更新（§B4） -------------------------------------------------
 
     private fun setupUpdateCard() {
@@ -483,6 +453,13 @@ class AboutActivity : AppCompatActivity() {
         } else {
             info.versionCode.toLong()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 从网页登录 / 退出后回到这里：状态立刻跟着变，并让卡片取一次新数据。
+        renderWidgetState()
+        WidgetScheduler.refreshNow(this)
     }
 
     override fun onDestroy() {
