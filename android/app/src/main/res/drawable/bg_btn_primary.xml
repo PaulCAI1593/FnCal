@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 0.2.0 主按钮：#2E8FD6 → #12A594 水平渐变、14dp 圆角；文字白色 16sp 粗体。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="14dp" />
+    <gradient
+        android:angle="0"
+        android:endColor="@color/btn_grad_end"
+        android:startColor="@color/btn_grad_start"
+        android:type="linear" />
+</shape>

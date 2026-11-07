@@ -67,6 +67,9 @@ class AddressActivity : AppCompatActivity() {
         }
 
         setContentView(R.layout.activity_address)
+        // 0.2.0：深色蓝绿渐变 + 毛玻璃（状态栏/导航栏同色，API 31+ 真模糊）。
+        GlassSurface.applyWindow(this)
+        GlassSurface.installBlurLayer(this)
         input = findViewById(R.id.input_address)
         errorText = findViewById(R.id.text_error)
         buttonConnect = findViewById(R.id.btn_connect)

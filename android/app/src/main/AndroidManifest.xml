@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  FnCal 安卓外壳 v0.1.0
+  FnCal 安卓外壳 v0.2.0
 
   - 地址页是 LAUNCHER（首次打开先填地址），主界面不导出。
   - usesCleartextTraffic：局域网自托管常是 http，安卓 9 起默认禁明文。
   - 旧系统（API 24-28）保存 Blob 导出文件到公共下载目录需要写外部存储权限。
+  - 0.2.0：地址页 / 关于页换成固定深色的渐变毛玻璃主题（Theme.FnCal.Glass），
+    主界面 WebView 仍用普通 Theme.FnCal，跟随网页自己的主题。
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -12,6 +14,8 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- 0.2.0（§B4）：更新用系统下载器取 APK，交给系统安装器。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -25,6 +29,7 @@
         <activity
             android:name=".AddressActivity"
             android:exported="true"
+            android:theme="@style/Theme.FnCal.Glass"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -42,7 +47,19 @@
             android:name=".AboutActivity"
             android:exported="false"
             android:label="@string/title_about"
+            android:theme="@style/Theme.FnCal.Glass"
             android:windowSoftInputMode="adjustResize" />
+
+        <!-- 0.2.0（§B4）：把下载到外部私有目录的 APK 以 content:// 交给安装器。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

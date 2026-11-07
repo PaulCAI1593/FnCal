@@ -55,4 +55,34 @@
     <string name="about_clear_data">清除 Cookie 与缓存</string>
     <string name="about_cleared">已清除 Cookie 与缓存</string>
     <string name="about_license">本应用是 FnCal 的安卓外壳。网页与后端代码在项目仓库开源，遵循仓库里的开源许可。</string>
+
+    <!-- 0.2.0（§B4）：检查更新 -->
+    <string name="update_section">更新</string>
+    <string name="update_source_label">更新源</string>
+    <string name="update_source_cn">国内源</string>
+    <string name="update_source_direct">直通</string>
+    <string name="update_note">点「检查更新」才会连接 GitHub 取版本号；国内源失败时自动改试直通。</string>
+    <string name="check_update">检查更新</string>
+    <string name="update_checking">正在检查更新…</string>
+    <string name="update_retry">重试</string>
+    <string name="update_latest">已是最新版本（%1$s）</string>
+    <string name="update_found_title">发现新版本 %1$s</string>
+    <string name="update_dialog_version">版本：%1$s（%2$d）</string>
+    <string name="update_dialog_date">发布日期：%1$s</string>
+    <string name="update_dialog_source">来源：%1$s</string>
+    <string name="update_source_fallback">国内源失败，已改用直通</string>
+    <string name="update_dialog_notes">更新内容：</string>
+    <string name="update_download">下载并安装</string>
+    <string name="update_later">以后再说</string>
+    <string name="update_downloading">正在下载安装包…</string>
+    <string name="update_download_progress">正在下载 %1$d%%</string>
+    <string name="update_download_failed">下载失败，请重试</string>
+    <string name="update_cancelled">已取消下载</string>
+    <string name="update_cancel">取消下载</string>
+    <string name="update_verify">正在校验安装包…</string>
+    <string name="update_verify_failed">安装包校验失败，已删除文件</string>
+    <string name="update_need_permission">需要允许安装未知来源应用后再试</string>
+    <string name="update_check_failed">检查更新失败：%1$s</string>
+    <string name="update_signature_note">调试签名包升级后仍是调试签名；正式签名启用后，跨签名升级需卸载重装。</string>
+    <string name="update_install_started">已打开安装器</string>
 </resources>

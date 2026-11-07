@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""FnCal 安卓外壳 v0.1.0 · 静态自检（本机不能编译，只能做这些）。
+"""FnCal 安卓外壳 v0.2.0 · 静态自检（本机不能编译，只能做这些）。
 
 检查项：
   1. 所有 XML 用 xml.etree 解析；
   2. 所有 PNG 读尺寸并与密度表核对；
   3. Kotlin 文件括号/引号配对（去注释与字符串后），并检查 LF/结尾换行；
-  4. 资源引用一致性（@string / @color / @layout / @mipmap / @style / R.*）；
-  5. 全局 http(s):// 字面量清单；
+  4. 资源引用一致性（@string / @color / @layout / @drawable / @mipmap / @style / @xml / R.*）；
+  5. 全局 http(s):// 字面量清单（外链只放行四个更新域名）；
   6. Gradle 关键配置断言（版本、包名、SDK、JVM target、依赖白名单）；
   7. 确认没有 gradle-wrapper.jar / gradlew。
 
@@ -196,6 +196,8 @@ def collect_resources() -> tuple[set[str], set[str], set[str]]:
 def check_resources() -> None:
     strings, colors, styles = collect_resources()
     layouts = {p.stem for p in (APP / "res" / "layout").glob("*.xml")}
+    drawables = {p.stem for p in (APP / "res" / "drawable").glob("*.xml")}
+    xmls = {p.stem for p in (APP / "res" / "xml").glob("*.xml")}
     mipmaps: set[str] = set()
     for folder in (APP / "res").glob("mipmap-*"):
         mipmaps.update(p.stem for p in folder.glob("*"))
@@ -206,7 +208,7 @@ def check_resources() -> None:
         text = path.read_text(encoding="utf-8")
         for match in re.finditer(r'@\+id/([A-Za-z_][A-Za-z0-9_]*)', text):
             ids.add(match.group(1))
-        refs.extend((str(path.relative_to(ROOT)), m.group(0)) for m in re.finditer(r"@(string|color|layout|mipmap|style)/([A-Za-z0-9_.]+)", text))
+        refs.extend((str(path.relative_to(ROOT)), m.group(0)) for m in re.finditer(r"@(string|color|layout|drawable|mipmap|style|xml)/([A-Za-z0-9_.]+)", text))
 
     for rel, ref in refs:
         kind, name = ref[1:].split("/", 1)
@@ -215,8 +217,10 @@ def check_resources() -> None:
             "string": name in strings,
             "color": name in colors,
             "layout": name in layouts,
+            "drawable": name in drawables,
             "mipmap": name in mipmaps,
             "style": name in styles,
+            "xml": name in xmls,
         }[kind]
         if not exists:
             fail("res ref " + rel + " -> " + ref)
@@ -224,13 +228,14 @@ def check_resources() -> None:
 
     for path in sorted(ROOT.rglob("*.kt")):
         text = path.read_text(encoding="utf-8")
-        for match in re.finditer(r"\bR\.(id|string|color|layout|mipmap|style)\.([A-Za-z0-9_]+)", text):
+        for match in re.finditer(r"\bR\.(id|string|color|layout|drawable|mipmap|style)\.([A-Za-z0-9_]+)", text):
             kind, name = match.group(1), match.group(2)
             exists = {
                 "id": name in ids,
                 "string": name in strings,
                 "color": name in colors,
                 "layout": name in layouts,
+                "drawable": name in drawables,
                 "mipmap": name in mipmaps,
                 "style": name in styles,
             }[kind]
@@ -250,6 +255,13 @@ def check_urls() -> None:
         "https://",
         "http://",
     }
+    # 0.2.0（§B4）：更新只允许这四个域名，其它外链仍报错。
+    allowed_hosts = {
+        "cdn.jsdelivr.net",
+        "raw.githubusercontent.com",
+        "gh-proxy.com",
+        "github.com",
+    }
     count = 0
     for path in sorted(ROOT.rglob("*")):
         if not path.is_file() or path.suffix not in {".kt", ".xml", ".js", ".kts", ".md", ".properties", ".py"}:
@@ -258,15 +270,57 @@ def check_urls() -> None:
             for match in re.finditer(r"https?://[^\s\"'）)，。<>]+", line):
                 url = match.group(0)
                 count += 1
-                if url not in allowed and not any(url.startswith(a) for a in allowed):
-                    fail("url " + str(path.relative_to(ROOT)) + ":" + str(number) + " " + url)
+                if url in allowed or any(url.startswith(a) for a in allowed):
+                    continue
+                host = url.split("//", 1)[-1].split("/", 1)[0].split(":", 1)[0]
+                if host in allowed_hosts:
+                    continue
+                fail("url " + str(path.relative_to(ROOT)) + ":" + str(number) + " " + url)
     print("url literals:", count)
+
+
+def check_update_manifest() -> None:
+    """0.2.0（§B4）：update.json 必须存在，且版本号与 app/build.gradle.kts 一致。"""
+    import json
+
+    path = ROOT / "update.json"
+    if not path.is_file():
+        fail("update.json missing")
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        fail("update.json parse: " + str(exc))
+        return
+    app_gradle = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
+    code = data.get("versionCode")
+    name = data.get("versionName")
+    apk = data.get("apk")
+    notes = data.get("notes")
+    if not isinstance(code, int) or ("versionCode = " + str(code)) not in app_gradle:
+        fail("update.json versionCode mismatch: " + repr(code))
+    else:
+        ok("update.json versionCode " + str(code))
+    if not isinstance(name, str) or ('versionName = "' + name + '"') not in app_gradle:
+        fail("update.json versionName mismatch: " + repr(name))
+    else:
+        ok("update.json versionName " + name)
+    expected_apk = "FnCal-Android-" + str(name) + ".apk"
+    if apk != expected_apk:
+        fail("update.json apk should be " + expected_apk + ", got " + repr(apk))
+    else:
+        ok("update.json apk " + apk)
+    if not isinstance(notes, list) or len(notes) != 3 or not all(isinstance(n, str) and n for n in notes):
+        fail("update.json notes should be 3 non-empty strings")
+    else:
+        ok("update.json notes " + str(len(notes)))
 
 
 def check_gradle() -> None:
     app_gradle = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
     root_gradle = (ROOT / "build.gradle.kts").read_text(encoding="utf-8")
     props = (ROOT / "gradle.properties").read_text(encoding="utf-8")
+    manifest = (APP / "AndroidManifest.xml").read_text(encoding="utf-8")
 
     checks = {
         'namespace = "com.paulcai1593.fncal.app"': app_gradle,
@@ -274,20 +328,39 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 100": app_gradle,
-        'versionName = "0.1.0"': app_gradle,
+        "versionCode = 200": app_gradle,
+        'versionName = "0.2.0"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.2.0")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
         "android.useAndroidX=true": props,
         "android.nonTransitiveRClass=true": props,
         "org.gradle.jvmargs=-Xmx2048m": props,
+        # 0.2.0：地址页与关于页用固定深色渐变毛玻璃主题，主界面保持 Theme.FnCal。
+        'android:name=".AddressActivity"': manifest,
+        'android:name=".AboutActivity"': manifest,
     }
     for needle, haystack in checks.items():
         if needle in haystack:
             ok("gradle " + needle)
         else:
             fail("gradle missing " + needle)
+
+    theme_count = manifest.count('android:theme="@style/Theme.FnCal.Glass"')
+    if theme_count == 2:
+        ok("manifest glass theme x2")
+    else:
+        fail("manifest glass theme count " + str(theme_count))
+
+    if "android.permission.REQUEST_INSTALL_PACKAGES" in manifest:
+        ok("manifest install permission")
+    else:
+        fail("manifest missing REQUEST_INSTALL_PACKAGES")
+    if 'androidx.core.content.FileProvider' in manifest and 'android:resource="@xml/file_paths"' in manifest:
+        ok("manifest file provider")
+    else:
+        fail("manifest missing FileProvider / file_paths")
 
     for dep in re.findall(r'implementation\("([^"]+)"\)', app_gradle):
         if dep not in ALLOWED_DEPS:
@@ -326,6 +399,7 @@ def main() -> int:
     check_kotlin()
     check_resources()
     check_urls()
+    check_update_manifest()
     check_gradle()
     check_line_endings()
     print()

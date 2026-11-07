@@ -65,15 +65,15 @@ jobs:
         run: |
           set -e
           APK=android/app/build/outputs/apk/debug/app-debug.apk
-          OUT=FnCal-Android-0.1.0.apk
+          OUT=FnCal-Android-0.2.0.apk
           cp "$APK" "$OUT"
-          TAG=android-v0.1.0
+          TAG=android-v0.2.0
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "release $TAG 已存在，覆盖资产"
           else
             gh release create "$TAG" \
-              --title "FnCal Android 0.1.0" \
-              --notes "安卓外壳测试包（调试签名）。首次打开填自托管地址，之后正常登录。到点提醒不在本版。" \
+              --title "FnCal Android 0.2.0" \
+              --notes "安卓外壳测试包（调试签名）。本版把地址页与关于页换成蓝绿渐变毛玻璃；首次打开填自托管地址，之后正常登录。到点提醒不在本版。" \
               --latest=false
           fi
           gh release upload "$TAG" "$OUT" --clobber

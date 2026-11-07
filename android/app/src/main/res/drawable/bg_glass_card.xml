@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  0.2.0 毛玻璃卡片：24dp 圆角；45% 深色垫底（card_scrim）→ 12% 白填充（card_fill）
+  → 18% 白 1dp 描边（card_stroke）。垫底是为了让 72% 白的说明文字在最亮的渐变处
+  也有 4.5:1 以上（见记录里的实测表），不改变令牌色相。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <solid android:color="@color/card_scrim" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <solid android:color="@color/card_fill" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="24dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/card_stroke" />
+        </shape>
+    </item>
+</layer-list>

@@ -6,4 +6,13 @@
         <item name="colorPrimaryDark">@color/brand_dark</item>
         <item name="colorAccent">@color/brand</item>
     </style>
+
+    <!-- 0.2.0：地址页 / 关于页固定深色渐变（不随系统浅色/深色切换）。
+         窗口底色先铺渐变起点，避免启动瞬间白闪；状态栏图标用浅色。 -->
+    <style name="Theme.FnCal.Glass" parent="Theme.FnCal">
+        <item name="android:windowBackground">@color/bg_grad_start</item>
+        <item name="android:statusBarColor">@color/bg_grad_start</item>
+        <item name="android:navigationBarColor">@color/bg_grad_start</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>

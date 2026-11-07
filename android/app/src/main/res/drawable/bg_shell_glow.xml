@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  0.2.0 两个光斑：右上是 #35C3A6 @22%，左下是 #4A8FE0 @20%，边缘过渡到全透明。
+  API 31+ 由 GlassSurface 给这一层加 RenderEffect 真模糊；API 24–30 只降半透明
+  alpha（多层半透明叠加），不调用 RenderEffect。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:centerX="0.86"
+                android:centerY="0.10"
+                android:endColor="@color/glow_teal_clear"
+                android:gradientRadius="360dp"
+                android:startColor="@color/glow_teal"
+                android:type="radial" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:centerX="0.10"
+                android:centerY="0.92"
+                android:endColor="@color/glow_blue_clear"
+                android:gradientRadius="340dp"
+                android:startColor="@color/glow_blue"
+                android:type="radial" />
+        </shape>
+    </item>
+</layer-list>
