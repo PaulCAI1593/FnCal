@@ -353,9 +353,13 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 306": app_gradle,
-        'versionName = "0.3.6"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.6")': app_gradle,
+        "versionCode = 307": app_gradle,
+        'versionName = "0.3.7"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.7")': app_gradle,
+        # 0.3.7（包体瘦身）：release 变体必须真的开 R8 与资源收缩，并挂固定签名。
+        "isMinifyEnabled = true": app_gradle,
+        "isShrinkResources = true": app_gradle,
+        'resourceConfigurations += listOf("zh", "en")': app_gradle,
         'jvmTarget = "17"': app_gradle,
         'id("com.android.application") version "8.5.2" apply false': root_gradle,
         'id("org.jetbrains.kotlin.android") version "1.9.24" apply false': root_gradle,
@@ -902,7 +906,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.6"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.7"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -949,8 +953,6 @@ def workflow_version_status(name: str, code: int) -> tuple[bool, str]:
         return False, "android.yml missing"
     wf = workflow.read_text(encoding="utf-8")
     allowed = {name: code}
-    if name == "0.3.6":
-        allowed["0.3.5"] = 305
     tags = set(re.findall(r"TAG=android-v(\d+\.\d+\.\d+)", wf))
     outs = set(re.findall(r"OUT=FnCal-Android-(\d+\.\d+\.\d+)\.apk", wf))
     badges = set(re.findall(r"versionName='(\d+\.\d+\.\d+)'", wf))
@@ -1590,6 +1592,33 @@ def check_update_fallback() -> None:
         fail("update.json apkCn should point at the same-version Gitee asset: " + repr(apk_cn))
 
 
+def check_release_workflow() -> None:
+    """0.3.7（包体瘦身）：CI 必须构建 release 变体，且路径/工件/mapping 都跟上。"""
+    workflow = ROOT.parent / ".github" / "workflows" / "android.yml"
+    if not workflow.is_file():
+        fail("android.yml missing for release check")
+        return
+    wf = workflow.read_text(encoding="utf-8")
+    checks = {
+        "gradle assembleRelease": "assembleRelease --no-daemon --stacktrace" in wf,
+        "no assembleDebug": "assembleDebug" not in wf,
+        "release apk path": "app/build/outputs/apk/release/app-release.apk" in wf,
+        "no debug apk path": "apk/debug/app-debug.apk" not in wf,
+        "build step name": "Build release APK" in wf,
+        "badging versionCode 307": "versionCode='307'" in wf,
+        "badging versionName 0.3.7": "versionName='0.3.7'" in wf,
+        "artifact name": "FnCal-Android-release" in wf,
+        "mapping upload": "app/build/outputs/mapping/release/mapping.txt" in wf,
+        "TAG android-v0.3.7": "TAG=android-v0.3.7" in wf,
+        "OUT 0.3.7": "OUT=FnCal-Android-0.3.7.apk" in wf,
+        "signature pin": "SHA-256 digest: 0a7889854bb2e8a82153a15d59a348676d772a8a22f7c971cf98a7f1c08c3ace" in wf,
+    }
+    for label, good in checks.items():
+        if good:
+            ok("release workflow " + label)
+        else:
+            fail("release workflow missing " + label)
+
 def main() -> int:
     print("root:", ROOT)
     check_xml()
@@ -1604,6 +1633,7 @@ def main() -> int:
     check_widget_four_day_gutter()
     check_widget_agenda_frames()
     check_update_fallback()
+    check_release_workflow()
     check_update_install()
     check_server_version_refresh()
     check_gradle()

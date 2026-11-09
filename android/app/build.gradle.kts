@@ -11,11 +11,15 @@ android {
         applicationId = "com.paulcai1593.fncal.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 306
-        versionName = "0.3.6"
+        versionCode = 307
+        versionName = "0.3.7"
 
         // 外壳版本与 FnCal 服务端版本无关；UA 里带的是壳版本。
-        resValue("string", "fncal_shell_version", "0.3.6")
+        resValue("string", "fncal_shell_version", "0.3.7")
+
+        // 0.3.7（包体瘦身）：只保留中英两种语言资源。AGP 8.5.2 用新的
+        // resourceConfigurations；resConfigs 已弃用，别用。
+        resourceConfigurations += listOf("zh", "en")
     }
 
     signingConfigs {
@@ -35,7 +39,12 @@ android {
             signingConfig = signingConfigs.getByName("test")
         }
         release {
-            isMinifyEnabled = false
+            // 0.3.7（包体瘦身）：发布包改走 release，签名仍用固定测试 keystore，
+            // 保证 0.3.6 → 0.3.7 直接覆盖升级、证书指纹不变。
+            signingConfig = signingConfigs.getByName("test")
+            // R8 裁剪已跟踪不到的代码并压缩 dex；资源同样收缩（未引用的 res 移除）。
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
