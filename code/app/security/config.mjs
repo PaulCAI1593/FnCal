@@ -9,8 +9,14 @@ export const DEFAULT_HTTP_PORT = 5280;
 export const PORT_MIN = 1024;
 export const PORT_MAX = 65535;
 
+// 0.6.14：配置文件结构版本。1 = 会话默认值空闲 720 分钟 / 绝对 7 天；
+// 2 = 空闲 43200 分钟（30 天）/ 绝对 90 天。
+export const SECURITY_SCHEMA_VERSION = 2;
+// 旧版默认值：只用于把「从未改过的旧文件」识别出来并放宽，自定义值不碰。
+export const LEGACY_SESSION_DEFAULTS = Object.freeze({ idleMinutes: 720, absoluteDays: 7 });
+
 export const DEFAULT_SECURITY = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: SECURITY_SCHEMA_VERSION,
   https: {
     enabled: false,
     // 只读展示项：真实监听端口来自安装向导写的 config.port（0.2.14 P0-3）。
@@ -46,8 +52,8 @@ export const DEFAULT_SECURITY = Object.freeze({
     updatedAt: null,
   },
   session: {
-    idleMinutes: 720,
-    absoluteDays: 7,
+    idleMinutes: 43200,
+    absoluteDays: 90,
     revokeOnCredentialChange: true,
   },
   lockout: {
@@ -167,13 +173,24 @@ export function normalizeSecurity(raw = {}, { baseHttpPort = DEFAULT_HTTP_PORT, 
     updatedAt: typeof cert.updatedAt === 'string' ? cert.updatedAt : null,
   };
 
-  const idleMinutes = clampInt(session.idleMinutes, DEFAULT_SECURITY.session.idleMinutes, LIMITS.idleMinutes);
-  let absoluteDays = clampInt(session.absoluteDays, DEFAULT_SECURITY.session.absoluteDays, LIMITS.absoluteDays);
+  // 0.6.14 迁移：schemaVersion < 2（或缺省）的旧文件里，会话值等于旧默认值
+  // （720 / 7）说明用户从未改过，随新默认一起放宽；其它自定义值原样保留。
+  const sourceSchema = intOf(src.schemaVersion, 0);
+  const migrating = sourceSchema < SECURITY_SCHEMA_VERSION;
+  const rawSessionIdle = migrating && intOf(session.idleMinutes, NaN) === LEGACY_SESSION_DEFAULTS.idleMinutes
+    ? DEFAULT_SECURITY.session.idleMinutes
+    : session.idleMinutes;
+  const rawSessionAbsolute = migrating && intOf(session.absoluteDays, NaN) === LEGACY_SESSION_DEFAULTS.absoluteDays
+    ? DEFAULT_SECURITY.session.absoluteDays
+    : session.absoluteDays;
+
+  const idleMinutes = clampInt(rawSessionIdle, DEFAULT_SECURITY.session.idleMinutes, LIMITS.idleMinutes);
+  let absoluteDays = clampInt(rawSessionAbsolute, DEFAULT_SECURITY.session.absoluteDays, LIMITS.absoluteDays);
   // 绝对有效期不得短于空闲超时，否则空闲设置永远不生效。
   if (absoluteDays * 24 * 60 < idleMinutes) absoluteDays = Math.min(LIMITS.absoluteDays[1], Math.ceil(idleMinutes / (24 * 60)));
 
   return {
-    schemaVersion: 1,
+    schemaVersion: SECURITY_SCHEMA_VERSION,
     https: {
       enabled: boolOf(https.enabled, false),
       httpPort,
@@ -266,7 +283,18 @@ export function createSecurityStore({ file, logger = console, baseHttpPort = DEF
     try {
       const text = fs.readFileSync(target, 'utf8');
       const parsed = JSON.parse(text);
+      // 0.6.14：旧结构版本的文件读入后立刻回写，把新默认值固化到磁盘。
+      // 写回失败只告警，不能让启动失败（设置仍在内存里生效）。
+      const needsMigration = intOf(parsed && parsed.schemaVersion, 0) < SECURITY_SCHEMA_VERSION;
       current = normalizeSecurity(parsed, defaults);
+      if (needsMigration) {
+        try {
+          save(current);
+          logger.info?.('[security] 会话默认值迁移为 空闲 43200 分钟 / 绝对 90 天');
+        } catch (err) {
+          logger.warn?.(`[security] 会话默认值迁移写回失败：${err.message}`);
+        }
+      }
     } catch (err) {
       if (err && err.code !== 'ENOENT') {
         logger.warn?.(`[security] 读取安全设置失败，使用缺省值：${err.message}`);

@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto';
 import { eventFromIcs, eventToIcs, taskFromIcs, taskToIcs } from '../lib/ical.mjs';
 import { normalizeSettings } from '../lib/settings.mjs';
 import { currentContext } from '../lib/request-context.mjs';
+import { sendJsonEtag } from '../lib/etag.mjs';
 
 const DEFAULT_CALENDAR = 'default';
 const TASKS_CALENDAR = 'tasks';
@@ -410,7 +411,8 @@ export function createKvApi({ store }) {
     if (req.method === 'GET' && pathname === '/api/v1/kv') {
       const rawPattern = url.searchParams.get('pattern') || '';
       const prefix = (url.searchParams.get('prefix') || rawPattern.replace(/\*+$/, ''));
-      return json(res, 200, { ok: true, items: await listByPrefix(prefix) });
+      // 0.6.13 B：事件读取（cal:<id>:evt: 前缀）走这里，支持条件请求。
+      return sendJsonEtag(req, res, json, 200, { ok: true, items: await listByPrefix(prefix) });
     }
 
     const key = decodeURIComponent(pathname.slice('/api/v1/kv/'.length));

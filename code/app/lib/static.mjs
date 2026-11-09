@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:zlib';
 
 export const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -103,6 +104,63 @@ function isFile(file) {
   }
 }
 
+/**
+ * 0.6.12 B：静态文件在进程内压缩一次并缓存。
+ *
+ * 为什么不做「构建期生成 .gz/.br 随包发布」：用户要求安装包不能因为这次优化变大，
+ * 所以压缩件只存在于内存，包内不新增任何文件。
+ *
+ * 安全边界（写给后来人）：这一层只服务 `app/www` 下的静态文件。`/api/*`、CalDAV、
+ * MCP 的响应走各自的 `sendJson` / 流式写出，**不经过本模块**，永远不会被压缩
+ * （API 响应含会话信息，压缩会重新引入 BREACH 面）。
+ */
+const COMPRESSIBLE_EXT = new Set(['.html', '.js', '.css', '.json', '.svg', '.txt', '.webmanifest']);
+const COMPRESSION_CACHE_LIMIT = 8 * 1024 * 1024;
+
+function acceptsEncoding(req, token) {
+  const accept = String((req.headers && req.headers['accept-encoding']) || '').toLowerCase();
+  if (!accept) return false;
+  const m = new RegExp(`(?:^|,)\\s*${token}\\s*(?:;q=([0-9.]+))?`).exec(accept);
+  if (!m) return false;
+  return m[1] === undefined || Number(m[1]) > 0;
+}
+
+/** 0.6.12 B：br 质量 5（11 太慢）、gzip level 6；两者都预先算好，命中时不重复压。 */
+function compressBuffer(raw) {
+  return {
+    rawSize: raw.length,
+    gzip: gzipSync(raw, { level: 6 }),
+    br: brotliCompressSync(raw, {
+      params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 },
+    }),
+  };
+}
+
+/**
+ * 进程内压缩缓存。键 = 绝对路径 + size + mtimeMs（文件改了自然换键）；
+ * 内存里改写的 index.html / theme-prepaint.js 用内容哈希做键。
+ * 总量超过 8 MB 后只压缩、不再新增缓存，避免被大文件撑爆内存。
+ */
+function createCompressionCache({ limit = COMPRESSION_CACHE_LIMIT } = {}) {
+  const entries = new Map();
+  const stats = { hits: 0, misses: 0, bytes: 0 };
+  function get(key, build) {
+    const hit = entries.get(key);
+    if (hit) {
+      stats.hits += 1;
+      return hit;
+    }
+    stats.misses += 1;
+    const value = build();
+    if (value && stats.bytes + value.rawSize <= limit) {
+      entries.set(key, value);
+      stats.bytes += value.rawSize;
+    }
+    return value;
+  }
+  return { get, stats: () => ({ ...stats, entries: entries.size }) };
+}
+
 function cacheControlFor(relative) {
   const rel = relative.split(path.sep).join('/');
   if (rel === 'index.html') return 'no-cache';
@@ -170,10 +228,14 @@ export function externalizeInlineScripts(indexHtml, basePath = '') {
   return { html: versioned, prepaint, hash };
 }
 
-export function createStaticHandler({ webDir, frameAncestors = "'self'", logger = null, version = '', basePath = '' }) {
+export function createStaticHandler({
+  webDir, frameAncestors = "'self'", logger = null, version = '', basePath = '',
+  compressionLimit = COMPRESSION_CACHE_LIMIT,
+}) {
   const root = path.resolve(webDir);
   const indexFile = path.join(root, 'index.html');
   const csp = buildCsp(frameAncestors);
+  const compression = createCompressionCache({ limit: compressionLimit });
   const basePrefix = String(basePath || '').replace(/\/+$/, '');
   const prepaintPath = `${basePrefix}/theme-prepaint.js`;
   // The SPA shell is transformed once at startup: inline script(s) -> one
@@ -197,14 +259,29 @@ export function createStaticHandler({ webDir, frameAncestors = "'self'", logger 
     };
   }
 
-  function sendBuffer(req, res, body, { status = 200, type, cache = 'no-cache' } = {}) {
-    const payload = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
+  function sendBuffer(req, res, body, { status = 200, type, cache = 'no-cache', compressKey = '' } = {}) {
+    let payload = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
     const headers = {
       'Content-Type': type,
-      'Content-Length': payload.length,
       'Cache-Control': cache,
       ...securityHeaders(),
     };
+    if (compressKey) {
+      headers.Vary = 'Accept-Encoding';
+      const wants = acceptsEncoding(req, 'br') || acceptsEncoding(req, 'gzip');
+      if (wants) {
+        const hash = createHash('sha1').update(payload).digest('hex');
+        const encoded = compression.get(`mem:${compressKey}:${payload.length}:${hash}`, () => compressBuffer(payload));
+        if (encoded && acceptsEncoding(req, 'br')) {
+          headers['Content-Encoding'] = 'br';
+          payload = encoded.br;
+        } else if (encoded && acceptsEncoding(req, 'gzip')) {
+          headers['Content-Encoding'] = 'gzip';
+          payload = encoded.gzip;
+        }
+      }
+    }
+    headers['Content-Length'] = payload.length;
     if (version) headers['X-FnCal-Version'] = version;
     res.writeHead(status, headers);
     if (req.method === 'HEAD') res.end();
@@ -221,28 +298,54 @@ export function createStaticHandler({ webDir, frameAncestors = "'self'", logger 
         status: 404, type: 'text/plain; charset=utf-8', cache: 'no-cache',
       });
     }
+    let payload = body;
     const headers = {
       'Content-Type': contentTypeFor(file),
-      'Content-Length': body.length,
       'Cache-Control': cache || cacheControlFor(path.relative(root, file)),
       ...securityHeaders(),
     };
+    if (COMPRESSIBLE_EXT.has(path.extname(file).toLowerCase())) {
+      headers.Vary = 'Accept-Encoding';
+      const wants = acceptsEncoding(req, 'br') || acceptsEncoding(req, 'gzip');
+      if (wants) {
+        let stat = null;
+        try {
+          stat = statSync(file);
+        } catch {
+          stat = null;
+        }
+        // 键含 size + mtimeMs：构建替换资源后旧缓存自然失效。
+        const key = `${file}\u0000${stat ? stat.size : body.length}\u0000${stat ? stat.mtimeMs : 0}`;
+        const encoded = compression.get(key, () => compressBuffer(body));
+        if (encoded && acceptsEncoding(req, 'br')) {
+          headers['Content-Encoding'] = 'br';
+          payload = encoded.br;
+        } else if (encoded && acceptsEncoding(req, 'gzip')) {
+          headers['Content-Encoding'] = 'gzip';
+          payload = encoded.gzip;
+        }
+      }
+    }
+    headers['Content-Length'] = payload.length;
     if (version) headers['X-FnCal-Version'] = version;
     res.writeHead(status, headers);
     if (req.method === 'HEAD') res.end();
-    else res.end(body);
+    else res.end(payload);
     return status;
   }
 
   async function sendIndex(req, res, { status = 200, cache = 'no-cache' } = {}) {
     if (!indexHtml) return sendFile(req, res, indexFile, { status: 404, cache: 'no-cache' });
-    return sendBuffer(req, res, indexHtml, { status, type: 'text/html; charset=utf-8', cache });
+    return sendBuffer(req, res, indexHtml, {
+      status, type: 'text/html; charset=utf-8', cache, compressKey: 'index.html',
+    });
   }
 
   /** The externalized first-paint script (M3.8). Stable URL, content-hashed query. */
   function sendPrepaint(req, res) {
     return sendBuffer(req, res, prepaintJs, {
       status: 200, type: 'text/javascript; charset=utf-8', cache: 'no-cache',
+      compressKey: 'theme-prepaint.js',
     });
   }
 
@@ -304,5 +407,5 @@ export function createStaticHandler({ webDir, frameAncestors = "'self'", logger 
     return sendIndex(req, res, { status: 200 });
   }
 
-  return { handle, webDir: root, csp };
+  return { handle, webDir: root, csp, compressionStats: () => compression.stats() };
 }

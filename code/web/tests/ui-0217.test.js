@@ -416,27 +416,27 @@ describe('0.2.17 B4 周数算法联动 + 快捷键清单', () => {
     expect(rowByLabel(opened.dialog, '周数算法').hidden).toBe(false);
   });
 
-  it('「快捷键」是第 4 个页签，13 条键位直接平铺（0.2.20 E14：不再弹窗）', () => {
+  it('0.6.15：快捷键不再占设置页签；13 条键位改在头像菜单打开的对话框里', async () => {
     opened = openAccountDialog({
       user: { username: 'alice', displayName: 'Alice', role: 'user' },
       store: makeStore({}),
     });
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
-    // 0.3.0（P4）：五个页签，快捷键仍在最后。
-    // 0.6.2：桌面卡片跟随 App 登录态，不再单独发令牌——「卡片」页签删除，快捷键仍是最后一个。
-    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4，快捷键仍是最后一个。
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
-    tabs[3].click();
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4。
+    // 0.6.15（用户）：快捷键页签搬到头像菜单，设置回到三页签。
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', 'CalDAV', 'AI']);
+    expect(dialog.querySelector('#settings-tab-shortcuts')).toBeNull();
+    expect(dialog.querySelector('#settings-page-shortcuts')).toBeNull();
 
-    const page = dialog.querySelector('#settings-page-shortcuts');
-    expect(page).toBeTruthy();
-    expect(page.hidden).toBe(false);
-    // 旧入口（弹窗 + 「查看快捷键」按钮）已删除
-    expect(document.querySelector('.settings-shortcuts')).toBeNull();
-    expect([...dialog.querySelectorAll('button')].some((b) => b.textContent === '查看快捷键')).toBe(false);
+    const { openShortcutsDialog } = await import('../src/js/shortcuts-dialog.js');
+    const shortcuts = openShortcutsDialog();
+    const modal = shortcuts.dialog;
+    expect(modal.classList.contains('shortcuts-modal')).toBe(true);
+    expect(modal.querySelector('.modal__title').textContent).toBe('快捷键');
+    expect(modal.querySelector('.settings__hint').textContent).toBe(t('shortcuts.hint'));
 
-    const rows = [...page.querySelectorAll('.shortcuts__row')];
+    const rows = [...modal.querySelectorAll('.shortcuts__row')];
     expect(rows).toHaveLength(13);
     expect(rows.map((r) => r.querySelector('.shortcuts__key').textContent)).toEqual([
       '/',
@@ -459,6 +459,10 @@ describe('0.2.17 B4 周数算法联动 + 快捷键清单', () => {
       expect(desc.length).toBeGreaterThan(0);
       expect(desc).not.toContain('shortcuts.');
     }
+    // 旧入口（「查看快捷键」按钮）已删除
+    expect([...modal.querySelectorAll('button')].some((b) => b.textContent === '查看快捷键')).toBe(false);
+    shortcuts.close();
+    expect(document.querySelector('.shortcuts-modal')).toBeNull();
   });
 });
 

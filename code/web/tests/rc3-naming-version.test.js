@@ -113,9 +113,11 @@ describe('B4 版本可自证', () => {
     const sw = read('public/sw.js');
     expect(sw).toMatch(/fncal-shell-v\d+/);
   });
-  it('版本号由 /api/version 取得，不在前端源码写死', () => {
+  it('版本号由 /api/bootstrap 取得，不在前端源码写死', () => {
+    // 0.6.12 起：版本与健康合并成一次请求；旧的 /api/version 仍留给安卓与外部调用者。
     const v = read('src/js/app-version.js');
-    expect(v).toContain("'/api/version'");
+    expect(v).toContain("'/api/bootstrap'");
+    expect(v).not.toContain("'/api/version'");
     expect(v).not.toMatch(/version\s*[:=]\s*['\"]0\.2\./);
   });
   it('设置页脚显示「FnCal <version>」', () => {

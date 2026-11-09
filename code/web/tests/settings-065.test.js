@@ -58,6 +58,17 @@ const tick = async (n = 6) => {
   for (let i = 0; i < n; i += 1) await Promise.resolve();
 };
 
+// 0.6.13（首包拆分）：AI 页改为 `import()`，等数据就绪标记出现再断言。
+const aiReady = async (dialog) => {
+  for (let i = 0; i < 100; i++) {
+    const host = dialog.querySelector('#settings-page-ai');
+    if (host && host.dataset.loaded === 'true') return;
+    await tick();
+    // 动态 import 要走真实任务队列，只 microtask 转圈会在模块到达前用完次数。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+};
+
 function makeStore() {
   const state = { ...DEFAULT_SETTINGS };
   const calendars = [
@@ -141,6 +152,7 @@ describe('0.6.5 · 权限独立提示与凭据编辑器', () => {
 
     dialog.querySelector('#settings-tab-ai').click();
     await tick();
+    await aiReady(dialog);
     const aiPage = dialog.querySelector('#settings-page-ai');
     const aiHints = aiPage.querySelectorAll('.permission-hint');
     expect(aiHints.length).toBe(1);
@@ -177,6 +189,7 @@ describe('0.6.5 · 权限独立提示与凭据编辑器', () => {
     await tick();
     dialog.querySelector('#settings-tab-ai').click();
     await tick();
+    await aiReady(dialog);
     const edit = dialog.querySelector('.ai-cred-edit');
     edit.click();
     await tick(8);
@@ -204,6 +217,7 @@ describe('0.6.5 · 权限独立提示与凭据编辑器', () => {
     await tick();
     dialog.querySelector('#settings-tab-ai').click();
     await tick();
+    await aiReady(dialog);
     dialog.querySelector('.ai-cred-edit').click();
     await tick(8);
     const editor = dialog.querySelector('.ai-editor');
@@ -224,6 +238,7 @@ describe('0.6.5 · 权限独立提示与凭据编辑器', () => {
     await tick();
     dialog.querySelector('#settings-tab-ai').click();
     await tick();
+    await aiReady(dialog);
     const newBtn = dialog.querySelector('.ai-new-cred');
     expect(newBtn.disabled).toBe(false);
     newBtn.click();

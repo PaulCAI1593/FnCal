@@ -233,6 +233,14 @@ function errorFromResponse(res, payload) {
   return new ApiError(message, options);
 }
 
+// 0.6.13 B：GET 条件请求的客户端缓存（键 = 路径 + 查询参数）。
+// 服务端 200 带 ETag，重复读取带 If-None-Match；304 直接复用上次解析结果。
+// 写请求成功（或发起）前清空，避免「刚改完还读旧值」。
+const ETAG_CACHE = new Map();
+export function __clearApiCacheForTest() {
+  ETAG_CACHE.clear();
+}
+
 /**
  * 底层请求。
  * @param {string} path 以 `/api/v1` 开头的同源路径
@@ -253,7 +261,13 @@ export async function apiRequest(path, options = {}) {
   if (mutating) {
     if (!csrfToken) await ensureCsrfToken();
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+    // 0.6.13 B：写操作先失效条件请求缓存。
+    ETAG_CACHE.clear();
   }
+
+  const cacheKey = method === 'GET' ? path : '';
+  const cached = cacheKey ? ETAG_CACHE.get(cacheKey) : null;
+  if (cached) headers['If-None-Match'] = cached.etag;
 
   let res;
   try {
@@ -269,11 +283,21 @@ export async function apiRequest(path, options = {}) {
     throw new ApiError(t('error.network'), { status: 0, code: 'network' });
   }
 
+  // 304：没有正文，复用上次解析结果。
+  if (res.status === 304) {
+    if (cached) return cached.payload;
+    return null;
+  }
+
   const payload = await parseBody(res);
   if (!res.ok) {
     const error = errorFromResponse(res, payload);
     if (res.status === 401 && authRedirect) handleUnauthorized();
     throw error;
+  }
+  if (cacheKey) {
+    const etag = res.headers.get('etag');
+    if (etag) ETAG_CACHE.set(cacheKey, { etag, payload });
   }
   return payload;
 }

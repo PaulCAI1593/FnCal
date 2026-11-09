@@ -1,5 +1,5 @@
 /**
- * 设置对话框（0.2.0 B3 三页签；0.3.0 P4 起五页签：一般 / 日历 / CalDAV / AI / 快捷键）。
+ * 设置对话框（0.2.0 B3 三页签；0.6.15 起回到三页签：一般 / CalDAV / AI）。
  *
  * 覆盖：三页签切换与键盘、一般页/日历页即时保存、改密前端校验、旧密码 401
  * 留在表单（不触发全局登出）、改密成功提示、普通用户看不到「账号管理」、
@@ -105,8 +105,9 @@ describe('设置对话框', () => {
     const tabs = [...dialog.querySelectorAll('[role="tab"]')].map((n) => n.textContent);
     // 0.3.0（P4）：第 3 枚文案收短为「CalDAV」，第 4 枚新增「AI」。
     // 0.6.2：桌面卡片改为跟随 App 登录态，0.6.0 的第 5 枚「卡片」页签删除。
-    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4，快捷键仍是最后。
-    expect(tabs).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4。
+    // 0.6.15（用户）：快捷键页签搬到头像菜单，设置回到三页签。
+    expect(tabs).toEqual(['一般', 'CalDAV', 'AI']);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(false);
     expect(dialog.querySelector('#settings-page-account').hidden).toBe(true);
     expect(dialog.querySelector('.settings__page--calendar')).toBeNull();

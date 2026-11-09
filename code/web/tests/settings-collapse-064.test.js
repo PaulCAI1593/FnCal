@@ -70,19 +70,20 @@ describe('0.6.4 设置页签收拢', () => {
     opened = null;
   });
 
-  it('页签 5→4：一般 / CalDAV / AI / 快捷键，DOM 里没有日历页签与日历页', () => {
+  it('页签 5→4→3：一般 / CalDAV / AI，DOM 里没有日历页签、日历页与快捷键页签', () => {
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
-    expect(tabs.map((b) => b.textContent.trim())).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
+    // 0.6.15（用户）：快捷键搬到头像菜单，设置退回三页签；`settings-tab-shortcuts` 同时删除。
+    expect(tabs.map((b) => b.textContent.trim())).toEqual(['一般', 'CalDAV', 'AI']);
     expect(tabs.map((b) => b.id)).toEqual([
       'settings-tab-general',
       'settings-tab-account',
       'settings-tab-ai',
-      'settings-tab-shortcuts',
     ]);
     expect(dialog.querySelector('#settings-tab-calendar')).toBeNull();
     expect(dialog.querySelector('#settings-page-calendar')).toBeNull();
-    expect(dialog.querySelectorAll('.settings__pages > .settings__page').length).toBe(4);
+    expect(dialog.querySelector('#settings-tab-shortcuts')).toBeNull();
+    expect(dialog.querySelectorAll('.settings__pages > .settings__page').length).toBe(3);
   });
 
   it('CalDAV 页：日历表格在最上面，CalDAV 地址区在其后（DOM 顺序）', () => {

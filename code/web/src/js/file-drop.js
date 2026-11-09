@@ -1,4 +1,5 @@
-import { openImportDialog } from './data-io.js';
+// 0.6.13（首包拆分）：导入弹窗按需加载；drop 里先把 File 同步取出来，
+// 再 `import()`，文件对象不会因为异步而失效。
 import { toast } from './toast.js';
 import { t } from '../i18n/index.js';
 
@@ -48,7 +49,9 @@ export function bindCalendarFileDrop(calendar, { store, canImport }) {
       toast(t('fileDrop.chooseFile'), { variant: 'danger' });
       return;
     }
-    openImportDialog({ store, file });
+    void import('./data-io.js')
+      .then((mod) => mod.openImportDialog({ store, file }))
+      .catch(() => toast(t('common.loadFailed'), { variant: 'danger' }));
   }
 
   const listeners = { dragenter: enter, dragleave: leave, dragover: over, drop, dragend: reset };

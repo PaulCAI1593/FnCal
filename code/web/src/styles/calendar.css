@@ -1982,6 +1982,12 @@ label,
 .security-loading {
   padding: 4px 0;
 }
+/* 0.6.13（首包拆分）：设置「AI」页第一次打开时模块还没到，先占 6 条骨架，
+   高度与真实分区接近，避免点开页签看到一块空白。 */
+.settings-skeleton {
+  padding: 20px var(--sp-4) 0;
+}
+
 /* 0.3.8：分区整体容器（加载期隐藏，避免只出现标题的空壳）。 */
 .security-sections {
   display: flex;
@@ -2510,7 +2516,9 @@ label,
 }
 .shortcuts__key {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: var(--fs-xs);
+  /* 0.6.15：键位清单从设置页签搬进头像菜单的对话框，手机上成为主入口；
+     键帽字号从 --fs-xs（11px）提到 --fs-sm（12px），与说明同档、不再低于可读下限。 */
+  font-size: var(--fs-sm);
   min-width: 28px;
   padding: 2px 6px;
   border: 1px solid var(--border);

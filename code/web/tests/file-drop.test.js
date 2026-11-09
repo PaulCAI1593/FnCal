@@ -49,7 +49,8 @@ describe('calendar file drops', () => {
     const drop = drag(child, 'drop', { files: [calendarFile()] });
     expect(drop.defaultPrevented).toBe(true);
     expect(calendar.classList.contains('is-file-drop-target')).toBe(false);
-    expect(document.querySelector('.io-modal')).not.toBeNull();
+    // 0.6.13 起：data-io.js 按需 import，弹窗会晚一拍出现，等它挂上再断言。
+    await vi.waitFor(() => expect(document.querySelector('.io-modal')).not.toBeNull());
     await vi.waitFor(() => expect(store.importEvents).toHaveBeenCalledTimes(1));
     expect(store.importEvents.mock.calls[0][0][0]).toMatchObject({
       title: 'Dropped meeting',
@@ -61,6 +62,8 @@ describe('calendar file drops', () => {
 
   it('rejects additional drops while the import dialog is open', async () => {
     drag(child, 'drop', { files: [calendarFile()] });
+    // 0.6.13 起：先等懒加载的导入弹窗出现，再模拟第二次拖入。
+    await vi.waitFor(() => expect(document.querySelector('.io-modal')).not.toBeNull());
     drag(child, 'drop', { files: [calendarFile()] });
     await vi.waitFor(() => expect(store.importEvents).toHaveBeenCalledTimes(1));
     expect(document.querySelectorAll('.io-modal')).toHaveLength(1);

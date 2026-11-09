@@ -4,8 +4,8 @@
 //   uid  account id
 //   tv   account tokenVersion at issue time (password change / disable bumps it)
 //   iat  issued-at, epoch ms
-//   exp  absolute expiry, epoch ms（0.2.13：默认 7 天，管理端可配）
-//   idle idle expiry, epoch ms（0.2.13：默认 12 小时无操作即失效）
+//   exp  absolute expiry, epoch ms（0.2.13 起由「我的安全」决定；0.6.14 默认 90 天）
+//   idle idle expiry, epoch ms（0.6.14 默认 30 天无操作才失效；旧文件按迁移规则）
 //   mfa  1 = 已通过密码、尚未通过 TOTP 的受限会话（仅允许改密与验证 TOTP）
 //   sid  0.6.1：服务端会话记录 id（`lib/session-store.mjs`）；撤销后校验直接 401。
 //        受限 mfa 会话不带 sid（尚未成为正式会话）。

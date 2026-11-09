@@ -22,6 +22,8 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { sendJsonEtag } from '../lib/etag.mjs';
+
 const MAX_BODY_BYTES = 64 * 1024;
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
@@ -183,7 +185,8 @@ export function createCalendarsApi({ store, logger = null, config = {}, version 
 
   async function handleList(req, res, url) {
     if (req.method !== 'GET') return json(res, 405, { ok: false, code: 'method_not_allowed' });
-    return json(res, 200, { ok: true, calendars: await listCalendars(url) });
+    // 0.6.13 B：日历列表支持条件请求（ETag / If-None-Match → 304 无正文）。
+    return sendJsonEtag(req, res, json, 200, { ok: true, calendars: await listCalendars(url) });
   }
 
   async function handleCreate(req, res) {

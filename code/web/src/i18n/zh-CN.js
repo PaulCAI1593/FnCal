@@ -98,6 +98,8 @@ export const zhCN = {
   // 0.3.8（v1.1 安全界面接线，M12 §1.2）：头像菜单的两枚安全入口。
   'menu.mySecurity': '我的安全',
   'menu.securitySettings': '安全设置',
+  // 0.6.15（用户）：快捷键入口从设置页签搬到头像菜单，位于安全入口与「立即同步」之间。
+  'menu.shortcuts': '快捷键',
   'toast.synced': '已同步（{time}）',
   'toast.syncFailed': '同步失败，请稍后重试',
   'toast.syncOffline': '已离线，无法同步',
@@ -226,6 +228,8 @@ export const zhCN = {
   /* ---- 搜索 ---- */
   'search.placeholder': '搜索事件与任务……',
   'search.aria': '搜索事件与任务',
+  // 0.6.13（首包拆分）：搜索模块改为按需 `import()`，载入失败要能看见原因与重试。
+  'search.loadFailed': '搜索加载失败，请检查网络后重试',
   // 0.2.11（C10）：顶栏折叠态的胶囊文案（点开后填满固定槽位）。
   'search.open': '搜索',
   'search.results': '搜索结果',
@@ -257,6 +261,8 @@ export const zhCN = {
   'common.add': '添加',
   'common.copy': '复制',
   'common.retry': '重试',
+  // 0.6.13：懒加载模块（管理员用户管理）失败时的通用提示。
+  'common.loadFailed': '加载失败，请重试',
   'common.loading': '正在加载……',
 
   /* ---- 事件编辑弹窗（本轮只接外壳，长尾见 TODO.md） ---- */
@@ -603,6 +609,8 @@ export const zhCN = {
   // 两档 aria-label/title：空态「AI 提案」；有待审批时带条数。红点已删，
   // 所以不再有 toolbar.settingsWithPending。
   'toolbar.proposals': 'AI 提案',
+  // 0.6.13（首包拆分）：提案列表模块改为按需载入，失败给提示 + 重试。
+  'proposals.loadFailed': '提案加载失败，请检查网络后重试',
   // 0.5.4（U6）：手机底栏第一项的可见文字与读屏名（用户口径：写「提案」，不写「通知」）。
   'tabbar.proposals': '提案',
   // 0.5.4（U6）：底栏视图按钮的读屏名要带上「当前视图」，可见文字仍是视图名本身。
@@ -655,9 +663,8 @@ export const zhCN = {
   // 窄屏就是它把页签撑爆的），第 4 枚新增「AI」。
   'settings.tab.account': 'CalDAV',
   'settings.tab.ai': 'AI',
-  // 0.3.7（用户 m00779 / 规范 M11 §6）：AI 页签红点的可访问名。页签可见文字
-  // 恒为「AI」；n=0 时移除 aria-label，回落成文本名。
-  'settings.tab.shortcuts': '快捷键',
+  // 0.6.15（用户）：快捷键不再是设置页签（搬到头像菜单），`settings.tab.shortcuts` 随之删除；
+  // 菜单文案用 `menu.shortcuts`，清单说明仍是 `shortcuts.*`。
   // ---- 0.3.0（P4）：设置 → 「AI」页签（文案与键名照 design/M8-AI接入设置页-规范.md §7）----
   'settings.ai.title': 'AI 接入',
   'settings.ai.service': '服务',
@@ -1262,9 +1269,9 @@ export const zhCN = {
   'security.action.confirm': '确认',
   'security.action.close': '关闭',
   'security.session.idle': '会话空闲超时（分钟）',
-  'security.session.idleHint': '默认 720（12 小时）；长时间无操作后自动失效。',
+  'security.session.idleHint': '默认 43200（30 天）；长时间无操作后自动失效。',
   'security.session.absolute': '会话绝对有效期（天）',
-  'security.session.absoluteHint': '默认 7 天；到期后必须重新登录。',
+  'security.session.absoluteHint': '默认 90 天；到期后必须重新登录。',
   'security.session.revoke': '改密/改权限/停用后吊销其他会话',
   'security.session.revokeHint': '默认开启：账号凭据变化时其他设备立即掉线。',
   'security.lockout.maxFailures': '登录失败锁定阈值',

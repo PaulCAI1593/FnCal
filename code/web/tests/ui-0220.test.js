@@ -745,19 +745,17 @@ describe('0.2.20 E13–E16：设置页', () => {
     expect(i18n).not.toContain("'settings.admin.hint'");
   });
 
-  it('E14：快捷键是第 4 个页签，13 条直接平铺', async () => {
+  it('0.6.15（用户）：快捷键不再是设置页签，改由头像菜单打开对话框', async () => {
     const dialog = await openSettings({});
     const tabs = [...dialog.querySelectorAll('.settings__tabs [role="tab"]')].map((b) => b.textContent);
-    // 0.3.0（P4）：五个页签（CalDAV 文案收短、新增 AI）
-    // 0.6.2：删除「卡片」页签（卡片改用 App 会话），快捷键回到第 5 位、仍是最后一个。
-    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，五个变四个，快捷键是第 4 枚（索引 3）。
-    expect(tabs).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
-    [...dialog.querySelectorAll('.settings__tabs [role="tab"]')][3].click();
-    const page = dialog.querySelector('#settings-page-shortcuts');
-    expect(page).toBeTruthy();
-    expect(page.hidden).toBe(false);
-    expect(page.querySelectorAll('dt')).toHaveLength(13);
-    // 旧的弹窗入口已不存在
+    // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，五个变四个。
+    // 0.6.15（用户）：快捷键搬到头像菜单，设置回到三页签，第 4 页签与页面一起删除。
+    expect(tabs).toEqual(['一般', 'CalDAV', 'AI']);
+    expect(dialog.querySelector('#settings-page-shortcuts')).toBeNull();
+    // 键位清单搬进独立模块，设置对话框不再持有
+    const shortcuts = READ('src/js/shortcuts-dialog.js');
+    expect(shortcuts).toContain('openShortcutsDialog');
+    expect(shortcuts.match(/descKey:/g)).toHaveLength(13);
     expect(dialogJs).not.toContain('openShortcutsDialog');
   });
 

@@ -63,8 +63,19 @@ function safeEqual(left, right) {
   return timingSafeEqual(a, b);
 }
 
+/* 0.6.15：终态页的「关闭页面」按钮要一段内联脚本。默认 CSP 是 default-src 'none'，
+   所以只有页面里出现这个占位符时，才按请求生成 nonce 并补 script-src；其余页面
+   （含已有自己 nonce 的 PIN 页）CSP 与原来逐字一致。 */
+const CLOSE_NONCE_TOKEN = '__fncal_close_nonce__';
+
 function sendHtml(res, status, html, extraHeaders = {}) {
-  const body = Buffer.from(html, 'utf8');
+  const needsNonce = html.includes(CLOSE_NONCE_TOKEN);
+  const nonce = needsNonce ? randomBytes(16).toString('base64') : '';
+  const payload = needsNonce ? html.split(CLOSE_NONCE_TOKEN).join(nonce) : html;
+  const body = Buffer.from(payload, 'utf8');
+  const csp = needsNonce
+    ? `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`
+    : "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
   res.writeHead(status, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': body.length,
@@ -73,8 +84,7 @@ function sendHtml(res, status, html, extraHeaders = {}) {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     // 零第三方资源、零出站请求：样式只在页面内；表单只回本站。
-    'Content-Security-Policy':
-      "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    'Content-Security-Policy': csp,
     ...extraHeaders,
   });
   res.end(body);
@@ -468,6 +478,25 @@ h1 { font-size: 20px; line-height: 1.3; margin: 6px 0 4px; font-weight: 650; }
   .pin-boxes { gap: 8px; }
   .pin-cell { width: 52px; height: 52px; flex-basis: 52px; line-height: 52px; font-size: 22px; }
 }
+/* 0.6.15：终态页「关闭页面」。卡片内容之后、水平居中；距上方内容 20px，
+   距卡片下沿 20px（.glass 自身 padding 16px，这里再留 4px）。 */
+.page-close {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0 4px;
+}
+.page-close .btn { padding: 0 20px; }
+.page-close [hidden] { display: none; }
+.page-close__hint {
+  margin: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-md);
+  color: var(--text-2);
+  text-align: center;
+}
 `;
 
 // 0.4.26（S13–S15）：每个请求的主题（accent 变量 + data-theme）放进 AsyncLocalStorage，
@@ -530,6 +559,42 @@ const PIN_SCRIPT = `
   }
 })();
 `;
+
+/* ---------- 0.6.15：终态页「关闭页面」 ---------- */
+// 用户口径：卡片内容之后、居中、次要按钮。点一次关不掉就隔 300ms 再试一次
+// （window.open('', '_self') + close() 常被脚本打开的标签页放行）；仍关不掉时
+// 隐藏按钮、在原位给一行「请手动关闭此标签页」，不弹 alert、不跳转、不改数据。
+// 只出现在终态页：全部处理完的队列、已处理完、链接无效/过期/作废/已达上限等说明页。
+// PIN 页与还有待处理卡片的队列不加：那里误关会打断审批。
+const CLOSE_SCRIPT = `
+(function () {
+  var button = document.querySelector('[data-close-page]');
+  var hint = document.querySelector('[data-close-hint]');
+  if (!button) return;
+  var fallback = function () {
+    button.hidden = true;
+    if (hint) hint.hidden = false;
+  };
+  button.addEventListener('click', function () {
+    try { window.close(); } catch (error) { /* 浏览器可能拒绝，按下一步重试 */ }
+    window.setTimeout(function () {
+      if (window.closed) return;
+      try { window.open('', '_self'); } catch (error) { /* 忽略 */ }
+      try { window.close(); } catch (error) { /* 忽略 */ }
+      window.setTimeout(function () {
+        if (!window.closed) fallback();
+      }, 120);
+    }, 300);
+  });
+})();
+`;
+
+function closePageBlock() {
+  return '<div class="page-close" data-close-block>'
+    + '<button class="btn" type="button" data-close-page aria-label="关闭页面">关闭页面</button>'
+    + '<p class="page-close__hint" data-close-hint hidden>请手动关闭此标签页</p>'
+    + `</div><script nonce="${CLOSE_NONCE_TOKEN}">${CLOSE_SCRIPT}</script>`;
+}
 
 /* ---------- 0.4.26（S7）/ 0.4.27（S2）：时间按服务端时区显示 ---------- */
 // 审批页是独立服务端 HTML，拿不到浏览器时区。按范围文档 S7：用服务端时区（默认
@@ -747,14 +812,18 @@ function renderCardsPage({
     + '</div></div>'
     + impact
     + (banner ? `<div class="ai-banner" role="status">${banner}</div>` : '')
-    + `<div class="ai-section__body">\n${cards.join('\n')}\n</div>`;
+    + `<div class="ai-section__body">\n${cards.join('\n')}\n</div>`
+    + (Number(remaining) === 0 ? closePageBlock() : '');
   return pageShell({ title: '提案队列 · FnCal', body });
 }
 
-function renderMessagePage(httpStatus, message, { title = '审批提案', hint = '' } = {}) {
+// 0.6.15：关闭按钮只在「待确认 0 条」时输出。说明页默认不加，由终态调用方显式打开；
+// 表单校验失败/500 这类页面可能仍带待确认提案，加了会诱导用户误关、打断审批。
+function renderMessagePage(httpStatus, message, { title = '审批提案', hint = '', withClose = false } = {}) {
   const body = '<p class="brand">FnCal</p>\n' + `<h1>${escapeHtml(title)}</h1>\n`
     + `<p class="lede">${escapeHtml(message)}</p>`
-    + (hint ? `<p class="hint">${escapeHtml(hint)}</p>` : '');
+    + (hint ? `<p class="hint">${escapeHtml(hint)}</p>` : '')
+    + (withClose ? closePageBlock() : '');
   return pageShell({ title: `${title} · FnCal`, body });
 }
 function bannerForSingle(verb, view, decision) {
@@ -856,6 +925,8 @@ export function createApprovalPage({
     sendHtml(res, httpStatus, renderMessagePage(httpStatus, message, {
       title: titles[state] || '链接无效',
       hint: '审批链接只在本机有效，10 分钟内可用。',
+      // 这些状态一律没有待确认条目：给「关闭页面」。
+      withClose: true,
     }));
   }
 
@@ -964,7 +1035,7 @@ export function createApprovalPage({
       if (!cards.length) {
         sendHtml(res, 200, renderMessagePage(200,
           '这些提案已经不在了：可能已被处理，或已过期。',
-          { title: '没有待处理的提案', hint: '请回到 AI 助手重新发起批准。' }));
+          { title: '没有待处理的提案', hint: '请回到 AI 助手重新发起批准。', withClose: true }));
         return;
       }
       sendHtml(res, 200, renderCardsPage({
@@ -984,13 +1055,13 @@ export function createApprovalPage({
     if (!pending && !cards.length) {
       sendHtml(res, 200, renderMessagePage(200,
         '这些提案已经不在了：可能已被处理，或已过期。',
-        { title: '没有待处理的提案', hint: '请回到 AI 助手重新发起批准。' }));
+        { title: '没有待处理的提案', hint: '请回到 AI 助手重新发起批准。', withClose: true }));
       return;
     }
     if (!pending) {
       sendHtml(res, 200, renderMessagePage(200,
         '这批提案已经全部处理完，审批链接已失效。',
-        { title: '已处理完', hint: '请回到 AI 助手查看结果。' }));
+        { title: '已处理完', hint: '请回到 AI 助手查看结果。', withClose: true }));
       return;
     }
     sendHtml(res, 200, renderCardsPage({

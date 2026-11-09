@@ -687,6 +687,22 @@
   padding: var(--sp-3);
   padding-top: 0;
 }
+/* 0.6.13（首包拆分）：提案列表模块按需载入；等待期用骨架占位，
+   高度与列表首屏接近，浮层定位不会先塌再跳。 */
+.proposals-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+}
+.proposals-loading__skeleton {
+  gap: var(--sp-2);
+}
+.proposals-loading__text {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
 .popover__header {
   padding: var(--sp-3);
   display: flex;

@@ -129,6 +129,17 @@ const tick = async () => {
   await Promise.resolve();
   await Promise.resolve();
 };
+// 0.6.13（首包拆分）：AI 页模块改为 `import()`，点页签后要等它挂载并拉完首屏数据。
+// account-dialog 在 `refresh()` 成功后给外壳写 `data-loaded="true"`，按它等最稳。
+const aiReady = async (dialog) => {
+  for (let i = 0; i < 100; i++) {
+    const host = dialog.querySelector('#settings-page-ai');
+    if (host && host.dataset.loaded === 'true') return;
+    await tick();
+    // 动态 import 要走真实任务队列，只 microtask 转圈会在模块到达前用完次数。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+};
 
 /** 0.4.23（S11）：PIN 区块只在「允许代办批准」打开后出现；打开要先过一次确认。 */
 async function enableAgentApproval(editor) {
@@ -183,21 +194,23 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
   async function openAiTab(dialog) {
     dialog.querySelector('#settings-tab-ai').click();
     await tick();
+    await aiReady(dialog);
+    await aiReady(dialog);
   }
 
-  it('四个页签：顺序是 一般 / CalDAV / AI / 快捷键，文案不裁', () => {
+  it('三个页签：顺序是 一般 / CalDAV / AI，文案不裁', () => {
     const dialog = open();
     const buttons = [...dialog.querySelectorAll('.settings__tabs button')];
-    // 0.6.2：删除「卡片」页签（卡片跟随 App 登录态，不再发令牌）；仍是五个页签。
+    // 0.6.2：删除「卡片」页签（卡片跟随 App 登录态，不再发令牌）。
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4；CalDAV 是第 2 枚。
-    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
+    // 0.6.15（用户）：快捷键页签搬到头像菜单，设置退回三页签。
+    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', 'CalDAV', 'AI']);
       // 其余页签不带 aria-label（可见文字即全称）
-    expect(buttons[3].getAttribute('aria-label')).toBe(null);
+    expect(buttons[2].getAttribute('aria-label')).toBe(null);
     expect(buttons.map((b) => b.id)).toEqual([
       'settings-tab-general',
       'settings-tab-account',
       'settings-tab-ai',
-      'settings-tab-shortcuts',
     ]);
     // 第 2 枚不再是「CalDAV 账户」（窄屏就是它把页签撑爆的）
     expect(buttons[1].textContent).not.toContain('账户');

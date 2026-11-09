@@ -1,14 +1,15 @@
 /**
  * 设置对话框（0.2.1）。
  *
- * 三页签：
+ * 三页签（0.6.15 起）：
  *   一般：主题 / 24 小时制 / 农历 / 法定节日 / 每周开始日 / 显示周数 /
  *         默认日历 / 事件颜色口径。（原头像菜单里的外观项按 #8 并入本页；
  *         时区切换与提醒功能已从 0.2.1 移除；0.2.12 删除了「第二时区」项）
- *   日历：表格页（#6）——顶部 编辑 / 删除 / 导出；列 名称 / 显示 / CalDAV 权限
- *         （可读写 / 只读 / 不可见）；底部「N 个项目」+ 刷新；右下 取消 / 应用；
- *         勾选先暂存、应用才批量保存；离开未应用给二次确认。
- *   CalDAV 账户：显示名 + 改密 + CalDAV 地址 + 退出登录 / 全部登出（#7 无用户管理）。
+ *   CalDAV：日历表格（0.6.4 起「日历」页签并入本页）——顶部 编辑 / 删除 / 导出；
+ *         列 名称 / 显示 / CalDAV 权限（可读写 / 只读 / 不可见）；底部「N 个项目」+
+ *         刷新；右下 取消 / 应用；勾选先暂存、应用才批量保存；离开未应用给二次确认。
+ *   AI：服务开关 / 凭据 / 提案队列（0.3.0 P4）。
+ * 快捷键清单 0.6.15 起在头像菜单（`shortcuts-dialog.js`），不再是设置页签。
  */
 import { el } from './dom.js';
 import { icon } from './icons.js';
@@ -19,7 +20,8 @@ import { t } from '../i18n/index.js';
 import { colorHex, customColorSwatch } from './colors.js';
 import { openCalendarSettings } from './calendar-dialog.js';
 // 0.3.0（P4）：设置 → 「AI」页签（设计侧真源 design/M8-AI接入设置页-规范.md）。
-import { createAiSettingsPage } from './ai-settings.js';
+// 0.6.13（首包拆分）：AI 页约 67 KB 源码，改为切到该页签时才 `import()`，
+// 主包不再包含它；加载期间用静态骨架占位，失败给提示 + 重试（不白屏）。
 // 0.4.8（规范 M18 §5）：AI 页签的红点已删，入口收成顶栏铃铛。这里只保留计数刷新——
 // 切进 AI 页会重拉服务/凭据，顺手把铃铛状态也刷一次。
 import { refreshAiBadge } from './ai-badge.js';
@@ -33,29 +35,8 @@ import { ACCENT_PRESETS, normalizeAccent } from './accent-theme.js';
 
 const MIN_PASSWORD_LENGTH = 8;
 
-/**
- * 0.2.17（B4.2）：设置里补「快捷键」入口。
- *
- * 键位只有一处真实来源——`app.js` 的 `onKey`（单键 `t/y/m/w/x/d/a/n`、`/`、
- * 左右方向键）与 `Ctrl/⌘+K`、侧栏 `Alt+↑/↓`、`Esc`。这里只是**列出来**，不实现
- * 第二套绑定；条目顺序按「最常用 → 视图 → 移动 → 其它」排。
- * 键名本身是拉丁字母，不翻译；说明文字全走 i18n（shortcuts.*）。
- */
-const SHORTCUTS = [
-  { key: '/', descKey: 'shortcuts.search' },
-  { key: 'Ctrl + K', descKey: 'shortcuts.searchGlobal' },
-  { key: 't', descKey: 'shortcuts.today' },
-  { key: 'y', descKey: 'shortcuts.viewYear' },
-  { key: 'm', descKey: 'shortcuts.viewMonth' },
-  { key: 'w', descKey: 'shortcuts.viewWeek' },
-  { key: 'x', descKey: 'shortcuts.viewFourDay' },
-  { key: 'd', descKey: 'shortcuts.viewDay' },
-  { key: 'a', descKey: 'shortcuts.viewAgenda' },
-  { key: 'n', descKey: 'shortcuts.newEvent' },
-  { key: '← / →', descKey: 'shortcuts.prevNext' },
-  { key: 'Alt + ↑ / ↓', descKey: 'shortcuts.reorderCalendars' },
-  { key: 'Esc', descKey: 'shortcuts.close' },
-];
+// 0.6.15（用户）：快捷键清单搬到头像菜单（`shortcuts-dialog.js`），设置里退回三页签。
+// 键位数据、`shortcuts.*` 文案与 `.shortcuts` 样式原样复用，只在入口与容器上换了位置。
 
 function field(labelText, input, hintText = '') {
   return el('div', { class: 'field' }, [
@@ -137,6 +118,9 @@ export function openAccountDialog({
    */
   const pendingSettings = {};
   let aiPendingCount = () => 0;
+  // 0.6.13：AI 页懒加载句柄。`null` 表示还没载入；`aiLoadPromise` 保证只 import 一次。
+  let aiPage = null;
+  let aiLoadPromise = null;
   const settingsBaseline = { ...settings };
 
   function stageSettings(patch) {
@@ -278,26 +262,6 @@ export function openAccountDialog({
     el('div', { class: 'settings__control settings__control--inline' }, [weekModeSeg, weekModeHint]),
   ]);
   weekModeRow.hidden = !settings.showWeekNumbers;
-
-  // 0.2.20（E14）：快捷键从「查看快捷键」弹窗改成设置页第 4 个页签，13 条直接平铺
-  // （用户口径：快捷键应该是一个设置页，不是再弹一个窗口）。
-  const shortcutsPage = el(
-    'div',
-    { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-shortcuts' },
-    [
-      el('p', { class: 'settings__hint', text: t('shortcuts.hint') }),
-      el(
-        'dl',
-        { class: 'shortcuts' },
-        SHORTCUTS.map(({ key, descKey }) =>
-          el('div', { class: 'shortcuts__row' }, [
-            el('dt', { class: 'shortcuts__keys' }, [el('kbd', { class: 'shortcuts__key', text: key })]),
-            el('dd', { class: 'shortcuts__desc', text: t(descKey) }),
-          ]),
-        ),
-      ),
-    ],
-  );
 
   const generalPage = el('div', { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-general' }, [
     settingRow(
@@ -531,7 +495,7 @@ export function openAccountDialog({
     setApplyError('');
     try {
       // 0.3.2：AI 服务总开关先落库（单项请求，失败即整体失败、暂存保留可重试）。
-      if (hasAi) await aiPage.applyStaged();
+      if (hasAi && aiPage) await aiPage.applyStaged();
       if (hasSettings) {
         await store.saveSettings(settingsPatch);
         for (const key of Object.keys(settingsPatch)) delete pendingSettings[key];
@@ -781,21 +745,80 @@ export function openAccountDialog({
 
   // 0.3.0（P4）：第 4 个页签是「AI」——页签下标题才是「AI 接入」（规范 §1.1）。
   // 0.3.2：AI 页的服务总开关走「暂存 → 应用」，改动时通知这里刷新页脚按钮状态。
-  const aiPage = createAiSettingsPage({
-    user,
-    store,
-    onStagedChange: () => refreshApplyState(),
+  // 0.6.13：页面壳先挂在这里，切到「AI」时才载入真实模块并替换进去。
+  // 0.6.13：模块载入前这里先放骨架，所以外壳只负责显隐与 aria；真正的
+  // `.settings__page.ai-page` 由 ai-settings.js 建，挂进来后单独取消 hidden。
+  const aiPageHost = el('div', {
+    class: 'settings__page settings__page-host',
+    role: 'tabpanel',
+    'aria-labelledby': 'settings-tab-ai',
+    hidden: true,
   });
-  aiPendingCount = () => aiPage.pendingCount();
+
+  /** 静态骨架：与安全模块同一套 `.security-skeleton` 样式，只占位、不含内容。 */
+  function aiSkeleton() {
+    const widths = ['100%', '70%', '40%', '100%', '70%', '40%'];
+    return el('div', {
+      class: 'security-skeleton settings-skeleton',
+      'aria-hidden': 'true',
+    }, widths.map((width) => el('span', { class: 'security-skeleton__bar', style: { width } })));
+  }
+
+  function showAiFailure() {
+    const retry = el('button', {
+      class: 'btn btn--primary',
+      type: 'button',
+      text: t('common.retry'),
+      on: { click: () => { void ensureAiPage(); } },
+    });
+    aiPageHost.replaceChildren(
+      el('p', { class: 'security-error', role: 'alert', text: t('settings.ai.loadFailed') }),
+      el('div', { class: 'security-actions' }, [retry]),
+    );
+    retry.focus();
+  }
+
+  /** 首次切到「AI」页时载入模块；之后复用同一个实例。 */
+  function ensureAiPage() {
+    if (aiPage) return Promise.resolve(aiPage);
+    if (aiLoadPromise) return aiLoadPromise;
+    aiPageHost.setAttribute('aria-busy', 'true');
+    aiPageHost.replaceChildren(aiSkeleton());
+    aiLoadPromise = import('./ai-settings.js')
+      .then(({ createAiSettingsPage }) => {
+        const page = createAiSettingsPage({
+          user,
+          store,
+          onStagedChange: () => refreshApplyState(),
+        });
+        aiPage = page;
+        aiPageHost.removeAttribute('aria-busy');
+        // 模块自建的根节点原本是「页签页」（自带 hidden / role）；外壳已经是页签页，
+        // 直接把它的子节点搬进来，避免出现两层 `.settings__page`（外层不会继承内层的
+        // hidden，测试与读屏都会看到错误的层级）。
+        aiPageHost.classList.add('ai-page');
+        aiPageHost.replaceChildren(...Array.from(page.page.childNodes));
+        aiPendingCount = () => page.pendingCount();
+        refreshApplyState();
+        return page;
+      })
+      .catch(() => {
+        aiLoadPromise = null;
+        aiPageHost.removeAttribute('aria-busy');
+        showAiFailure();
+        return null;
+      });
+    return aiLoadPromise;
+  }
 
   const tabs = [
     { id: 'general', label: t('settings.tab.general'), page: generalPage },
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV——页签由 5 枚回到 4 枚。
     { id: 'account', label: t('settings.tab.account'), page: accountPage },
-    { id: 'ai', label: t('settings.tab.ai'), page: aiPage.page },
+    { id: 'ai', label: t('settings.tab.ai'), page: aiPageHost },
     // 0.6.2：桌面卡片改为跟随 App 登录态，不再单独发令牌 —— 设置里的「卡片」页签随之删除。
-    // 0.2.20（E14）：快捷键成为最后 1 个页签。
-    { id: 'shortcuts', label: t('settings.tab.shortcuts'), page: shortcutsPage },
+    // 0.6.15（用户）：快捷键页签搬到头像菜单（「我的安全」与「立即同步」之间），
+    // 设置退回三页签：一般 / CalDAV / AI。
   ];
   const tabbar = el('div', { class: 'segmented settings__tabs', role: 'tablist', 'aria-label': t('settings.title') });
   const tabButtons = tabs.map((tabDef) => {
@@ -828,9 +851,16 @@ export function openAccountDialog({
       // 0.3.7：列表拉完再补一次红点计数——用户可能正好停在 AI 页看着队列，
       // 受理/驳回后这里也要跟着灭掉（ai-settings.js 里已经直接刷过一次）。
       if (tabDef.id === 'ai' && active) {
-        Promise.resolve(aiPage.refresh())
-          .then(() => refreshAiBadge())
-          .catch(() => {});
+        void ensureAiPage().then((page) => {
+          if (!page) return;
+          return Promise.resolve(page.refresh())
+            .then(() => {
+              // 0.6.13：懒加载页的「数据就绪」标记；骨架与会等它，不按首块出现判断。
+              aiPageHost.dataset.loaded = 'true';
+              refreshAiBadge();
+            })
+            .catch(() => {});
+        });
       }
     });
     if (tabButtons[index]) tabButtons[index].focus();
@@ -859,7 +889,7 @@ export function openAccountDialog({
       confirmOpen = false;
       if (dismiss) dismiss();
       if (discard) {
-        aiPage.discardStaged();
+        if (aiPage) aiPage.discardStaged();
         pending.clear();
         closeDialog();
       }
@@ -940,7 +970,7 @@ export function openAccountDialog({
     ]),
     el('div', { class: 'modal__body settings__body' }, [
       tabbar,
-      el('div', { class: 'settings__pages' }, [generalPage, accountPage, aiPage.page, shortcutsPage]),
+      el('div', { class: 'settings__pages' }, [generalPage, accountPage, aiPageHost]),
     ]),
     // 0.5.22（用户 m00535 / m00549）：页脚收成「按钮行 + 左侧两行小块」。
     // 上面一行只放「有 N 项未应用」（N=0 时整行不渲染）；按钮行左侧小块两行：

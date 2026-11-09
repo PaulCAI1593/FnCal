@@ -712,8 +712,9 @@ export function openSecuritySettingsDialog({ user } = {}) {
     const lockout = settings.lockout || {};
     const password = settings.password || {};
     const whitelist = settings.whitelist || {};
-    const idleInput = numberInput(session.idleMinutes || 720, { min: 5, max: 43200, step: 5 });
-    const absoluteInput = numberInput(session.absoluteDays || 7, { min: 1, max: 365 });
+    // 0.6.14：会话默认值放宽为空闲 43200 分钟（30 天）、绝对 90 天，与服务端一致。
+    const idleInput = numberInput(session.idleMinutes || 43200, { min: 5, max: 43200, step: 5 });
+    const absoluteInput = numberInput(session.absoluteDays || 90, { min: 1, max: 365 });
     const revokeSwitch = switchInput(session.revokeOnCredentialChange);
     const maxFailuresInput = numberInput(lockout.maxFailures || 5, { min: 3, max: 20 });
     const lockMinutesInput = numberInput(lockout.lockMinutes || 15, { min: 1, max: 1440, step: 5 });
@@ -748,8 +749,8 @@ export function openSecuritySettingsDialog({ user } = {}) {
           text: t('security.action.savePolicy'),
           on: { click: (ev) => withSave(() => updateSecuritySettings({
             session: {
-              idleMinutes: parseNum(idleInput, 720),
-              absoluteDays: parseNum(absoluteInput, 7),
+              idleMinutes: parseNum(idleInput, 43200),
+              absoluteDays: parseNum(absoluteInput, 90),
               revokeOnCredentialChange: revokeSwitch.checked,
             },
             lockout: {

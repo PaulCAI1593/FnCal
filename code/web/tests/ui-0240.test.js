@@ -92,8 +92,13 @@ describe('筛选里的日期弹层不吃常驻搜索条的「点外面」（0.2.
   });
 
   /** 展开常驻搜索条 → 打开筛选面板 → 点「时间范围」第一个日期框，返回弹层。 */
-  function openFilterDatePopover() {
+  async function openFilterDatePopover() {
     document.querySelector('.search-capsule').click();
+    // 0.6.13：搜索模块改按需 import，点胶囊后要等模块挂上再点筛选。
+    for (let i = 0; i < 100 && !dockedPanel(); i += 1) {
+      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
     expect(dockedPanel()).toBeTruthy();
     document.querySelector('.search__filter-btn').click();
     expect(filterPanel()).toBeTruthy();
@@ -104,8 +109,8 @@ describe('筛选里的日期弹层不吃常驻搜索条的「点外面」（0.2.
     return popover();
   }
 
-  it('点日历格子：弹层收起，搜索条与筛选面板都留着，日期写回筛选条件', () => {
-    openFilterDatePopover();
+  it('点日历格子：弹层收起，搜索条与筛选面板都留着，日期写回筛选条件', async () => {
+    await openFilterDatePopover();
     const day = dayCells()[0];
     expect(day).toBeTruthy();
     press(day);
@@ -125,8 +130,8 @@ describe('筛选里的日期弹层不吃常驻搜索条的「点外面」（0.2.
     expect(text.classList.contains('is-empty')).toBe(false);
   });
 
-  it('翻月：弹层与搜索条都不收起，标题月份变了', () => {
-    openFilterDatePopover();
+  it('翻月：弹层与搜索条都不收起，标题月份变了', async () => {
+    await openFilterDatePopover();
     const title = document.querySelector('.date-pop__title').textContent;
     const next = document.querySelectorAll('.date-pop__nav')[1];
     press(next);
@@ -137,8 +142,8 @@ describe('筛选里的日期弹层不吃常驻搜索条的「点外面」（0.2.
     expect(document.querySelector('.date-pop__title').textContent).not.toBe(title);
   });
 
-  it('点弹层和搜索条之外：搜索条照旧收起（原有行为不回退）', () => {
-    openFilterDatePopover();
+  it('点弹层和搜索条之外：搜索条照旧收起（原有行为不回退）', async () => {
+    await openFilterDatePopover();
     const outside = document.createElement('p');
     outside.textContent = '正文';
     document.body.append(outside);

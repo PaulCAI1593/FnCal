@@ -507,13 +507,12 @@ describe('0.2.8 ②⑦⑧ app 级行为', () => {
     expect(document.querySelector('#settings-page-general').hidden).toBe(false);
   });
 
-    it('⑨ 设置页签（标签页造型）：五个页签、点击切换、选中态跟随；各页共用 .settings__page', () => {
+    it('⑨ 设置页签（标签页造型）：三个页签、点击切换、选中态跟随；各页共用 .settings__page', () => {
     openApp();
     document.querySelector('button[aria-label="设置"]').click();
     const tabs = [...document.querySelectorAll('.settings__tabs [role="tab"]')];
-    // 0.3.0（P4）：五个页签；CalDAV 文案收短、新增 AI
-    // 0.6.2：删除「卡片」页签（卡片改用 App 会话），回到五个页签。
-    expect(tabs.map((b) => b.textContent)).toEqual(['一般', 'CalDAV', 'AI', '快捷键']);
+    // 0.6.4：「日历」页签收进 CalDAV 页；0.6.15（用户）：快捷键搬到头像菜单，设置回到三页签。
+    expect(tabs.map((b) => b.textContent)).toEqual(['一般', 'CalDAV', 'AI']);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
     tabs[1].click();
     expect(tabs[1].getAttribute('aria-selected')).toBe('true');
@@ -524,9 +523,8 @@ describe('0.2.8 ②⑦⑧ app 级行为', () => {
     expect(document.querySelector('#settings-page-general').hidden).toBe(false);
     // 0.2.9（用户 7）：一般 / 日历 / CalDAV 账户三页都吃同一个 .settings__page（间距统一）。
     const pages = [...document.querySelectorAll('.settings__pages > .settings__page')];
-    // 0.2.20（E14）：快捷键成为最后 1 个页签；0.3.0（P4）：五页共用 .settings__page
-    // 0.6.2：删除「卡片」页（卡片改用 App 会话），页数回到 5。
-    expect(pages.length).toBe(4);
+    // 0.6.15（用户）：快捷键页搬到头像菜单；设置页签 3 个、页 3 个。
+    expect(pages.length).toBe(3);
     for (const page of pages) expect(page.classList.contains('settings__page')).toBe(true);
     // 0.2.9（用户 8）：日历表格里的原生复选框在 .settings-modal 作用域内（accent-color 规则覆盖）。
     expect(document.querySelectorAll(".settings-modal input[type='checkbox']").length).toBeGreaterThan(0);
@@ -541,19 +539,20 @@ it('0.4.14 管理员菜单：账号管理 / 安全设置 / 立即同步 / 检查
     expect(labels.some((l) => l.includes('立即同步'))).toBe(true);
     expect(labels.some((l) => l.includes('账号安全'))).toBe(false);
     // 0.4.14（M22 §1）：管理员 5 项（新增「检查更新」），自己的安全并入「安全设置」① 页。
-    // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
-    expect(labels).toEqual(['账号管理', '安全设置', '立即同步', '检查更新', '登出']);
+    // 0.6.15（用户）：快捷键搬到菜单，夹在安全入口与「立即同步」之间，共 6 项。
+    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '检查更新', '登出']);
     expect(labels.some((l) => l.includes('我的安全'))).toBe(false);
   });
 
-  it('0.4.14 普通用户菜单：我的账号 / 我的安全 / 立即同步 / 检查更新 / 登出（无「安全设置」、不留空位）', () => {
+  it('普通用户菜单：我的账号 / 我的安全 / 快捷键 / 立即同步 / 检查更新 / 登出（无「安全设置」、不留空位）', () => {
     openApp({ username: 'dave', role: 'user', displayName: 'Dave' });
     document.querySelector('.avatar').click();
     const labels = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
     expect(labels.some((l) => l.includes('账号管理'))).toBe(false);
     expect(labels.some((l) => l.includes('安全设置'))).toBe(false);
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
-    expect(labels).toEqual(['我的账号', '我的安全', '立即同步', '检查更新', '登出']);
+    // 0.6.15（用户）：快捷键对所有登录用户可见。
+    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '检查更新', '登出']);
     const mine = [...document.querySelectorAll('.popover .menu-item')].find((b) => b.textContent.includes('我的账号'));
     mine.click();
     // 复用「账号安全」对话框：标题 + 改显示名 + 改密码区

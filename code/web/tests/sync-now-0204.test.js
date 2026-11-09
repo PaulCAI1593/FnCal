@@ -92,6 +92,10 @@ describe('0.2.4 ⑮ 账号菜单「立即同步」', () => {
     // 0.3.10（M13 §1.1）：管理员只有「安全设置」；自己的安全并入其 ① 页。
     expect(selfAt).toBe(-1);
     expect(securityAt).toBeGreaterThan(manageAt);
+    // 0.6.15（用户）：快捷键在安全入口之后、「立即同步」之前。
+    const shortcutsAt = labels.findIndex((l) => l.includes('快捷键'));
+    expect(shortcutsAt).toBe(securityAt + 1);
+    expect(syncAt).toBe(shortcutsAt + 1);
     expect(syncAt).toBeGreaterThan(securityAt);
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位置固定在「立即同步」之后、「登出」之前。
     expect(labels[syncAt + 1]).toContain('检查更新');
@@ -106,11 +110,13 @@ describe('0.2.4 ⑮ 账号菜单「立即同步」', () => {
     openMenu();
     const labels2 = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
     // 0.3.8：普通用户 = 我的账号 / 我的安全 / 立即同步 / 检查更新 / 登出
-    // （没有「安全设置」，也不留空位；0.4.14 多一项「检查更新」）。
+    // （没有「安全设置」，也不留空位；0.4.14 多一项「检查更新」；
+    //  0.6.15 在安全与同步之间加「快捷键」，仍是所有登录用户可见）。
     const syncAt2 = labels2.findIndex((l) => l.includes('立即同步'));
-    expect(syncAt2).toBe(2);
-    expect(labels2[syncAt2 - 2]).toContain('我的账号');
-    expect(labels2[syncAt2 - 1]).toContain('我的安全');
+    expect(syncAt2).toBe(3);
+    expect(labels2[syncAt2 - 3]).toContain('我的账号');
+    expect(labels2[syncAt2 - 2]).toContain('我的安全');
+    expect(labels2[syncAt2 - 1]).toContain('快捷键');
     expect(labels2[syncAt2 + 1]).toContain('检查更新');
     expect(labels2[syncAt2 + 2]).toContain('登出');
     expect(labels2.some((l) => l.includes('账号安全'))).toBe(false);

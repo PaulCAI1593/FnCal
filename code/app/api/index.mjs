@@ -367,6 +367,24 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
     const url = new URL(req.url || '/', 'http://localhost');
     const pathname = url.pathname;
 
+    // 0.6.12 C：首屏只读合并。一次返回版本与健康两个公开信息，网页页脚少一次往返。
+    //
+    // 安全边界（写在这里给后来人看）：这里是**白名单**，恰好三个顶层字段，
+    // 只有版本号与可用性。任何凭据、会话、AI 配置、日历/事件数据都不许加进来；
+    // 要加字段必须同时过 `code/app/test/bootstrap.test.mjs` 的白名单断言。
+    // `Cache-Control: no-store` 由 sendJson 统一设置；未登录可读（同 /api/health）。
+    if (req.method === 'GET' && pathname === '/api/bootstrap') {
+      return sendJson(res, 200, {
+        version,
+        // 目前服务端与包版本同源；字段分开保留，方便以后单独给出服务端构建号。
+        serverVersion: version,
+        health: {
+          ok: true,
+          uptime: Math.round(process.uptime()),
+          time: new Date().toISOString(),
+        },
+      });
+    }
     if (req.method === 'GET' && pathname === '/api/health') {
       return sendJson(res, 200, {
         ok: true,

@@ -31,12 +31,13 @@ describe('0.6.2 桌面卡片跟随 App 登录态', () => {
     expect(apiClient).not.toMatch(/widget/i);
   });
 
-  it('设置里没有「卡片」页签（0.6.4 起「日历」也并入 CalDAV，共 4 枚）', () => {
+  it('设置里没有「卡片」页签（0.6.4 起「日历」并入 CalDAV；0.6.15 起快捷键搬到头像菜单，共 3 枚）', () => {
     expect(accountDialog).not.toMatch(/settings\.tab\.widget/);
     expect(accountDialog).not.toMatch(/settings\.widget\./);
     const tabs = [...accountDialog.matchAll(/settings\.tab\.([a-z]+)/g)].map((m) => m[1]);
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，`settings.tab.calendar` 键与页签一起删除。
-    expect([...new Set(tabs)]).toEqual(['general', 'account', 'ai', 'shortcuts']);
+    // 0.6.15（用户）：快捷键页签搬到头像菜单，`settings.tab.shortcuts` 键同时删除。
+    expect([...new Set(tabs)]).toEqual(['general', 'account', 'ai']);
   });
 
   it('i18n 不再有令牌页签与令牌页文案（AI 凭据的「令牌」是另一件事，不动）', () => {

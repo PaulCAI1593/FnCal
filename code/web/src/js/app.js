@@ -16,15 +16,20 @@ import { createEventModal } from './modal.js';
 // 0.5.16：键盘弹出把布局视口压矮会触发 window resize；此时重建视图会让月视图重排
 // 一帧，看起来就是「抖一下」。守卫要用焦点信号（比 resize 早）判断。
 import { keyboardState, isEditableFocused, onKeyboardChange } from './keyboard-inset.js';
-import { createSearch, attachSearchClear } from './search.js';
+// 0.6.13（首包拆分）：search.js 约 40 KB，只在用户点搜索/按快捷键时才 `import()`，
+// 不再进首屏主包。加载失败给 toast，不静默。
 // 0.2.40：日期弹层挂在 document.body 下（不在搜索条 DOM 子树里），常驻搜索条的
 // 「点外面就收起」判定必须显式问它，否则在弹层里点日期会被当成点外面。
 import { isInsideDatePopover } from './date-popover.js';
 // 0.2.11（C10）：搜索槽位宽度是共享常量（lib/segment.js），展开/收起都不变。
 import { searchSlotWidth } from './lib/segment.js';
-import { openImportDialog, openExportDialog } from './data-io.js';
-import { openAdminUsersDialog } from './admin-users.js';
+// 0.6.13（首包拆分，第四处之四）：导入/导出弹窗约 22 KB 源码，只在菜单或拖文件时用；
+// 改为按需 `import()`（拖文件那条在 file-drop.js 里同样按需加载，文件对象先同步取出）。
+// 0.6.13（首包拆分，超出规格三块的第四处）：管理员用户管理页约 24 KB 源码，
+// 只有管理员从头像菜单进来才用得到；改为点开时 `import()`，失败给提示。
 import { openAccountDialog, openAccountSecurityDialog } from './account-dialog.js';
+// 0.6.15（用户）：「快捷键」从设置页签搬到头像菜单；清单与弹窗拆到独立小模块。
+import { openShortcutsDialog } from './shortcuts-dialog.js';
 import { bindCalendarFileDrop } from './file-drop.js';
 // 0.3.7（用户 m00779）：AI 待审批提案红点——顶栏齿轮与设置「AI」页签同源。
 // 0.4.8（用户 2026-11-04 / 规范 M18 §1–§3）：唯一入口改为顶栏铃铛；红点与
@@ -32,13 +37,14 @@ import { bindCalendarFileDrop } from './file-drop.js';
 import { startAiBadge, stopAiBadge, onAiBadgeChange, getAiBadgeState } from './ai-badge.js';
 // 0.4.8（规范 M18 §3）：提案浮层与设置页共用同一份渲染（proposals-panel.js），
 // 免得两处各写一遍再漂移。
-import { createProposalsPanel } from './proposals-panel.js';
+// 0.6.13（首包拆分）：提案列表约 46 KB，只在铃铛第一次打开时 `import()`；
+// 浮层先挂骨架，载入后替换为真实列表，失败给提示 + 重试。
 import { openScopeDialog } from './recurrence-dialog.js';
 // 0.3.8（v1.1 安全界面接线，M12 §5）：安全模块的懒加载壳（骨架 + 失败重试）。
 import { openSecurityDialogWithLoader } from './security-lazy.js';
 import { openCategoryRename } from './category-dialog.js';
 // 0.4.14（规范 M22 第 2 版）：头像菜单「检查更新」打开的弹窗。
-import { openUpdateDialog } from './update-dialog.js';
+// 0.6.13（首包拆分，第四处之二）：检查更新弹窗约 6.5 KB 源码，只从头像菜单进来时用。
 import {
   openCalendarName,
   openCalendarSettings,
@@ -131,7 +137,10 @@ export function createApp(root, { store, user }) {
 
   // Jump to an event or task from search: move the calendar to its day, then
   // open it. A task has a single `due` instant where an event has `start`.
-  const search = createSearch({
+  // 0.6.13：`search` 改为懒加载后的实例，`null` 表示模块还没载入。
+  let search = null;
+  let searchPromise = null;
+  const searchOptions = {
     store,
     onPick: (item) => {
       const when = item.isTask ? item.due : item.start;
@@ -146,7 +155,29 @@ export function createApp(root, { store, user }) {
       if (open) expandSearch();
       else collapseSearch();
     },
-  });
+  };
+
+  /** 载入搜索模块（只载一次）；成功后再接上筛选按钮与已聚焦的输入框。 */
+  function ensureSearch() {
+    if (search) return Promise.resolve(search);
+    if (searchPromise) return searchPromise;
+    searchPromise = import('./search.js')
+      .then(({ createSearch }) => {
+        search = createSearch(searchOptions);
+        search.setFilterHost(searchFilterHost, searchBarInput);
+        // 用户可能已经点开/聚焦输入框：载入完成后把面板补上。
+        if (document.activeElement === searchBarInput && !isSearchCollapsed()) {
+          void ensureSearch().then((s) => s && s.openDocked(searchBarInput));
+        }
+        return search;
+      })
+      .catch(() => {
+        searchPromise = null;
+        toast(t('search.loadFailed'), { variant: 'danger' });
+        return null;
+      });
+    return searchPromise;
+  }
 
   /**
    * Rejection handler for a store write nothing awaits — a drag, a resize, a
@@ -373,8 +404,16 @@ export function createApp(root, { store, user }) {
       ),
     // 0.2.1（#2/#12）：导出永远是单日历、独立弹窗；导入也是独立弹窗，
     // 「导入到新/现有日历」的选择放在导入弹窗里。
-    exportCalendar: (cal) => openExportDialog({ store, calendar: cal }),
-    importCalendar: () => openImportDialog({ store }),
+    exportCalendar: (cal) => {
+      void import('./data-io.js')
+        .then((mod) => mod.openExportDialog({ store, calendar: cal }))
+        .catch(() => toast(t('common.loadFailed'), { variant: 'danger' }));
+    },
+    importCalendar: () => {
+      void import('./data-io.js')
+        .then((mod) => mod.openImportDialog({ store }))
+        .catch(() => toast(t('common.loadFailed'), { variant: 'danger' }));
+    },
     deleteCalendar: (cal, opts) => deleteCalendarWithUndo(cal, opts),
     // 0.2.3：清空默认日历（「我的日历」/「任务」）的内容——日历本身保留，10 秒撤销。
     clearCalendar: (cal, { onCleared } = {}) => {
@@ -960,7 +999,7 @@ export function createApp(root, { store, user }) {
     title: `${t('toolbar.search')} (Ctrl+K)`,
     html: icon('search'),
     // 0.2.3：窄屏（≤720）才显示此图标，点开全屏搜索；桌面用顶部常驻输入框。
-    on: { click: () => search.open() },
+    on: { click: () => void ensureSearch().then((s) => s && s.open()) },
   });
 
   // 0.2.0（B4）：顶栏「任务」按钮（搜索与设置之间）。选中态复用
@@ -1136,7 +1175,28 @@ export function createApp(root, { store, user }) {
   // 0.2.4（真机 P0-3）：筛选按钮回到搜索条右侧（桌面）；移动端在全屏搜索条里。
   const searchFilterHost = el('span', { class: 'header__search-filter' });
   // 0.2.10（1-12）：输入框与「筛选」按钮之间的清空小叉（只在有输入时出现）。
-  const searchClearBtn = attachSearchClear(searchBarInput);
+  // 0.6.13：清空小叉不再依赖 search.js（模块懒加载），这里用同一套类名与行为：
+  // 有输入才显示，点一下清空并重新触发 input。
+  const searchClearBtn = el('button', {
+    class: 'icon-btn search__clear is-hidden',
+    type: 'button',
+    tabindex: '-1',
+    'aria-label': t('search.clear'),
+    title: t('search.clear'),
+    html: icon('close', { size: 'sm' }),
+  });
+  const syncSearchClear = () => {
+    searchClearBtn.classList.toggle('is-hidden', searchBarInput.value === '');
+  };
+  searchClearBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    searchBarInput.value = '';
+    syncSearchClear();
+    searchBarInput.dispatchEvent(new Event('input', { bubbles: true }));
+    searchBarInput.focus();
+  });
+  searchBarInput.addEventListener('input', syncSearchClear);
+  syncSearchClear();
   // 0.2.11（C10）：搜索条 = 折叠胶囊 + **固定宽度槽位**。槽宽是 lib/segment.js 的
   // 同一个常量，展开/收起都不变，所以日期标题的横向位置恒定、结果面板也同宽。
   const narrowSearchMedia = window.matchMedia('(max-width: 720px)');
@@ -1180,10 +1240,9 @@ export function createApp(root, { store, user }) {
   }
   searchCapsule.addEventListener('click', () => {
     expandSearch();
-    search.openDocked(searchBarInput);
+    void ensureSearch().then((s) => s && s.openDocked(searchBarInput));
     searchBarInput.focus();
   });
-  search.setFilterHost(searchFilterHost, searchBarInput);
   searchBar.addEventListener('pointerdown', (e) => {
     if (e.target === searchBarInput) return;
     // 0.2.4：筛选按钮自己处理点击，不能被「点条内空白处聚焦搜索」的
@@ -1191,12 +1250,12 @@ export function createApp(root, { store, user }) {
     if (e.target.closest && e.target.closest('.search__filter-btn')) return;
     e.preventDefault();
     expandSearch();
-    search.openDocked(searchBarInput);
+    void ensureSearch().then((s) => s && s.openDocked(searchBarInput));
     searchBarInput.focus();
   });
   searchBarInput.addEventListener('focus', () => {
     expandSearch();
-    search.openDocked(searchBarInput);
+    void ensureSearch().then((s) => s && s.openDocked(searchBarInput));
   });
   // 0.2.19（D8）：焦点离开整个搜索区 → 三者一起收回胶囊。之前只折叠了输入框，
   // 结果面板与「筛选」按钮留在原处（search.js 的 pointerdown outside 只在点外面
@@ -1225,12 +1284,12 @@ export function createApp(root, { store, user }) {
     if (next && searchBar.contains(next)) return;
     if (next && next.closest && next.closest('.search__panel--docked')) return;
     collapseSearch();
-    search.closeDocked();
+    if (search) search.closeDocked();
   });
   searchBarInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     collapseSearch();
-    search.closeDocked();
+    if (search) search.closeDocked();
     searchBarInput.blur();
   });
   // 点到搜索条和结果面板之外 → 折叠（结果面板的关闭由 search 自己的 outside 处理）。
@@ -1242,7 +1301,7 @@ export function createApp(root, { store, user }) {
     if (target.closest('.search__panel--docked')) return;
     if (isInsideDatePopover(target)) return;
     collapseSearch();
-    search.closeDocked();
+    if (search) search.closeDocked();
   });
 
   // 0.2.3：Ctrl/Cmd+K 聚焦搜索条（窄屏则打开全屏搜索）。
@@ -1251,10 +1310,10 @@ export function createApp(root, { store, user }) {
     if (e.key !== 'k' && e.key !== 'K') return;
     e.preventDefault();
     if (window.matchMedia('(max-width: 720px)').matches) {
-      search.open();
+      void ensureSearch().then((s) => s && s.open());
       return;
     }
-    search.openDocked(searchBarInput);
+    void ensureSearch().then((s) => s && s.openDocked(searchBarInput));
     searchBarInput.focus();
   };
   document.addEventListener('keydown', onSearchHotkey);
@@ -1837,6 +1896,30 @@ export function createApp(root, { store, user }) {
     });
   }
 
+  // 0.6.15（用户）：「快捷键」从头像菜单进，位置固定在「我的安全 / 安全设置」与
+  // 「立即同步」之间；所有登录用户都可见（本地键盘能力，不涉及权限）。
+  // 关窗后回到菜单并把焦点放回这一项（关窗时菜单已收起，所以重开一次菜单）。
+  // 图标集没有键盘类图标，沿用通用方格图标（grid），不新画 SVG。
+  function shortcutsEntry() {
+    return el('button', {
+      class: 'menu-item popover__shortcuts',
+      type: 'button',
+      html: icon('grid', { size: 'sm' }) + `<span>${t('menu.shortcuts')}</span>`,
+      on: {
+        click: () => {
+          closeUserMenu();
+          openShortcutsDialog({
+            onClosed: () => {
+              openUserMenu();
+              const again = document.querySelector('.popover .popover__shortcuts');
+              if (again && again.focus) again.focus();
+            },
+          });
+        },
+      },
+    });
+  }
+
   function openUserMenu() {
     if (popover) closeUserMenu();
 
@@ -1863,14 +1946,16 @@ export function createApp(root, { store, user }) {
             on: {
               click: () => {
                 closeUserMenu();
-                openAdminUsersDialog({
-                  currentUser: user,
-                  // 0.2.8（用户 8）：管理员改自己的显示名/密码后，头像与顶栏立即刷新。
-                  onSelfUpdated: (profile) => {
-                    if (profile) Object.assign(user, profile);
-                    render();
-                  },
-                });
+                void import('./admin-users.js')
+                  .then((mod) => mod.openAdminUsersDialog({
+                    currentUser: user,
+                    // 0.2.8（用户 8）：管理员改自己的显示名/密码后，头像与顶栏立即刷新。
+                    onSelfUpdated: (profile) => {
+                      if (profile) Object.assign(user, profile);
+                      render();
+                    },
+                  }))
+                  .catch(() => toast(t('common.loadFailed'), { variant: 'danger' }));
               },
             },
           })
@@ -1896,6 +1981,8 @@ export function createApp(root, { store, user }) {
       ...(user && user.role === 'admin'
         ? [securityEntry('admin')]
         : [securityEntry('self')]),
+      // 0.6.15（用户）：「快捷键」在安全入口之后、「立即同步」之前。
+      shortcutsEntry(),
       // 0.2.4 ⑮：「用户管理」下面的「立即同步」（普通用户在同一区域、账号相关项之前）。
       el('button', {
         class: 'menu-item popover__sync',
@@ -1921,7 +2008,9 @@ export function createApp(root, { store, user }) {
         on: {
           click: () => {
             closeUserMenu();
-            openUpdateDialog();
+            void import('./update-dialog.js')
+              .then((mod) => mod.openUpdateDialog())
+              .catch(() => toast(t('common.loadFailed'), { variant: 'danger' }));
           },
         },
       }),
@@ -2013,16 +2102,26 @@ export function createApp(root, { store, user }) {
    * （top = 铃铛顶 - 浮层高 - 8）。left 夹在 16 与 `innerWidth - width - 16` 之间；
    * 宽度 `min(400px, 100vw - 32px)`。
    */
+  function proposalsSkeleton() {
+    const widths = ['100%', '70%', '40%', '100%'];
+    return el('div', { class: 'security-skeleton proposals-loading__skeleton', 'aria-hidden': 'true' },
+      widths.map((width) => el('span', { class: 'security-skeleton__bar', style: { width } })));
+  }
+
   function openProposalsPanel(anchor = bellBtn) {
     if (proposalsPopover) closeProposalsPanel({ restoreFocus: false });
     proposalsAnchor = anchor;
-    const panel = createProposalsPanel({ store });
+    // 0.6.13：先挂浮层壳（尺寸与最终面板一致），列表模块异步载入。
+    const bodyHost = el('div', { class: 'proposals-loading', 'aria-busy': 'true' }, [
+      proposalsSkeleton(),
+      el('p', { class: 'proposals-loading__text', text: t('common.loading') }),
+    ]);
     const box = el('div', {
       class: 'popover popover--proposals',
       role: 'dialog',
       'aria-label': t('toolbar.proposals'),
       tabindex: '-1',
-    }, [panel.node]);
+    }, [bodyHost]);
     document.body.append(box);
     const rect = anchor.getBoundingClientRect();
     const width = Math.max(0, Math.min(400, window.innerWidth - 32));
@@ -2057,17 +2156,54 @@ export function createApp(root, { store, user }) {
       document.addEventListener('keydown', onKey, true);
     }, 0);
     anchor.setAttribute('aria-expanded', 'true');
+    let panel = null;
+    let disposed = false;
     proposalsPopover = {
       box,
       cleanup() {
+        disposed = true;
         document.removeEventListener('pointerdown', onDocDown, true);
         document.removeEventListener('keydown', onKey, true);
-        panel.destroy();
+        if (panel) panel.destroy();
         box.remove();
       },
     };
-    // 打开即拉一次 pending 列表（规范 §3：不要用 count 接口渲染正文）。
-    void panel.load();
+
+    const showFailure = () => {
+      if (disposed) return;
+      bodyHost.removeAttribute('aria-busy');
+      const retry = el('button', {
+        class: 'btn btn--primary',
+        type: 'button',
+        text: t('common.retry'),
+        on: {
+          click: () => {
+            closeProposalsPanel({ restoreFocus: false });
+            openProposalsPanel(anchor);
+          },
+        },
+      });
+      bodyHost.replaceChildren(
+        el('p', { class: 'security-error', role: 'alert', text: t('proposals.loadFailed') }),
+        el('div', { class: 'security-actions' }, [retry]),
+      );
+      retry.focus();
+    };
+
+    import('./proposals-panel.js')
+      .then(({ createProposalsPanel }) => {
+        if (disposed) return;
+        panel = createProposalsPanel({ store });
+        bodyHost.removeAttribute('aria-busy');
+        bodyHost.replaceChildren(panel.node);
+        // 底栏锚点的浮层按底边定位；内容高度变化后重新夹一次，避免顶出屏幕。
+        if (bottomMode) {
+          box.style.maxHeight = `${Math.max(120, rect.top - 24)}px`;
+        }
+        // 打开即拉一次 pending 列表（规范 §3：不要用 count 接口渲染正文）。
+        void panel.load();
+      })
+      .catch(() => showFailure());
   }
 
   // 0.2.12（C11-1）：「第二时区」设置项、下拉与相关逻辑已全部删除。
@@ -2137,10 +2273,10 @@ export function createApp(root, { store, user }) {
     // but never on top of another overlay. If search is already open, re-focus.
     if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
       e.preventDefault();
-      if (!otherOverlayOpen()) search.open();
+      if (!otherOverlayOpen()) void ensureSearch().then((s) => s && s.open());
       return;
     }
-    if (search.isOpen() || otherOverlayOpen()) return;
+    if ((search && search.isOpen()) || otherOverlayOpen()) return;
     // The mobile drawer sits over the calendar behind a scrim, like any other
     // overlay — so Escape dismisses it too, and hands focus back to the button
     // that opened it (the drawer's controls are about to leave the screen).
@@ -2176,7 +2312,7 @@ export function createApp(root, { store, user }) {
     switch (key) {
       case '/':
         e.preventDefault();
-        search.open();
+        void ensureSearch().then((s) => s && s.open());
         break;
       case 't':
         goToday();
@@ -2267,7 +2403,7 @@ export function createApp(root, { store, user }) {
   const isDragging = () => document.body.classList.contains('is-dragging');
   const unbindFileDrop = bindCalendarFileDrop(mainEl, {
     store,
-    canImport: () => !otherOverlayOpen() && !search.isOpen() && !isDragging(),
+    canImport: () => !otherOverlayOpen() && !(search && search.isOpen()) && !isDragging(),
   });
 
   let resizeRaf = null;
@@ -2315,7 +2451,7 @@ export function createApp(root, { store, user }) {
   // Skip while any overlay is open (render would tear it down mid-interaction) or
   // while a drag is in flight (see above).
   const tick = setInterval(() => {
-    if (otherOverlayOpen() || search.isOpen() || isDragging()) return;
+    if (otherOverlayOpen() || (search && search.isOpen()) || isDragging()) return;
     // render() replaces both the sidebar and the view, so a focused control in
     // either region has to survive it. One that carries a data-focus-key does —
     // render() hands focus to its counterpart. One that doesn't (a day-number
@@ -2375,8 +2511,10 @@ export function createApp(root, { store, user }) {
       closeUserMenu();
       // 0.5.12（S7）：拆壳时菜单随视图一起收走，诊断里记为 render。
       closeContextMenu('render');
-      search.close();
-      search.closeDocked();
+      if (search) {
+        search.close();
+        if (search) search.closeDocked();
+      }
     },
   };
 }

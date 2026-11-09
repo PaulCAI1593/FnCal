@@ -83,6 +83,17 @@ const tick = async () => {
   await Promise.resolve();
   await Promise.resolve();
 };
+// 0.6.13（首包拆分）：AI 页模块改为 `import()`，点页签后要等它挂载并拉完首屏数据。
+// account-dialog 在 `refresh()` 成功后给外壳写 `data-loaded="true"`，按它等最稳。
+const aiReady = async (dialog) => {
+  for (let i = 0; i < 100; i++) {
+    const host = dialog.querySelector('#settings-page-ai');
+    if (host && host.dataset.loaded === 'true') return;
+    await tick();
+    // 动态 import 要走真实任务队列，只 microtask 转圈会在模块到达前用完次数。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+};
 
 describe('0.3.2 · AI 页：应用按钮 + MCP JSON 片段', () => {
   let opened = null;
@@ -120,6 +131,8 @@ describe('0.3.2 · AI 页：应用按钮 + MCP JSON 片段', () => {
   async function openAiTab(dialog) {
     dialog.querySelector('#settings-tab-ai').click();
     await tick();
+    await aiReady(dialog);
+    await aiReady(dialog);
   }
 
   const applyBtn = (dialog) => {

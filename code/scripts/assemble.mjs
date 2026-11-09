@@ -89,7 +89,9 @@ if (has('skip-web')) {
   rmrf(WWW_DST);
   fs.mkdirSync(WWW_DST, { recursive: true });
   const n = copyTree(WEB_SRC, WWW_DST);
-  // 0.2.3：source map 不进包（体积与源码泄露），dist 里保留供本地调试。
+  // 0.2.3：source map 不进包（体积与源码泄露）。
+  // 0.6.12：vite 默认不再产出 map（需要本地调试时 FNCAL_SOURCEMAP=1 构建），
+  // 这里的剔除保留为兜底：有人用该环境变量构建后直接出包，也不会把 map 带进去。
   let maps = 0;
   (function dropMaps(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -99,7 +101,7 @@ if (has('skip-web')) {
     }
   })(WWW_DST);
   log(`[2/3] 前端产物已装配：${n - maps} 个文件 → ${path.relative(codeDir, WWW_DST)}（剔除 ${maps} 个 .map）`);
-  if (maps === 0) fail('前端产物没有可剔除的 .map（构建是否关闭了 sourcemap？）');
+  if (maps === 0) log('[2/3] 前端产物没有 .map（0.6.12 起 sourcemap 默认关闭，属正常）');
 }
 
 // ---------- 3) 一致性检查 ----------

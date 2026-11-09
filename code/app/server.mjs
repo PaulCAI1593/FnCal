@@ -83,7 +83,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 0.6.7：手机月视图日号行的节日名 / 节气名在真机上被裁掉一点（用户：「手机端的
 // 节气又被挡掉了一点，节日也是」）——承载盒补 1px 保护边、上下各留 1px、字体就绪后
 // 重新量宽。纯前端，无接口与数据变化。
-export const VERSION = '0.6.11';
+export const VERSION = '0.6.15';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
