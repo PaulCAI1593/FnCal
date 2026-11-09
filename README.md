@@ -12,7 +12,7 @@
 
 **项目页面**：<https://paulcai1593.github.io/FnCal/>
 
-**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v1.0.0)。
+**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v0.6.14)。
 
 *国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)，内容与 GitHub 相同。*
 
@@ -173,7 +173,7 @@ FE2FC65094842A29BA99AC954D40A3778D12C0ED320F50E5F80A933DCB83975B
 | 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500）。不带会话头的客户端照常可用；批准时返回审批链接（`approval_requires_ui` + `approvalUrl`，10 分钟、每条一次） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用） |
 
-附一份 **MCP 技能包**，独立发版，当前 1.0.0：`FnCal-MCP-Skill-1.0.0.zip`（26,420 B / `794A9FF15C54B07E63646D133757AB39C1FC2A5F2D0D662070CDB4AFA2CD81EC`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v1.0.0) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
+附一份 **MCP 技能包**，独立发版，当前 0.6.14：`FnCal-MCP-Skill-0.6.14.zip`（26,490 B / `AA1DBDD71432D69FEC49EDA878991B91304C66CA8B9264DDC8AD8B9E08A210FD`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v0.6.14) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
 
 ---
 
