@@ -4,7 +4,7 @@
 
 ![FnCal 主界面：年视图、左侧日历列表与顶部工具栏](docs/screenshots/main.png)
 
-当前版本：**0.6.11**
+当前版本：**0.6.14**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -12,7 +12,7 @@
 
 **项目页面**：<https://paulcai1593.github.io/FnCal/>
 
-**下载**：全部在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>（网页安装包、安卓 APK、AI 技能包、校验文件）。
+**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v1.0.0)。
 
 *国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)，内容与 GitHub 相同。*
 
@@ -81,9 +81,9 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 安卓外壳直连你自己的 NAS，填地址就能用，不经过任何中转。桌面可加五款只读卡片：迷你月历、单日日程、月视图、四日视图、日程列表。卡片跟随 App 登录态取数，不需要另配凭据，约 30 分钟自动刷新；状态栏与手势条透明，内容留在安全区内。
 
-**安卓下载**：`FnCal-Android-0.3.6.apk` <https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk>，3,912,809 B，SHA-256 `5962B8B28BE272C103D3C2E423413E21D57A8C03722E3C5F5F62C9549D917576`；可直接覆盖 0.3.5，不用卸载。
+**安卓下载**：`FnCal-Android-0.3.7.apk` <https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.7/FnCal-Android-0.3.7.apk>，980,649 B，SHA-256 `efb5379ac7f7519edcb490a8aac7ed074cf6c6117a42043172ef9783371ba529`；release 构建 + R8 压缩，包体约为上一版四分之一，可直接覆盖 0.3.6，不用卸载。
 
-*国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.6/FnCal-Android-0.3.6.apk) 下载同一个包。*
+*国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.7/FnCal-Android-0.3.7.apk) 下载同一个包。*
 
 **还有这些**
 
@@ -103,7 +103,7 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 下载 `FnCal-0.6.11.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
+1. 下载 `FnCal-0.6.14.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -111,14 +111,14 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.6.11.fpk
-# Windows: Get-FileHash .\FnCal-0.6.11.fpk -Algorithm SHA256
+sha256sum FnCal-0.6.14.fpk
+# Windows: Get-FileHash .\FnCal-0.6.14.fpk -Algorithm SHA256
 ```
 
-期望值也写在 `SHA256SUMS.txt` 里。0.6.11 安装包的 SHA-256：
+期望值也写在 `SHA256SUMS.txt` 里。0.6.14 安装包的 SHA-256：
 
 ```
-FDD78A057426F0ED16337185A6F89B49FD7664CB1D71AFEF9D45B4F9F9196FC7
+C5F45884FC6F28B89309149DD5CDDCF48522DB4C187A2522CA7B05EA47ECBD39
 ```
 
 **升级**
@@ -173,7 +173,7 @@ FDD78A057426F0ED16337185A6F89B49FD7664CB1D71AFEF9D45B4F9F9196FC7
 | 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500）。不带会话头的客户端照常可用；批准时返回审批链接（`approval_requires_ui` + `approvalUrl`，10 分钟、每条一次） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用） |
 
-附一份 **MCP 技能包**（`FnCal-MCP-Skill-0.6.11.zip`），作为 Release 附件一并下载，交给 AI 客户端当使用说明。技能包可自升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
+附一份 **MCP 技能包**，独立发版，当前 1.0.0：`FnCal-MCP-Skill-1.0.0.zip`（26,420 B / `794A9FF15C54B07E63646D133757AB39C1FC2A5F2D0D662070CDB4AFA2CD81EC`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v1.0.0) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
 
 ---
 

@@ -1,7 +1,8 @@
 ---
 name: fncal-mcp
 description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.6.11
+version: 1.0.0
+fncalMinVersion: 0.6.14
 user-invocable: true
 license: MIT
 ---
@@ -17,7 +18,7 @@ This file ships with FnCal but lives in the repository, so it can be updated on 
 1. `https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md`（Gitee 镜像）
 2. `https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md`（GitHub；部分网络不可达）
 
-Compare the fetched frontmatter `version` with the local one; use the higher version for the rest of the conversation, and tell the user which address answered and which version you got. Fetch the sibling files the same way when needed: `reference/tools.md`, `reference/setup.md`, `reference/examples.md`. If all three addresses fail, say plainly that the latest skill could not be fetched and carry on with the local copy — never block the conversation.
+Compare the fetched frontmatter `version` with the local one; use the higher version for the rest of the conversation, and tell the user which address answered and which version you got. Fetch the sibling files the same way when needed: `reference/tools.md`, `reference/setup.md`, `reference/examples.md`. If both addresses fail, say plainly that the latest skill could not be fetched and carry on with the local copy — never block the conversation.
 
 A skill upgrade changes only these instructions. It does not touch the FnCal server, does not need a restart, and does not require FnCal itself to be updated — and updating FnCal does not require a skill upgrade. Never present a skill upgrade as an app upgrade.
 
