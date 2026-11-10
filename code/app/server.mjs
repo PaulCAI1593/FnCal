@@ -87,7 +87,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 重新量宽。纯前端，无接口与数据变化。
 // 0.7.9：月格「今天」胶囊贴右、全天任务 emoji 被前导挤掉、平板周视图名称只显示
 // emoji、跨天定时事件进时间轴、平板多日条名称跨格——纯前端，无接口与数据变化。
-export const VERSION = '0.7.10';
+export const VERSION = '0.7.13';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -454,7 +454,8 @@ export async function createApp(
   const dataApi = createDataApi({ store, logger });
   // 0.3.0 P1：AI 数据层 + 用户侧 REST。凭据单独一张表（ai-credentials），
   // 与 CalDAV 专用密码表完全分离；令牌只在创建时返回明文。
-  const aiStore = createAiStore({ store, accounts, varDir: config.varDir, logger });
+  // 0.7.11（M6 §2.3）：标签提案受理需要标签注册表；未装配时标签提案报 tag_unavailable。
+  const aiStore = createAiStore({ store, accounts, varDir: config.varDir, logger, tags: tagStore });
   const aiTrash = createAiTrash({ store, logger });
 const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   // 0.3.0 P2：AI 侧 Bearer REST（/api/ai/v1/*）。`health()` 同步返回迁移状态，

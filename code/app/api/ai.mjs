@@ -11,7 +11,7 @@
 //   - 404 统一用 ai-grants 的 NOT_FOUND_BODY，保证「不存在」的响应体处处一致。
 
 import { NOT_FOUND_BODY, DELETE_MODE_TRASH, deleteModeOf } from '../lib/ai-grants.mjs';
-import { publicCredential } from '../lib/ai-store.mjs';
+import { isTagProposalAction, publicCredential, tagProposalCard } from '../lib/ai-store.mjs';
 import { runProposalBatch } from '../lib/ai-service.mjs';
 import { proposalFieldsOfIcs, summaryOfIcs } from '../lib/ical.mjs';
 import { TRASH_RETENTION_OPTIONS } from '../lib/ai-trash.mjs';
@@ -320,6 +320,11 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
         proposals: list.map((proposal) => ({
           id: proposal.id,
           action: proposal.action,
+          // 0.7.11（M6 §4）：标签提案没有 calendarId / uid / ICS，卡片改看 `tag`。
+          tagId: proposal.tagId || null,
+          tag: isTagProposalAction(proposal.action)
+            ? tagProposalCard(proposal.action, proposal.before, proposal.after)
+            : null,
           // 0.4.12：徽标文案由前端拼「凭据名 + 动作」，这里只给名字。
           credentialName: credentialNameOf(proposal),
           // 0.4.15（M23 §5.1）：卡片要按「该提案凭据当前 deleteMode」选影响文案，
@@ -336,7 +341,10 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
           // 0.4.13：用户批准 / AI 端批准（decidedBy:'agent'）——卡片据此标「AI 批准」。
           decidedBy: proposal.decidedBy || null,
           // 用户在日历里只该看到目标日历的显示名，不需要整份 ICS。
-          calendarExists: calendarIds.includes(proposal.calendarId),
+          // 0.7.11：标签提案没有目标日历，按「存在」处理，别让卡片显示「日历已删除」。
+          calendarExists: isTagProposalAction(proposal.action)
+            ? true
+            : calendarIds.includes(proposal.calendarId),
           // 0.4.10：卡片要的「时间 / 地点」在快照自己的 ICS 里解析成分级字段。
           before: proposal.before
             ? {

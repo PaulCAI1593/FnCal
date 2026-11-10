@@ -659,12 +659,14 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     await tick();
     const editor = dialog.querySelector('.ai-editor');
     const titles = [...editor.querySelectorAll('.ai-block__title')].map((node) => node.textContent.trim());
+    // 0.7.11（M6 §2.4）：标签权限是独立块，插在「操作方式」之后、「对话内代办批准」之前。
     expect(titles).toEqual([
       '名称',
       '日历授权',
       '可读时间窗',
       '字段开关',
       '操作方式',
+      '标签权限',
       '对话内代办批准',
       '令牌',
       '删除凭据',

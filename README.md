@@ -4,7 +4,7 @@
 
 ![FnCal 主界面：年视图、左侧日历列表与顶部工具栏](docs/screenshots/main.png)
 
-当前版本：**0.7.10**
+当前版本：**0.7.13**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -12,7 +12,7 @@
 
 **项目页面**：<https://paulcai1593.github.io/FnCal/>
 
-**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v0.7.10)。
+**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v0.7.13)。
 
 *国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)，内容与 GitHub 相同。*
 
@@ -79,11 +79,11 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 ### 6. 多标签系统
 
-给日程和任务挂一个 emoji 标签：标签在设置里分组管理，可新建、改名、拖动排序，分组可折叠；一个日程或任务只挂一个标签。月视图、周 / 四日 / 日、日程列表与搜索结果都显示「emoji + 名称」，窄到放不下名称时只留 emoji。筛选面板可按标签多选、也能只看「无标签」，与日历、颜色、时间条件叠加。导出时标签写进 `CATEGORIES`，标准客户端也能看到。
+给日程和任务挂一个 emoji 标签：标签在设置里分组管理，可新建、改名、拖动排序，分组可折叠；一个日程或任务只挂一个标签。月视图、周 / 四日 / 日、日程列表与搜索结果都显示「emoji + 名称」，窄到放不下名称时只留 emoji。筛选面板可按标签多选、也能只看「无标签」，与日历、颜色、时间条件叠加。导出时标签写进 `CATEGORIES`，标准客户端也能看到。AI 凭据在授权后也能新建、改名、删除标签。
 
 **安卓端**：外壳直连你自己的 NAS，填地址就能用，不经过任何中转。桌面可加五款只读卡片：迷你月历、单日日程、月视图、四日视图、日程列表，跟随登录态自动刷新，约 30 分钟更新一次；状态栏与手势条透明，内容留在安全区内。
 
-**安卓下载**：`FnCal-Android-0.3.8.apk` <https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.8/FnCal-Android-0.3.8.apk>，988,397 B，SHA-256 `c08f88df7477557ff3c6064f63a7288893f57968494033c665adbd2d082c698c`；release 构建 + R8 压缩，可直接覆盖 0.3.7，不用卸载。
+**安卓下载**：`FnCal-Android-0.3.8.apk` <https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.8/FnCal-Android-0.3.8.apk>，988,397 B，SHA-256 `c08f88df7477557ff3c6064f63a7288893f57968494033c665adbd2d082c698c`；release 构建 + R8 压缩，包体约为上一版四分之一，可直接覆盖 0.3.7，不用卸载。
 
 *国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.8/FnCal-Android-0.3.8.apk) 下载同一个包。*
 
@@ -106,7 +106,7 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 下载 `FnCal-0.7.10.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
+1. 下载 `FnCal-0.7.13.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -114,14 +114,14 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.7.10.fpk
-# Windows: Get-FileHash .\FnCal-0.7.10.fpk -Algorithm SHA256
+sha256sum FnCal-0.7.13.fpk
+# Windows: Get-FileHash .\FnCal-0.7.13.fpk -Algorithm SHA256
 ```
 
-期望值也写在 `SHA256SUMS.txt` 里。0.7.10 安装包的 SHA-256：
+期望值也写在 `SHA256SUMS.txt` 里。0.7.13 安装包（796,162 B）的 SHA-256：
 
 ```
-8EC749B334FE5703DAB0A804FDEEF0584758188F9B0C34B4770920D8F787FB38
+8C302393549D8A338542DE61A9CF3B475B6A8C653AE8E4F598E1BEEC4973D062
 ```
 
 **升级**
@@ -163,7 +163,7 @@ sha256sum FnCal-0.7.10.fpk
 **这套能力默认是关的，只有管理员能打开。**
 
 1. 打开 设置 → **AI** 页签 → 打开「服务」开关（改完点底部的「应用」）；
-2. 「凭据」里点「新建凭据」：填名称、勾选每个日历的权限（默认全「不可见」）、按需设时间窗与字段开关，再按两组选「操作方式」——新建、修改（提案 / 直接通过，默认提案）与删除（提案 / 回收站，默认提案）；
+2. 「凭据」里点「新建凭据」：填名称、勾选每个日历的权限（默认全「不可见」）、按需设时间窗与字段开关，再按两组选「操作方式」——新建、修改（提案 / 直接通过，默认提案）与删除（提案 / 回收站，默认提案）；标签另有「新建与编辑」「删除」两组，同样选提案或直接通过，默认提案；
 3. 保存后**令牌只显示一次**，立刻复制走（丢了只能删除后重建）；
 4. 把「MCP 连接地址」或旁边的「MCP 配置片段」交给 AI 客户端，按客户端要求填：
    - 客户端有单独的 **Bearer Token / 访问令牌** 输入框：只填令牌本体（`fncal_ai_` 开头那串），**不要带 `Bearer` 前缀**，地址填到 URL 字段；
@@ -174,9 +174,9 @@ sha256sum FnCal-0.7.10.fpk
 | 连接地址 | `http(s)://<你的地址>/mcp`（直连用 http，套 HTTPS 反代用 https；地址在 AI 页的「服务」块里，可复制） |
 | 认证 | `Authorization: Bearer fncal_ai_…` |
 | 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500）。不带会话头的客户端照常可用；批准时返回审批链接（`approval_requires_ui` + `approvalUrl`，10 分钟、每条一次） |
-| 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用） |
+| 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；标签：`create_tag` / `update_tag` / `delete_tag`（受「新建与编辑」「删除」两组控制）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用） |
 
-附一份 **MCP 技能包**，独立发版，当前 0.7.10：`FnCal-MCP-Skill-0.7.10.zip`（28,362 B / `F3E8E0E9C75D22C893803FEFE6FFEEF1E2773FE3962D1701DA10F8383D55BF6B`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v0.7.10) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
+附一份 **MCP 技能包**，独立发版，当前 0.7.13：`FnCal-MCP-Skill-0.7.13.zip`（29,576 B / `C99F957BE9FBFE73C328F3908FC7144A95FA7958DE38FA06D473A266CBA7A633`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/skill-v0.7.13) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
 
 ---
 

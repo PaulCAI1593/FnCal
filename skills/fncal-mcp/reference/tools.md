@@ -30,6 +30,51 @@ No arguments.
 - `id` and `name` are interchangeable wherever a tool takes `tag` or `tags`.
 - **What FnCal writes:** the tag's emoji goes into the **title** as `emoji 名称` (one half-width space, e.g. `🚄 出行`); `CATEGORIES` gets the bare tag name (`出行`), never the emoji. FnCal prepends the emoji itself — send a plain title and do not double it. Reading accepts `CATEGORIES:🚄 出行`, `🚄出行` and `出行`.
 
+## create_tag
+
+| arg | type | notes |
+|---|---|---|
+| `name` | string | required, 1–12 characters (the registry's limit; code points, whitespace collapsed) |
+| `emoji` | string | one grapheme; optional on create, FnCal does not invent one |
+| `groupId` | string | optional; omitted = the default group |
+
+Governed by `tagWriteMode` — the same switch as `update_tag` (`proposal` by default, `direct` optional), independent of the calendar grants.
+
+```json
+// direct
+{ "ok": true, "mode": "direct", "tag": { "id": "tag_1a2b3c4d", "name": "旅行", "emoji": "🧳", "group": "未分组" } }
+// proposal — the registry is unchanged
+{ "ok": true, "applied": false, "mode": "proposal",
+  "proposal": { "id": "p_…", "action": "tag_create", "summary": "新建标签 🧳 旅行" } }
+```
+
+## update_tag
+
+| arg | type | notes |
+|---|---|---|
+| `tag` | string | required; id or name |
+| `emoji` | string | optional |
+| `name` | string | optional, 1–12 characters |
+| `groupId` | string | optional |
+
+Governed by `tagWriteMode`, the same switch as `create_tag`. Result mirrors `create_tag`, with `tag` holding the updated tag. The proposal carries `tagId`, `before` and `after`; accepting it fails with `tag_changed` when the tag changed in the meantime.
+
+## delete_tag
+
+| arg | type | notes |
+|---|---|---|
+| `tag` | string | required; id or name |
+
+Governed by `tagDeleteMode`. Deleting removes the tag from the registry **and clears it from every event and task that carried it, including calendars this credential cannot see** — the registry is global.
+
+```json
+{ "ok": true, "mode": "direct", "removed": { "id": "tag_1a2b3c4d", "name": "旅行" }, "affected": 12 }
+```
+
+- `affected` is the number of events and tasks whose tag was cleared.
+- The proposal carries `tagId`, `before` and `affected`; the count the user sees is that number.
+- `tag_exists` (name collision on create/update) → 409; `tag_not_found` (unknown tag or group) → 404. Tags are global, so neither answer depends on which calendars the credential can read.
+
 ## list_events
 
 | arg | type | notes |

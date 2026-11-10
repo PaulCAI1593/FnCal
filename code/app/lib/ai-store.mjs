@@ -50,7 +50,55 @@ export const PROPOSAL_TTL_MS = 24 * 60 * 60 * 1000;
 //   TTL       = 一条 pending 提案「待确认多久算过期」；
 //   RETENTION = 一条非 pending 提案（过期/已接受/已拒绝/冲突）「再保留多久就删掉」。
 export const PROPOSAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-export const PROPOSAL_ACTIONS = Object.freeze(['create', 'update', 'delete']);
+export const PROPOSAL_ACTIONS = Object.freeze([
+  'create',
+  'update',
+  'delete',
+  // 0.7.11（M6 §4）：标签类提案，payload 与事件提案不同（无 calendarId / uid / ICS）。
+  'tag_create',
+  'tag_update',
+  'tag_delete',
+]);
+/** 只有这三种动作走标签受理路径；其余仍按事件 ICS 写入。 */
+export const TAG_PROPOSAL_ACTIONS = Object.freeze(['tag_create', 'tag_update', 'tag_delete']);
+export function isTagProposalAction(action) {
+  return TAG_PROPOSAL_ACTIONS.includes(String(action || ''));
+}
+
+/**
+ * 0.7.11（M6 §4）：三类标签提案的卡片数据（MCP `list_proposals`、用户侧列表、前端卡片共用一种形状）。
+ * 只读快照，不做校验；缺字段给空值，坏数据不会让列表 500。
+ */
+export function tagProposalCard(action, before = {}, after = {}) {
+  if (action === 'tag_create') {
+    const draft = after && typeof after.tag === 'object' && after.tag ? after.tag : {};
+    return {
+      kind: 'create',
+      emoji: String(draft.emoji || ''),
+      name: String(draft.name || ''),
+      groupId: String(draft.groupId || ''),
+    };
+  }
+  if (action === 'tag_update') {
+    const prev = before && typeof before === 'object' ? before : {};
+    return {
+      kind: 'update',
+      before: { emoji: String(prev.emoji || ''), name: String(prev.name || '') },
+      after: {
+        ...(after && typeof after === 'object' ? after : {}),
+        emoji: String((after && after.emoji) || ''),
+        name: String((after && after.name) || ''),
+      },
+    };
+  }
+  const prev = before && typeof before === 'object' ? before : {};
+  return {
+    kind: 'delete',
+    emoji: String(prev.emoji || ''),
+    name: String(prev.name || ''),
+    affected: Number(prev.affected) || 0,
+  };
+}
 export const PROPOSAL_STATUSES = Object.freeze(['pending', 'accepted', 'rejected', 'expired', 'conflict']);
 // P2：AI 侧请求限流（次/60 秒）。默认 60，上限 6000，避免凭据写个天文数字。
 export const RATE_LIMIT_DEFAULT = 60;
@@ -108,6 +156,29 @@ function conflict(reason, details = {}) {
   return Object.assign(new Error(`提案无法受理：${reason}`), { code: 'conflict', reason, details });
 }
 
+/** 0.7.11：标签提案受理前发现标签已被改过 / 已不存在 → 409 tag_changed。 */
+function tagChanged(message = '标签已被修改或删除，请重新发起') {
+  return Object.assign(new Error(message), { code: 'tag_changed', status: 409 });
+}
+
+/**
+ * 0.7.11（M6 §3）：把标签注册表的错误翻译成 MCP/REST 口径。
+ * 注册表本身用的是 TAG_NAME_DUPLICATE(400) / TAG_NOT_FOUND(404) 这类历史码；
+ * AI 面统一成 `tag_exists`(409) / `tag_not_found`(404) / `invalid`(400)。
+ */
+export function tagErrorOf(err) {
+  const code = String((err && err.code) || '');
+  const message = String((err && err.message) || '标签操作失败');
+  if (code === 'TAG_NAME_DUPLICATE' || code === 'GROUP_NAME_DUPLICATE') {
+    return Object.assign(new Error(message), { code: 'tag_exists', status: 409 });
+  }
+  if (code === 'TAG_NOT_FOUND' || code === 'GROUP_NOT_FOUND') {
+    return Object.assign(new Error(message), { code: 'tag_not_found', status: 404 });
+  }
+  if (code === 'tag_exists' || code === 'tag_not_found' || code === 'tag_changed' || code === 'invalid') return err;
+  return Object.assign(new Error(message), { code: 'invalid', status: 400, cause: code || null });
+}
+
 function normalizeLabel(value) {
   const label = String(value === undefined || value === null ? '' : value).trim();
   if (!label) throw invalid('label', '请填写凭据名称');
@@ -160,6 +231,8 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     fieldMask: credential.fieldMask,
     writeMode: credential.writeMode,
     deleteMode: credential.deleteMode,
+    tagWriteMode: credential.tagWriteMode,
+    tagDeleteMode: credential.tagDeleteMode,
     grants: credential.grants,
   });
   // 0.4.23（M4 §S13/A11）：存量凭据兼容——没有提案模式时对外按「代办批准关闭、未设 PIN」读。
@@ -175,6 +248,9 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     writeMode: writeModeOf(credential),
     // 0.4.13（M4 §2 硬规则①）：删除模式按凭据返回；旧凭据补默认 proposal。
     deleteMode: deleteModeOf(credential),
+    // 0.7.12（M6 §2.1）：标签两项权限回读（新建与编辑 / 删除），旧凭据补默认 proposal。
+    tagWriteMode: window.tagWriteMode,
+    tagDeleteMode: window.tagDeleteMode,
     // 0.4.13（M4 §4）：允许 AI 助手经 MCP 批准该凭据自己产生的提案；默认关。
     agentApproval: approvalEffective,
     // 0.4.22（M4 §S1）：审批页是否需要 PIN；只回「是否已设置」，绝不回显哈希或 PIN。
@@ -193,6 +269,9 @@ export function createAiStore({
   varDir,
   logger = null,
   now = () => Date.now(),
+  // 0.7.11（M6 §4）：标签注册表。受理标签提案时要按 `before` 校验并写注册表，
+  // 与 AI 直写同一份实现；未装配（老测试/精简装配）时标签提案受理报 tag_unavailable。
+  tags = null,
 } = {}) {
   if (!store) throw new Error('createAiStore 需要 store');
   const root = path.resolve(varDir || store.root || process.cwd());
@@ -450,6 +529,9 @@ export function createAiStore({
       writeMode: limits.writeMode,
       // 0.4.13（M4 §2 硬规则①）：删除模式跟凭据走，默认 proposal。
       deleteMode: limits.deleteMode,
+      // 0.7.12（M6 §2.1）：标签两项权限（新建与编辑 / 删除），默认 proposal。
+      tagWriteMode: limits.tagWriteMode,
+      tagDeleteMode: limits.tagDeleteMode,
       agentApproval,
       rateLimit: normalizeRateLimit(input.rateLimit),
       createdAt,
@@ -501,6 +583,13 @@ export function createAiStore({
     if (patch.deleteMode !== undefined) {
       if (!DELETE_MODES.includes(patch.deleteMode)) throw invalid('deleteMode', '删除方式不合法');
       target.deleteMode = patch.deleteMode;
+    }
+    // 0.7.12（M6 §2.1）：标签两项权限（新建与编辑 / 删除）；与事件写入模式/删除模式互不影响。
+    // 0.7.11 的 tagCreateMode / tagUpdateMode 不再识别：patch 里带上也不报错、不落盘。
+    for (const field of ['tagWriteMode', 'tagDeleteMode']) {
+      if (patch[field] === undefined) continue;
+      if (!WRITE_MODES.includes(patch[field])) throw invalid(field, '标签权限不合法');
+      target[field] = patch[field];
     }
     if (patch.rateLimit !== undefined) {
       target.rateLimit = normalizeRateLimit(patch.rateLimit);
@@ -715,12 +804,22 @@ export function createAiStore({
   async function createProposal(userId, input = {}) {
     const action = String(input.action || '');
     if (!PROPOSAL_ACTIONS.includes(action)) throw invalid('action', '提案动作不合法');
-    const calendarId = normalizeCalendarId(input.calendarId);
-    const uid = normalizeUid(input.uid);
     const credential = input.credentialId ? await getCredential(userId, input.credentialId) : null;
     if (input.credentialId && !credential) throw invalid('credentialId', '凭据不存在');
-    if (credential && !isVisible(credential, calendarId)) {
-      throw invalid('calendarId', '该凭据无权访问此日历');
+    const tagAction = isTagProposalAction(action);
+    let calendarId = null;
+    let uid = null;
+    let tagId = null;
+    if (tagAction) {
+      // 0.7.11（M6 §4）：标签提案没有日历 / UID；标签全局可见，不做 calendarId 可见性校验。
+      tagId = String(input.tagId || '').trim() || null;
+      if (action !== 'tag_create' && !tagId) throw invalid('tagId', '标签提案缺少 tagId');
+    } else {
+      calendarId = normalizeCalendarId(input.calendarId);
+      uid = normalizeUid(input.uid);
+      if (credential && !isVisible(credential, calendarId)) {
+        throw invalid('calendarId', '该凭据无权访问此日历');
+      }
     }
     const note = String(input.note || '').slice(0, NOTE_MAX);
     const createdAt = now();
@@ -731,6 +830,7 @@ export function createAiStore({
       action,
       calendarId,
       uid,
+      tagId,
       before: isPlainObject(input.before) ? input.before : null,
       after: isPlainObject(input.after) ? input.after : null,
       note,
@@ -743,7 +843,9 @@ export function createAiStore({
     const file = await loadProposals(userId);
     file.proposals.push(proposal);
     await saveProposals(userId, file);
-    logEvent('ai-proposal-created', { userId, id: proposal.id, action, calendarId, uid });
+    logEvent('ai-proposal-created', {
+      userId, id: proposal.id, action, calendarId, uid, tagId,
+    });
     return proposal;
   }
 
@@ -762,6 +864,59 @@ export function createAiStore({
   }
 
   /**
+   * 0.7.11（M6 §4）：标签提案受理。
+   *
+   * 与事件提案同一条入口（`acceptProposal`），区别只有两处：
+   *   ① 不做 ICS / ETag 比对，改按 `before` 的 `{ emoji, name }` 校验标签仍存在且未被改过
+   *      （被改过 → 409 `tag_changed`，提示重新发起）；
+   *   ② 落库走 `tagStore` 的 `create` / `update` / `remove`，不另写一套注册表逻辑。
+   * 过期与 pending 判定仍由调用方 `canAcceptProposal` 先做（与事件提案一致）。
+   */
+  async function acceptTagProposal(userId, proposal, { decidedBy = 'user' } = {}) {
+    if (!tags || typeof tags.create !== 'function') {
+      throw Object.assign(new Error('标签功能未启用'), { code: 'tag_unavailable', status: 503 });
+    }
+    const before = isPlainObject(proposal.before) ? proposal.before : {};
+    const after = isPlainObject(proposal.after) ? proposal.after : {};
+    const tagId = String(proposal.tagId || after.tagId || '').trim();
+    let result;
+    try {
+      result = await withUser(userId, async () => {
+        if (proposal.action === 'tag_create') {
+          const draft = isPlainObject(after.tag) ? after.tag : {};
+          const tag = await tags.create({ emoji: draft.emoji, name: draft.name, groupId: draft.groupId });
+          return { tag: { id: tag.id, name: tag.name, emoji: tag.emoji || '' } };
+        }
+        const current = tagId ? await tags.resolve(tagId) : null;
+        if (!current) throw tagChanged();
+        const sameEmoji = String(current.emoji || '') === String(before.emoji || '');
+        const sameName = String(current.name || '') === String(before.name || '');
+        if (!sameEmoji || !sameName) throw tagChanged();
+        if (proposal.action === 'tag_update') {
+          const next = await tags.update(current.id, {
+            emoji: after.emoji,
+            name: after.name,
+            groupId: after.groupId,
+          });
+          return { tag: { id: next.id, name: next.name, emoji: next.emoji || '' } };
+        }
+        // tag_delete：affected 优先取提案里记的值（发起时算的），取不到再现场数一遍。
+        let affected = Number.isFinite(Number(before.affected)) ? Number(before.affected) : null;
+        if (affected === null) {
+          const data = await tags.list({ withCounts: true });
+          const row = (data.tags || []).find((item) => item.id === current.id) || null;
+          affected = row ? Number(row.count) || 0 : 0;
+        }
+        await tags.remove(current.id);
+        return { removed: { id: current.id, name: current.name }, affected };
+      });
+    } catch (err) {
+      throw tagErrorOf(err);
+    }
+    return markProposalDecided(userId, proposal, 'accepted', { result, decidedBy });
+  }
+
+  /**
    * 受理提案：先按 effective status 判（过期/已决 → 409），再按 ETag 判版本冲突
    * （冲突 → 409 + 当前 etag 详情），最后才写库。
    * 写入本身走 `applyChange`（与 AI 直写同一份语义，P2 起不再有第二套写规则）。
@@ -771,6 +926,7 @@ export function createAiStore({
     if (!proposal) return { missing: true };
     const allowed = canAcceptProposal(proposal, now());
     if (!allowed.ok) throw conflict(allowed.reason, { status: proposal.status });
+    if (isTagProposalAction(proposal.action)) return acceptTagProposal(userId, proposal, { decidedBy });
 
     const before = isPlainObject(proposal.before) ? proposal.before : {};
     const after = isPlainObject(proposal.after) ? proposal.after : {};

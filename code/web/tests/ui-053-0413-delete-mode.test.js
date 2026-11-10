@@ -330,8 +330,13 @@ describe('0.4.13 · 凭据编辑器「操作方式」两组（M21 §2 第 2 版�
       credentials: [credential({ grants: { default: 'read', work: 'hidden' }, grantSummary: { read: 1, write: 0, hidden: 1 } })],
     });
     await openEditor(root);
-    const rows = [...root.querySelectorAll('.ai-editor .ai-mode-row')];
+    // 0.7.12（M6 §2.1）：标签两项（新建与编辑 / 删除）与日历写档无关，只读凭据仍可用；
+    // 这里只校验日历两组。
+    const rows = ['writeMode', 'deleteMode'].map((mode) => editorRow(root, mode));
     for (const row of rows) expect(rowSegs(row).every((b) => b.disabled)).toBe(true);
+    for (const mode of ['tagWriteMode', 'tagDeleteMode']) {
+      expect(rowSegs(editorRow(root, mode)).every((b) => b.disabled)).toBe(false);
+    }
     expect(root.querySelector('.ai-editor .ai-mode__notes').textContent).toContain(t('settings.ai.deleteMode.readonly'));
   });
 
@@ -402,14 +407,21 @@ describe('0.4.14 · 回收站子块（M21 第 3 版 §2.4）', () => {
     expect(block.querySelector('.ai-trash__clear').disabled).toBe(false);
     // 位置：操作方式块之后、代办批准块之前（M21 第 3 版 §2.1）。
     // 0.4.23（S12）：各区块统一放进 .ai-editor__body，子块仍紧跟操作方式块。
+    // 0.7.11（M6 §2.4）：新增「标签权限」块插在操作方式之后，回收站子块顺延一位。
+    // 0.7.12（M6 §2.4）：操作方式与标签权限之间插了一条分隔线（divider），标签块再顺延一位。
     const editor = root.querySelector('.ai-editor__body');
     const children = [...editor.children];
     const operationBlock = children.find((node) => (node.querySelector('.ai-block__title') || {}).textContent
       === t('settings.ai.editor.block.operation'));
     const operationIndex = children.indexOf(operationBlock);
+    const dividerIndex = children.findIndex((node) => node.classList.contains('ai-editor__divider'));
+    const tagIndex = children.findIndex((node) => (node.querySelector('.ai-block__title') || {}).textContent
+      === t('settings.ai.editor.block.tags'));
     const blockIndex = children.indexOf(block);
-    
-    expect(blockIndex).toBe(operationIndex + 1);
+
+    expect(dividerIndex).toBe(operationIndex + 1);
+    expect(tagIndex).toBe(dividerIndex + 1);
+    expect(blockIndex).toBe(tagIndex + 1);
     const agentIndex = children.findIndex((node) => node.textContent.includes(t('settings.ai.agentApproval.label')));
     expect(agentIndex).toBeGreaterThan(blockIndex);
   });

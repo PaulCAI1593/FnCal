@@ -3464,6 +3464,14 @@ label,
      保留为 footer 实测高度，焦点项不会被吸底条挡住。 */
   scroll-padding-bottom: var(--ai-editor-foot-h, 52px);
 }
+/* 0.7.12（M6 §2.4，用户「日历和标签权限之间加个分隔符」）：两套权限之间的分隔线。
+   上下间距由 `.ai-editor__body` 的 flex gap（--sp-6）提供，元素只画 1px 边框，
+   不额外加 margin；颜色沿用 --border，深色主题自动跟着切换。 */
+.ai-editor__divider {
+  height: 0;
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
 .ai-editor .ai-block {
   display: flex;
   flex-direction: column;

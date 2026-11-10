@@ -1,8 +1,8 @@
 ---
 name: fncal-mcp
 description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.7.10
-fncalMinVersion: 0.7.10
+version: 0.7.13
+fncalMinVersion: 0.7.13
 user-invocable: true
 license: MIT
 ---
@@ -75,6 +75,15 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 - `writeMode` governs create and update. `proposal` (default) records a pending proposal and returns `applied: false`; the human accepts or rejects it in FnCal. `direct` applies immediately. When a write is still a proposal, say so plainly: "已提交待确认的改动，请在 FnCal 里确认".
 - `deleteMode` governs delete only, and is separate from `writeMode`. `proposal` (default) records a pending delete proposal. `trash` deletes **immediately**: the event disappears from the calendar and goes to FnCal's trash for the retention period (default 7 days), where the user can restore it. The result is `{ "applied": true, "deleted": true, "calendarId": … }`.
 - **You cannot restore or empty the trash.** Only the user can, in FnCal. In trash mode do not say "deletion is irreversible" — say the event was moved to FnCal's trash and can be restored there until the retention period ends.
+
+**Tag writes — two more switches, independent of calendars** (0.7.13)
+- `tagWriteMode` governs `create_tag` and `update_tag`; `tagDeleteMode` governs `delete_tag`. Each is `proposal` (default) or `direct`, and the two are independent, mirroring `writeMode` / `deleteMode` for events. They do **not** depend on the calendar grants: a credential with `read` on every calendar can still have `direct` on a tag op, because the tag registry is global.
+- `proposal` records a pending `tag_create` / `tag_update` / `tag_delete` and returns `applied: false` plus the `proposal`; the registry is unchanged until the user accepts it in FnCal. `direct` writes immediately and returns `{ ok: true, mode: "direct", tag }` (or `removed` + `affected` for delete).
+- `canTagWrite(credential, op)` answers the mode; when the three tools are absent from `tools/list`, the credential is on an older server — do not retry, tell the user to upgrade FnCal.
+- `tag_delete` is **not** trash: it deletes the tag from the registry and clears it from every event that carried it, **including calendars this credential cannot see**. `affected` is that total. Say the count and that it cannot be undone.
+- Name collision → `tag_exists`; unknown tag → `tag_not_found` (same "invisible = not there" style).
+- Accepting a tag proposal re-checks `before`; if the tag changed meanwhile the call answers `tag_changed` — ask the user to start again instead of forcing it.
+
 - Proposals expire 24 hours after creation; accepting one can fail with an ETag conflict if the event changed in the meantime (another device, CalDAV client, or the web UI).
 - **In-conversation proxy approval** (`agentApproval`, off by default per credential): when the user turns it on, you may list your own pending proposals with `list_proposals` and settle them with `approve_proposal` / `reject_proposal` — but only inside the conversation, as the user's proxy. **The click inside FnCal's own confirmation popup is the only authorization the server accepts.** Show the proposal summary (title, time, action, effect) before you call, but never treat a chat "yes" as that click: without an elicitation popup the call is refused and the reply carries an **approval link** (`approvalUrl`); hand that link to the user — they open it in a browser and settle the proposals there. The page is the same proposal list FnCal shows: a 刷新 button, 全部批准 / 全部拒绝 in the toolbar when 2+ are still pending, and a 批准 / 拒绝 pair on every card. The link lives 10 minutes, and each proposal bound to it can be settled once. If the credential has a 4-digit PIN the page asks for it first (four boxes): never ask the user for the PIN, never repeat it, never guess it. Never self-approve, never decide on your own, never batch silently. When the switch is off, those calls fail with `凭据未开启 AI 端代办批准，请到 FnCal 设置里打开，或在日历界面批准` — report that sentence and leave the decision to the human. **Credential editor:** the agent-approval switch only appears when create/update or delete is set to proposal mode; the PIN field appears only while that switch is on, and turning it off clears the saved PIN.
   **Approval only happens through the popup.** If the client declares MCP elicitation, FnCal sends `elicitation/create` during the call and the user clicks 批准 / 拒绝 / 取消 there — that click is the authorization; report the outcome and do not ask twice in text. **If the client has no elicitation capability, every approval tool answers `isError: true`, `code: "approval_requires_ui"` and executes nothing**; `confirmed: true` is deprecated and is refused as well, so never retry with it and never say the change was made. Give the user the server's `message` and the `approvalUrl`: the link opens the same proposal list FnCal shows — per-card 批准 / 拒绝, 全部批准 / 全部拒绝 and 刷新 in the toolbar; 10 minutes, each proposal once. `confirmed: true` stays refused. Decline, cancel, timeout, and a dropped popup never change calendar data.
@@ -101,6 +110,9 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 | `get_event` | read | `uid` |
 | `find_free_slots` | read | — (`from`, `to`, `minMinutes` optional) |
 | `list_tags` | read | — (returns `id`, `name`, `emoji`, `group`, `count`) |
+| `create_tag` | tag write (proposal or direct — §2) | `emoji` (1 grapheme), `name` (1–12 characters), `groupId` optional |
+| `update_tag` | tag write (proposal or direct — §2) | `tag` (id or name); `emoji` / `name` / `groupId` optional |
+| `delete_tag` | tag write (proposal or direct — §2) | `tag` (id or name); returns `removed` + `affected` |
 | `create_event` | write | `calendarId`, plus `title`+start/end or a full `ics` (`tag` optional) |
 | `update_event` | write | `uid` (`ifMatch` optional, for ETag safety; `tag` optional, `""` clears it) |
 | `delete_event` | write | `uid` (proposal or trash — see §2) |
@@ -128,7 +140,7 @@ Result shape is uniformly `{ content: [{ type: "text", text: "<JSON>" }] }`; a t
 
 ### Tags — one per event, never invented
 
-FnCal events carry **one** tag (0.7.0). The registry is managed by the user under **设置 → 标签**; the MCP endpoint has **no** tool to create, rename or delete a tag — if the user asks for that, tell them to do it in FnCal and read the result back with `list_tags`.
+FnCal events carry **one** tag (since 0.7.10). The registry is managed by the user under **设置 → 标签**. Since 0.7.13 the MCP endpoint can also create, edit and delete tags, but only as far as the credential's tag switches allow (`tagWriteMode` for create/update, `tagDeleteMode` for delete) — the default is 提案, so a call usually becomes a pending proposal the user settles in FnCal (see §2).
 
 - **Look before you label.** Call `list_tags` and use a `name` or `id` it returned. `count` is how many events and tasks on calendars **this credential can read** carry that tag — it is not a global count, so do not present it as one.
 - **Reading:** `list_events` takes `tags: ["工作", "重要"]`. Several tags are a **union**: an event matches when it carries any one of them. The tag filter is **ANDed** with everything else (calendar, time window, mask). An event with no tag never matches a non-empty `tags` filter. The result also carries `tag: { id, name, emoji }` when the event has one.
@@ -167,7 +179,7 @@ Receipts are kept for 24 hours; an expired, undelivered one is dropped. A decisi
 5. **Report the truncated picture honestly.** If you cannot see a calendar or a field, say what you could see; do not invent the rest.
 6. **Never claim a change is done when it is a proposal.** Read `applied` in the result.
 7. **Never settle a queue on your own initiative, and never choose the mode for the user.** With two or more pending and a popup-capable client, the popup asks; with exactly one, go straight to the single popup. Without elicitation nothing can be settled from the conversation — hand it to FnCal's 提案 panel. Treating a chat "yes" as the click is a failure, not a shortcut.
-8. **Label only with real tags.** When the user asks for a label, read `list_tags` first and pass a name it returned; when they ask what a label is for, filter with `list_events` `tags` instead of scanning titles. Creating or renaming a tag is the user's job in 设置 → 标签.
+8. **Label only with real tags.** When the user asks for a label, read `list_tags` first and pass a name it returned; when they ask what a label is for, filter with `list_events` `tags` instead of scanning titles. Creating, renaming or deleting a tag is allowed since 0.7.13 but follows the credential's tag switches (`tagWriteMode` governs create and update, `tagDeleteMode` governs delete) — with the default 提案 the user confirms it first; say that, do not claim it is done.
 
 Worked examples (day plan, scheduling a meeting, moving an event, deleting with confirmation, weekly review): [reference/examples.md](reference/examples.md).
 

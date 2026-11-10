@@ -67,7 +67,40 @@ const PROPOSAL_MISSING_TEXT = '未找到该提案：它可能不存在、已被�
 /* ------------------------------ 0.4.17：确认摘要与提示（0.4.21 起只用于弹窗与被拒结果） */
 
 /** 提案动作词；不认识的动作按「修改」写，避免摘要里出现英文枚举。 */
-export const PROPOSAL_ACTION_WORDS = Object.freeze({ create: '新建', update: '修改', delete: '删除' });
+export const PROPOSAL_ACTION_WORDS = Object.freeze({
+  create: '新建',
+  update: '修改',
+  delete: '删除',
+  // 0.7.11（M6 §4）：标签类提案。
+  tag_create: '新建标签',
+  tag_update: '编辑标签',
+  tag_delete: '删除标签',
+});
+
+/** 标签提案的「emoji + 名称」；缺字段时给空串，由调用方兜底。 */
+function tagProposalLabel(card) {
+  const row = card && typeof card === 'object' ? card : {};
+  return `${row.emoji || ''}${row.name || ''}`.trim();
+}
+
+/** 标签提案的确认摘要（不带日历/时间：标签是全局注册表）。 */
+function tagProposalSummary(row, ctx = {}) {
+  const card = row.tag || {};
+  const action = PROPOSAL_ACTION_WORDS[row.action] || '编辑标签';
+  const decision = typeof ctx.decision === 'string' ? ctx.decision.trim() : '';
+  const head = decision ? `${decision}（${action}）` : action;
+  const name = tagProposalLabel(card) || '（无名称）';
+  if (row.action === 'tag_update') {
+    const before = tagProposalLabel(card.before) || '（无名称）';
+    const after = tagProposalLabel(card.after) || '（无名称）';
+    return `${head}「${before}」→「${after}」｜范围：所有日历`;
+  }
+  if (row.action === 'tag_delete') {
+    const affected = Number(card.affected) || 0;
+    return `${head}「${name}」｜范围：所有日历｜影响 ${affected} 条日程与任务`;
+  }
+  return `${head}「${name}」｜范围：所有日历`;
+}
 /**
  * `11-05 周四 10:00–11:00` / 全天写 `11-05 周四 全天` / 缺时间写「未提供」。
  * 0.4.27（S2）：不再取 ICS 字面墙钟，改为与审批页同一套服务端时区规则
@@ -94,6 +127,8 @@ export function proposalTitleOf(proposal) {
  */
 function buildConfirmSummary(proposal, ctx = {}) {
   const row = proposal || {};
+  // 0.7.11（M6 §4）：标签提案没有日历/时间/标题，走专用摘要。
+  if (String(row.action || '').startsWith('tag_')) return tagProposalSummary(row, ctx);
   const action = PROPOSAL_ACTION_WORDS[row.action] || '修改';
   const decision = typeof ctx.decision === 'string' ? ctx.decision.trim() : '';
   const head = decision ? `${decision}（${action}）` : action;
@@ -119,6 +154,21 @@ function buildConfirmSummary(proposal, ctx = {}) {
 /** 给 AI 原样贴给用户的中文确认句；末句固定「同意请回复「批准」/「拒绝」」（M4 §3）。 */
 function buildConfirmPrompt(proposal, decision = '批准', ctx = {}) {
   const row = proposal || {};
+  // 0.7.11（M6 §4）：标签提案给专用确认句（无日历/时间）。
+  if (String(row.action || '').startsWith('tag_')) {
+    const ask = decision === '拒绝' ? '拒绝' : '批准';
+    const card = row.tag || {};
+    const name = tagProposalLabel(card) || '（无名称）';
+    const target = row.action === 'tag_update'
+      ? `「${tagProposalLabel(card.before) || '（无名称）'}」→「${tagProposalLabel(card.after) || '（无名称）'}」`
+      : `「${name}」`;
+    const effect = ask === '批准'
+      ? (row.action === 'tag_delete'
+        ? `批准后立即删除标签，${Number(card.affected) || 0} 条日程与任务会失去它（永久，无法恢复）。`
+        : '批准后立即写入标签注册表，所有日历一起生效。')
+      : '拒绝后不会改动标签。';
+    return `请确认：${ask}（${PROPOSAL_ACTION_WORDS[row.action]}）${target}？范围：所有日历。${effect}\n\n同意请回复「${ask}」。`;
+  }
   const action = PROPOSAL_ACTION_WORDS[row.action] || '修改';
   const ask = decision === '拒绝' ? '拒绝' : '批准';
   const trashNote = ctx.trashMode === true
@@ -408,9 +458,76 @@ const WRITE_TOOLS = Object.freeze([
 ]);
 
 /**
+ * 0.7.11（M6 §3）：标签写工具。
+ *
+ * 与事件写工具不同，它们**不要求任何日历是 write 档**：标签是全局注册表，
+ * 只看凭据的两项标签权限（`canTagWrite`；新建与编辑共用一项、删除单列）；只读凭据也能直写。
+ * 因此不受 `hasWritableCalendar` 裁剪，只要有凭据就注册。
+ */
+const TAG_TOOLS = Object.freeze([
+  tool(
+    'create_tag',
+    '新建标签。受凭据的「标签新建」权限控制：提案模式（默认）只生成待确认提案、不写注册表，' +
+      '用户在 FnCal「提案」里通过后才生效；「直接通过」时立即写入并返回 tag。' +
+      '名称重名返回 tag_exists，分组不存在返回 tag_not_found。',
+    {
+      emoji: { type: 'string', description: '标签图标，1 个字素（emoji），可省略' },
+      name: { type: 'string', description: '标签名称（必填，最多 12 字）' },
+      groupId: { type: 'string', description: '分组 id，省略则进默认分组' },
+    },
+    ['name'],
+  ),
+  tool(
+    'update_tag',
+    '编辑标签（emoji / 名称 / 分组）。`tag` 传 id 或名称。受凭据的「标签编辑」权限控制：' +
+      '提案模式（默认）只生成提案；「直接通过」时立即写入并返回更新后的 tag。' +
+      '标签不存在返回 tag_not_found，重名返回 tag_exists。',
+    {
+      tag: { type: 'string', description: '标签 id 或名称（必填）' },
+      emoji: { type: 'string', description: '新图标，1 个字素，可省略' },
+      name: { type: 'string', description: '新名称，最多 12 字，可省略' },
+      groupId: { type: 'string', description: '新分组 id，可省略' },
+    },
+    ['tag'],
+  ),
+  tool(
+    'delete_tag',
+    '删除标签。`tag` 传 id 或名称。受凭据的「标签删除」权限控制：提案模式（默认）只生成提案；' +
+      '「直接通过」时立即删除并返回 removed 与 affected（被清掉引用的日程/任务条数）。' +
+      '删除会清掉所有引用该标签的事件与任务（含该凭据不可见的日历），这是标签注册表的全局语义。' +
+      '标签不存在返回 tag_not_found。',
+    {
+      tag: { type: 'string', description: '标签 id 或名称（必填）' },
+    },
+    ['tag'],
+  ),
+]);
+
+/** 标签工具的错误码 → 工具结果（M6 §3：409 tag_exists / 404 tag_not_found / 409 tag_changed）。 */
+const TAG_ERROR_TEXT = Object.freeze({
+  tag_exists: '标签名称已存在',
+  tag_not_found: '标签不存在',
+  tag_changed: '标签已被修改或删除，请重新发起',
+  invalid: '标签参数不合法',
+  tag_unavailable: '标签功能未启用',
+});
+
+function tagToolFailure(err) {
+  const code = String((err && err.code) || 'invalid');
+  const message = TAG_ERROR_TEXT[code] || String((err && err.message) || '标签操作失败');
+  const data = { ok: false, code, message };
+  return {
+    content: [{ type: 'text', text: JSON.stringify(data) }],
+    isError: true,
+    structuredContent: data,
+    data,
+  };
+}
+
+/**
  * 0.4.13 / M4 §4：AI 端批准工具。
- * 只有凭据显式打开 gentApproval 才注册；关闭时调用也回「未开启」而不是「未知工具」，
- * 让助手能照着文案提示用户去设置里打开（见 gent_approval_disabled）。
+ * 只有凭据显式打开 agentApproval 才注册；关闭时调用也回「未开启」而不是「未知工具」，
+ * 让助手能照着文案提示用户去设置里打开（见 agent_approval_disabled）。
  */
 const AGENT_TOOLS = Object.freeze([
   tool(
@@ -992,6 +1109,8 @@ export function createMcp({
   async function toolsFor(ctx) {
     const tools = [...READ_TOOLS];
     if (await service.hasWritableCalendar(ctx)) tools.push(...WRITE_TOOLS);
+    // 0.7.11（M6 §3）：标签工具与日历写权限无关（标签是全局注册表），有凭据就注册。
+    tools.push(...TAG_TOOLS);
     // AI 端代办批准是**凭据级开关**：没打开就不注册，避免助手误以为可用。
     if (canAgentApprove(ctx.credential)) {
       for (const entry of AGENT_TOOLS) {
@@ -1112,6 +1231,40 @@ export function createMcp({
       }
       case 'list_tags': {
         return toolResult(await service.listTags(ctx));
+      }
+      // 0.7.11（M6 §3）：三个标签写工具。错误按 tag_* 码回结构化失败，不抛 RPC 错误。
+      case 'create_tag': {
+        const name = requireString(args, 'name', { max: 200 });
+        const body = { name };
+        const emoji = optionalString(args, 'emoji', { max: 200 });
+        if (emoji !== undefined) body.emoji = emoji;
+        const groupId = optionalString(args, 'groupId', { max: 200 });
+        if (groupId !== undefined) body.groupId = groupId;
+        try {
+          return toolResult(await service.createTag(ctx, body));
+        } catch (err) {
+          return tagToolFailure(err);
+        }
+      }
+      case 'update_tag': {
+        const body = { tag: requireString(args, 'tag', { max: 200 }) };
+        for (const field of ['emoji', 'name', 'groupId']) {
+          const value = optionalString(args, field, { max: 200 });
+          if (value !== undefined) body[field] = value;
+        }
+        try {
+          return toolResult(await service.updateTag(ctx, body));
+        } catch (err) {
+          return tagToolFailure(err);
+        }
+      }
+      case 'delete_tag': {
+        const tag = requireString(args, 'tag', { max: 200 });
+        try {
+          return toolResult(await service.deleteTag(ctx, { tag }));
+        } catch (err) {
+          return tagToolFailure(err);
+        }
       }
       case 'get_event': {
         const uid = requireString(args, 'uid', { max: 255 });

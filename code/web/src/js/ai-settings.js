@@ -585,6 +585,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     writeMode: 'proposal',
     // 0.4.13（用户 2026-11-04 口径 / M21 §2.3）：删除方式按凭据存，默认提案。
     deleteMode: 'proposal',
+    // 0.7.12（M6 §2.1）：标签两项权限（新建与编辑共用一项、删除单列），默认提案；与日历 grants 无关。
+    tagWriteMode: 'proposal',
+    tagDeleteMode: 'proposal',
     // 0.4.13（M4 §4）：AI 端批准开关，默认关。旧凭据没有该字段时按 false 处理。
     agentApproval: false,
     // 0.4.22（M4-0.4.22 S1）：审批页 PIN。pin 只是草稿值，pinSet 来自服务端，不回显哈希。
@@ -623,6 +626,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       writeMode: credential && credential.writeMode === 'direct' ? 'direct' : 'proposal',
       // 0.4.13：旧凭据没有 deleteMode 时按 proposal 处理（后端也会补默认）。
       deleteMode: credential && credential.deleteMode === 'trash' ? 'trash' : 'proposal',
+      // 0.7.12（M6 §2.1）：旧凭据没有两项标签权限时按 proposal 回读（后端也会补默认）。
+      tagWriteMode: credential && credential.tagWriteMode === 'direct' ? 'direct' : 'proposal',
+      tagDeleteMode: credential && credential.tagDeleteMode === 'direct' ? 'direct' : 'proposal',
       agentApproval: Boolean(credential && credential.agentApproval === true),
       // 0.4.22（S1）：只拿到「是否已设置」，PIN 哈希与明文都不会下发。
       pin: '',
@@ -1034,6 +1040,11 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       deleteGroup.setDisabled(disabled);
       writeRow.classList.toggle('ai-mode-row--disabled', disabled);
       deleteRow.classList.toggle('ai-mode-row--disabled', disabled);
+      // 0.7.12：标签两项只看 AI 接入开关，不看日历写档（只读凭据也能直写标签）。
+      for (const entry of tagModeRows) {
+        entry.group.setDisabled(!serviceOn);
+        entry.row.classList.toggle('ai-mode-row--disabled', !serviceOn);
+      }
       clear(modeNotes);
       if (!serviceOn) {
         modeNotes.append(el('p', { class: 'ai-hint', text: t('settings.ai.deleteMode.disabled') }));
@@ -1046,6 +1057,61 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
 
     paintWriteHint(draft.writeMode);
     paintDeleteHint(draft.deleteMode);
+
+    /* 0.7.12（M6 §2.4，用户「新建和编辑还在一起，和日历权限一致」）：标签两项权限。
+       标签是全局注册表，与日历 grants 无关，所以不受「没有 write 档」限制，只跟 AI
+       接入开关走；两项各自独立、默认「提案」。 */
+    const tagModeRows = [];
+    function buildTagModeRow({ key, titleKey, hintKey, op }) {
+      const hint = el('p', { class: 'ai-hint ai-mode__hint' });
+      const paint = (mode) => {
+        hint.replaceChildren(document.createTextNode(t(hintKey)));
+        if (mode === 'direct') {
+          hint.append(el('span', { class: 'ai-danger-hint', text: ` ${t('settings.ai.tagMode.directWarn')}` }));
+        }
+      };
+      const group = segmentedRadioGroup({
+        label: t(titleKey),
+        options: [
+          { value: 'direct', label: t('settings.ai.writeMode.direct') },
+          { value: 'proposal', label: t('settings.ai.writeMode.proposal') },
+        ],
+        value: draft[key],
+        disabled: !serviceOn,
+        onChange: (next) => {
+          if (next === draft[key]) return;
+          if (next === 'direct') {
+            confirmAction({
+              title: t('settings.ai.tagMode.confirmTitle'),
+              text: t('settings.ai.tagMode.confirmText'),
+              confirmLabel: t('settings.ai.writeMode.confirmLabel'),
+              cancelLabel: t('settings.ai.cancel'),
+              danger: true,
+              onConfirm: () => { draft[key] = 'direct'; group.setValue('direct'); paint('direct'); refreshSave(); },
+              onCancel: () => group.setValue(draft[key]),
+            });
+            return;
+          }
+          draft[key] = 'proposal';
+          group.setValue('proposal');
+          paint('proposal');
+          refreshSave();
+        },
+      });
+      paint(draft[key]);
+      const row = el('div', { class: 'settings__row ai-mode-row', 'data-mode': key, 'data-tag-op': op }, [
+        el('span', { class: 'settings__label', text: t(titleKey) }),
+        el('div', { class: 'settings__control' }, [group.node, hint]),
+      ]);
+      tagModeRows.push({ group, row });
+      return row;
+    }
+    const tagRows = el('div', { class: 'ai-tag-modes', 'data-tag-modes': '' }, [
+      buildTagModeRow({ key: 'tagWriteMode', titleKey: 'settings.ai.tagMode.write', hintKey: 'settings.ai.tagMode.writeHint', op: 'write' }),
+      buildTagModeRow({ key: 'tagDeleteMode', titleKey: 'settings.ai.tagMode.delete', hintKey: 'settings.ai.tagMode.deleteHint', op: 'delete' }),
+    ]);
+    const tagModesBlock = block('settings.ai.editor.block.tags', 'settings.ai.editor.block.tagsHint', [tagRows]);
+
     refreshModeAvailability();
 
     const operationBlock = block('settings.ai.editor.block.operation', 'settings.ai.editor.block.operationHint', [
@@ -1053,6 +1119,14 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       deleteRow,
       modeNotes,
     ]);
+
+    /* 0.7.12（M6 §2.4）：日历权限与标签权限之间加一条分隔线（同一编辑器里的两套权限）。
+       间距由 .ai-editor__body 的 flex gap 提供，元素本身只画 1px 边框。 */
+    const permissionsDivider = el('div', {
+      class: 'ai-editor__divider',
+      'data-ai-divider': 'permissions',
+      'aria-hidden': 'true',
+    });
 
     /* 0.4.13（M4 §4、M21 §4）：AI 端批准开关，默认关；打开必须二次确认，取消回滚。 */
     const agentSwitch = switchControl({
@@ -1323,6 +1397,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       windowBlock,
       fieldsBlock,
       operationBlock,
+      permissionsDivider,
+      tagModesBlock,
       approvalBlock,
       tokenBlock,
       deleteBlock,
@@ -1389,6 +1465,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         fieldMask: { ...draft.fieldMask },
         writeMode: draft.writeMode,
         deleteMode: draft.deleteMode,
+        // 0.7.12（M6 §2.1）：标签两项按凭据存，脏判定与保存都要带上。
+        tagWriteMode: draft.tagWriteMode,
+        tagDeleteMode: draft.tagDeleteMode,
         agentApproval: effectiveApproval,
       };
       if (effectiveApproval && draft.pin) payload.pin = draft.pin;
@@ -1493,6 +1572,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       writeMode: draft.writeMode,
       // 0.4.13：两组操作方式都按凭据存，脏判定与保存都必须带上删除方式。
       deleteMode: draft.deleteMode,
+      // 0.7.12（M6 §2.1）：标签两项权限。
+      tagWriteMode: draft.tagWriteMode,
+      tagDeleteMode: draft.tagDeleteMode,
       agentApproval: effectiveApproval,
     };
     // 0.4.22：只在有值时带 pin；编辑态点过「清除」或代办批准不生效时清 PIN。

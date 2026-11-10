@@ -21,6 +21,7 @@ import {
   WRITE_MODE_DIRECT,
   canAgentApprove,
   canDelete,
+  canTagWrite,
   deleteModeOf,
   grantLevel,
   isReadable,
@@ -31,8 +32,15 @@ import {
   windowBounds,
   writeModeOf,
 } from './ai-grants.mjs';
+import { tagErrorOf, tagProposalCard } from './ai-store.mjs';
 import { busyIntervals, dateDigitsInZone, eventFromIcs, eventToIcs, eventsOf, matchesTimeRange, proposalFieldsOfIcs, uidOf } from './ical.mjs';
-import { applyTagToSummary, categoryTagName, tagCategoryLabel } from './tags.mjs';
+import {
+  applyTagToSummary,
+  categoryTagName,
+  normalizeTagEmoji,
+  normalizeTagName,
+  tagCategoryLabel,
+} from './tags.mjs';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 /** 事件 UID：字母数字开头，允许 `._-@`，总长 ≤255（与 store 的文件名约束一致）。 */
@@ -413,6 +421,147 @@ export function createAiService({
     };
   }
 
+  /* ---------------------------------------------- 0.7.11 标签写（M6 §3 / §4） */
+
+  /**
+   * 标签注册表的读写都要带请求上下文（注册表在用户级 KV 里）。
+   * 注册表抛的历史错误码在这里统一翻译成 `tag_exists` / `tag_not_found` / `invalid`。
+   */
+  async function tagStoreCall(ctx, fn) {
+    if (!tagStore) throw Object.assign(new Error('标签功能未启用'), { code: 'tag_not_found', status: 404 });
+    try {
+      return await aiStore.withUser(ctx.userId, fn);
+    } catch (err) {
+      throw tagErrorOf(err);
+    }
+  }
+
+  function tagViewOf(tag) {
+    return { id: tag.id, name: tag.name, emoji: tag.emoji || '' };
+  }
+
+  /** `tag` 入参：id 或名称；找不到 → 404 `tag_not_found`（不区分「无权」与「不存在」）。 */
+  async function tagTargetOf(ref, ctx) {
+    const raw = String(ref ?? '').trim();
+    if (!raw) throw Object.assign(new Error('缺少标签 id 或名称'), { code: 'invalid', status: 400 });
+    const tag = await tagStoreCall(ctx, () => tagStore.resolve(raw));
+    if (!tag) throw Object.assign(new Error(`标签「${raw}」不存在`), { code: 'tag_not_found', status: 404 });
+    return tag;
+  }
+
+  /** 提案模式下的标签草稿先校验一遍（不写注册表），避免把非法值存成提案。 */
+  async function prepareTagDraft(ctx, { emoji, name, groupId } = {}) {
+    let cleanName;
+    let cleanEmoji;
+    try {
+      cleanName = normalizeTagName(name);
+      cleanEmoji = normalizeTagEmoji(emoji);
+    } catch (err) {
+      throw tagErrorOf(err);
+    }
+    const wantedGroup = String(groupId ?? '').trim();
+    if (!wantedGroup) return { emoji: cleanEmoji, name: cleanName, groupId: '' };
+    const data = await tagStoreCall(ctx, () => tagStore.list());
+    const group = (Array.isArray(data.groups) ? data.groups : []).find((item) => item.id === wantedGroup);
+    if (!group) throw Object.assign(new Error('分组不存在'), { code: 'tag_not_found', status: 404 });
+    return { emoji: cleanEmoji, name: cleanName, groupId: group.id };
+  }
+
+  function tagProposalView(proposal, ctx) {
+    return {
+      id: proposal.id,
+      action: proposal.action,
+      status: proposalEffectiveStatus(proposal, ctx.nowMs),
+      tagId: proposal.tagId || null,
+      createdAt: proposal.createdAt || null,
+      expiresAt: proposal.expiresAt || null,
+    };
+  }
+
+  /** 0.7.11：三类标签提案的卡片数据（MCP list_proposals 与网页列表共用同形状）。 */
+  function tagProposalCardOf(action, before = {}, after = {}) {
+    return tagProposalCard(action, before, after);
+  }
+
+  /**
+   * 三件套的公共分叉：按 `canTagWrite(credential, op)` 决定「直接通过」还是「提案」。
+   * 直接通过走 `tagStore` 的 create/update/remove（无第二条写规则）；
+   * 提案只落 `ai-store`，注册表不动（M6 §3）。
+   */
+  async function tagWriteOrPropose(ctx, op, { tagId = null, before = null, after = null }, apply) {
+    const mode = canTagWrite(ctx.credential, op);
+    if (mode !== WRITE_MODE_DIRECT) {
+      const proposal = await aiStore.createProposal(ctx.userId, {
+        action: `tag_${op}`,
+        credentialId: ctx.credential.id,
+        tagId,
+        before,
+        after,
+      });
+      ctx.action = `tag-${op}-proposal`;
+      return { ok: true, mode: 'proposal', proposal: tagProposalView(proposal, ctx) };
+    }
+    ctx.action = `tag-${op}`;
+    const applied = await apply();
+    return { ok: true, mode: 'direct', ...applied };
+  }
+
+  async function createTag(ctx, { emoji = '', name, groupId = '' } = {}) {
+    const draft = await prepareTagDraft(ctx, { emoji, name, groupId });
+    return tagWriteOrPropose(ctx, 'create', { after: { tag: draft } }, async () => {
+      const tag = await tagStoreCall(ctx, () => tagStore.create(draft));
+      return { tag: tagViewOf(tag) };
+    });
+  }
+
+  async function updateTag(ctx, { tag: ref, emoji, name, groupId } = {}) {
+    const current = await tagTargetOf(ref, ctx);
+    const patch = {};
+    if (emoji !== undefined) patch.emoji = emoji;
+    if (name !== undefined) patch.name = name;
+    if (groupId !== undefined) patch.groupId = groupId;
+    if (!Object.keys(patch).length) throw Object.assign(new Error('没有要修改的内容'), { code: 'invalid', status: 400 });
+    if (patch.name !== undefined || patch.emoji !== undefined) {
+      try {
+        if (patch.name !== undefined) patch.name = normalizeTagName(patch.name);
+        if (patch.emoji !== undefined) patch.emoji = normalizeTagEmoji(patch.emoji);
+      } catch (err) {
+        throw tagErrorOf(err);
+      }
+    }
+    if (patch.groupId !== undefined) {
+      const wanted = String(patch.groupId ?? '').trim();
+      if (!wanted) {
+        patch.groupId = '';
+      } else {
+        const data = await tagStoreCall(ctx, () => tagStore.list());
+        const group = (Array.isArray(data.groups) ? data.groups : []).find((item) => item.id === wanted);
+        if (!group) throw Object.assign(new Error('分组不存在'), { code: 'tag_not_found', status: 404 });
+        patch.groupId = group.id;
+      }
+    }
+    const before = { emoji: current.emoji || '', name: current.name };
+    // 提案 payload 的 after 只带真正要改的键（M6 §4）。
+    const after = { ...patch };
+    return tagWriteOrPropose(ctx, 'update', { tagId: current.id, before, after }, async () => {
+      const tag = await tagStoreCall(ctx, () => tagStore.update(current.id, patch));
+      return { tag: tagViewOf(tag) };
+    });
+  }
+
+  async function deleteTag(ctx, { tag: ref } = {}) {
+    const current = await tagTargetOf(ref, ctx);
+    // 影响条数按全局注册表统计（含该凭据不可见的日历，M6 §2.1）。
+    const data = await tagStoreCall(ctx, () => tagStore.list({ withCounts: true }));
+    const row = (Array.isArray(data.tags) ? data.tags : []).find((item) => item.id === current.id) || null;
+    const affected = row ? Number(row.count) || 0 : 0;
+    const before = { emoji: current.emoji || '', name: current.name, affected };
+    return tagWriteOrPropose(ctx, 'delete', { tagId: current.id, before }, async () => {
+      await tagStoreCall(ctx, () => tagStore.remove(current.id));
+      return { removed: { id: current.id, name: current.name }, affected };
+    });
+  }
+
   /**
    * 这个 iCalendar 对象在「凭据时间窗」里有没有落点。
    * 非递归事件用 `isWithinWindow`（与 P1 口径一致：半开区间 + 零长事件例外）；
@@ -492,6 +641,8 @@ export function createAiService({
       storedStatus: proposal.status,
       calendarId: proposal.calendarId,
       uid: proposal.uid,
+      // 0.7.11（M6 §4）：标签提案带 tagId；事件提案为 null。
+      tagId: proposal.tagId || null,
       createdAt: proposal.createdAt || null,
       expiresAt: proposal.expiresAt || null,
       decidedAt: proposal.decidedAt || null,
@@ -903,10 +1054,35 @@ export function createAiService({
     const rows = [];
     for (const proposal of mine) {
       if (wanted && !wanted.has(String(proposal.id))) continue;
-      if (!isReadable(ctx.credential, proposal.calendarId)) continue;
       const stored = (await aiStore.getProposal(ctx.userId, proposal.id)) || {};
       const before = stored.before && typeof stored.before === 'object' ? stored.before : {};
       const after = stored.after && typeof stored.after === 'object' ? stored.after : {};
+      // 0.7.11（M6 §4）：标签提案不看 calendarId（标签全局可见）；只有事件提案才按日历可读性过滤。
+      const tagProposal = String(proposal.action || '').startsWith('tag_');
+      if (!tagProposal && !isReadable(ctx.credential, proposal.calendarId)) continue;
+      if (tagProposal) {
+        rows.push({
+          id: proposal.id,
+          action: proposal.action,
+          tagId: proposal.tagId || null,
+          tag: tagProposalCardOf(proposal.action, before, after),
+          calendarId: null,
+          calendarName: '',
+          uid: null,
+          title: '',
+          summary: '',
+          description: '',
+          note: typeof stored.note === 'string' ? stored.note : '',
+          start: null,
+          end: null,
+          allDay: false,
+          location: '',
+          expiresAt: proposal.expiresAt || null,
+          createdAt: proposal.createdAt || null,
+          writable: true,
+        });
+        continue;
+      }
       const ics = after.ics || before.ics || '';
       const fields = ics ? proposalFieldsOfIcs(ics) : { start: null, end: null, allDay: false, location: '', description: '' };
       rows.push({
@@ -993,10 +1169,16 @@ export function createAiService({
     if (!canAgentApprove(ctx.credential)) throw agentApprovalDisabled();
     const proposal = await aiStore.getProposal(ctx.userId, id);
     if (!proposal || proposal.credentialId !== ctx.credential.id) return { missing: true };
-    if (!isReadable(ctx.credential, proposal.calendarId)) return { missing: true };
+    // 0.7.11（M6 §4）：标签提案不受日历可见性 / 写档约束（标签是全局注册表）。
+    const tagProposal = String(proposal.action || '').startsWith('tag_');
+    if (!tagProposal) {
+      if (!isReadable(ctx.credential, proposal.calendarId)) return { missing: true };
+      if (action === 'accept') {
+        if (!isWritable(ctx.credential, proposal.calendarId)) return { missing: true };
+        if (!(await aiStore.calendarExistsFor(ctx.userId, proposal.calendarId))) return { missing: true };
+      }
+    }
     if (action === 'accept') {
-      if (!isWritable(ctx.credential, proposal.calendarId)) return { missing: true };
-      if (!(await aiStore.calendarExistsFor(ctx.userId, proposal.calendarId))) return { missing: true };
       ctx.action = 'proposal-accept';
       const saved = await acceptProposalForAgent(ctx, proposal);
       if (saved && saved.missing) return { missing: true };
@@ -1011,6 +1193,10 @@ export function createAiService({
     availability,
     listCalendars,
     listTags,
+    // 0.7.11（M6 §3）：标签三件套（提案 / 直接由 canTagWrite 决定）
+    createTag,
+    updateTag,
+    deleteTag,
     hasWritableCalendar,
     effectiveRange,
     targetCalendars,

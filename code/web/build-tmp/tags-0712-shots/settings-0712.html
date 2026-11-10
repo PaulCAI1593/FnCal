@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>0.7.12 标签权限两行 + 分隔线 证据页</title>
+    <link rel="stylesheet" href="/src/styles/tokens.css" />
+    <link rel="stylesheet" href="/src/styles/base.css" />
+    <link rel="stylesheet" href="/src/styles/layout.css" />
+    <link rel="stylesheet" href="/src/styles/calendar.css" />
+    <link rel="stylesheet" href="/src/styles/views.css" />
+    <style>
+      html, body { margin: 0; padding: 0; background: var(--bg); }
+      #out { margin: 16px; padding: 12px; border: 1px dashed var(--border); font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
+      .evidence-bar { position: sticky; top: 0; z-index: 9; margin: 0; padding: 8px 12px; background: #111; color: #fff; font: 12px/1.4 system-ui, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <p class="evidence-bar">0.7.12 证据页：真实 ai-settings 模块 + 真实 CSS；下方数字即实测（不经估算）。</p>
+    <pre id="out">测量中…</pre>
+    <div id="host"></div>
+    <script type="module">
+      import { createAiSettingsPage } from '/src/js/ai-settings.js';
+      document.querySelector('.evidence-bar').textContent = 'MODULE-STARTED ' + new Date().toISOString();
+      const out = document.getElementById('out');
+      const fail = (label, err) => {
+        out.textContent = `${label}: ${err && (err.stack || err.message || err)}`;
+        globalThis.__ERROR = `${label}: ${err && (err.stack || err.message || err)}`;
+      };
+      addEventListener('error', (e) => fail('error', e.error || e.message));
+      addEventListener('unhandledrejection', (e) => fail('rejection', e.reason));
+
+
+      const json = (data) => new Response(JSON.stringify(data), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+      const credential = {
+        id: 'cred-1',
+        label: '我的 AI 助手',
+        createdAt: '2026-11-01T00:00:00.000Z',
+        usedAt: null,
+        revokedAt: null,
+        grants: { 'cal-personal': 'write', 'cal-work': 'read' },
+        grantSummary: { read: 1, write: 1, hidden: 0 },
+        timeWindow: { pastDays: 7, futureDays: 90 },
+        fieldMask: { location: true, description: false, attendees: false },
+        writeMode: 'proposal',
+        deleteMode: 'proposal',
+        tagWriteMode: 'proposal',
+        tagDeleteMode: 'proposal',
+        agentApproval: false,
+        pinSet: false,
+        tokenHint: 'fncal_ai_ab12…',
+      };
+      globalThis.fetch = async (url) => {
+        const path = String(url);
+        if (path.includes('/ai/settings')) return json({ ok: true, settings: { enabled: true, mcpPath: '/mcp' } });
+        if (path.includes('/ai/credentials')) return json({ ok: true, credentials: [credential] });
+        if (path.includes('/ai/trash')) return json({ ok: true, items: [], count: 0, retentionDays: 7 });
+        if (path.includes('/csrf')) return json({ ok: true, token: 'csrf-evidence' });
+        return json({ ok: true });
+      };
+
+      const mark = (m) => { out.textContent = 'MARK: ' + m; };
+      if (new URLSearchParams(location.search).get('theme') === 'dark') {
+        document.documentElement.dataset.theme = 'dark';
+      }
+      mark('module body');
+      const store = {
+        getCalendars: () => [
+          { id: 'cal-personal', displayName: '个人', color: '#4f7cff' },
+          { id: 'cal-work', displayName: '工作', color: '#f2a33c' },
+        ],
+      };
+      const page = createAiSettingsPage({ user: { id: 'u1', role: 'admin' }, store });
+      mark('created');
+      const host = document.getElementById('host');
+      host.append(page.page);
+      page.page.hidden = false;
+      try {
+        await page.refresh();
+        mark('refreshed');
+      } catch (err) {
+        fail('refresh', err);
+        throw err;
+      }
+
+      const openEditor = () => {
+        const edit = page.page.querySelector('.ai-cred-edit');
+        if (edit) { edit.click(); return; }
+        const btn = page.page.querySelector('.ai-new-cred');
+        if (btn) btn.click();
+      };
+      openEditor();
+      // 证据页专用：取消底部操作条的 sticky，避免它遮住要看的区块（不参与任何测量）。
+      const stickyOff = document.createElement('style');
+      stickyOff.textContent = '#host .ai-editor__footer{position:static}';
+      document.head.append(stickyOff);
+
+      const editor = page.page.querySelector('.ai-editor');
+      if (!editor) {
+        fail('editor', new Error('编辑器未打开；buttons=' + [...page.page.querySelectorAll('button')].map((b) => b.className).join('|')));
+        throw new Error('editor not open');
+      }
+
+      const rect = (node) => {
+        const r = node.getBoundingClientRect();
+        return { x: +r.x.toFixed(2), y: +r.y.toFixed(2), w: +r.width.toFixed(2), h: +r.height.toFixed(2), top: +r.top.toFixed(2), bottom: +r.bottom.toFixed(2), left: +r.left.toFixed(2), right: +r.right.toFixed(2) };
+      };
+      const byTitle = (text) => [...editor.querySelectorAll('.ai-block__title')].find((n) => n.textContent.trim() === text)?.closest('.ai-block');
+      const tagsBlock = byTitle('标签权限');
+      const operationBlock = byTitle('操作方式');
+      const divider = editor.querySelector('.ai-editor__divider');
+      const rows = [...tagsBlock.querySelectorAll('.ai-mode-row')];
+
+      const rowInfo = rows.map((row) => {
+        const label = row.querySelector('.settings__label');
+        const group = row.querySelector('[role="radiogroup"]');
+        const segs = [...row.querySelectorAll('button')];
+        const checked = segs.find((b) => b.getAttribute('aria-checked') === 'true');
+        const first = segs[0];
+        const last = segs[segs.length - 1];
+        return {
+          mode: row.getAttribute('data-mode'),
+          op: row.getAttribute('data-tag-op'),
+          label: label?.textContent.trim(),
+          checked: checked?.textContent.trim(),
+          row: rect(row),
+          labelBox: label ? rect(label) : null,
+          groupBox: group ? rect(group) : null,
+          segBoxes: segs.map(rect),
+          labelToGroupGap: label && group ? +(group.getBoundingClientRect().left - label.getBoundingClientRect().right).toFixed(2) : null,
+          layout: label && group ? (group.getBoundingClientRect().left >= label.getBoundingClientRect().right - 0.5 ? 'side-by-side' : 'stacked') : null,
+          vGap: label && group ? +(group.getBoundingClientRect().top - label.getBoundingClientRect().bottom).toFixed(2) : null,
+          overlap: label && group ? (() => { const a = label.getBoundingClientRect(); const b = group.getBoundingClientRect(); return !(a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5); })() : null,
+          groupInsideRow: group ? (group.getBoundingClientRect().right <= row.getBoundingClientRect().right + 0.5) : null,
+          segOverflow: group ? +(group.scrollWidth - group.clientWidth).toFixed(2) : null,
+          firstH: first ? +first.getBoundingClientRect().height.toFixed(2) : null,
+          lastH: last ? +last.getBoundingClientRect().height.toFixed(2) : null,
+          clipped: [...row.querySelectorAll('*')].filter((n) => n.scrollWidth > n.clientWidth + 1 && getComputedStyle(n).overflow !== 'visible').map((n) => `${n.className || n.tagName}:${n.scrollWidth}/${n.clientWidth}`),
+        };
+      });
+
+      const dividerStyle = divider ? getComputedStyle(divider) : null;
+      const lum = (css) => {
+        const m = String(css).match(/rgba?\(([^)]+)\)/);
+        if (!m) return null;
+        const [r, g, b] = m[1].split(',').map((x) => parseFloat(x)).slice(0, 3).map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const bgOf = (node) => {
+        let cur = node;
+        while (cur) {
+          const bg = getComputedStyle(cur).backgroundColor;
+          const m = String(bg).match(/rgba?\(([^)]+)\)/);
+          if (m) {
+            const a = m[1].split(',').length > 3 ? parseFloat(m[1].split(',')[3]) : 1;
+            if (a > 0.5) return bg;
+          }
+          cur = cur.parentElement;
+        }
+        return 'rgb(255, 255, 255)';
+      };
+      const cardBg = bgOf(tagsBlock);
+      const l1 = lum(dividerStyle?.borderTopColor || 'rgb(0,0,0)');
+      const l2 = lum(cardBg);
+      const contrast = l1 != null && l2 != null ? +(((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05))).toFixed(2) : null;
+      const measure = {
+        viewport: { w: innerWidth, h: innerHeight },
+        theme: document.documentElement.dataset.theme || 'light',
+        blockOrder: [...editor.querySelectorAll('.ai-block__title')].map((n) => n.textContent.trim()),
+        tagsRows: rows.length,
+        rows: rowInfo,
+        divider: divider ? {
+          present: true,
+          box: rect(divider),
+          borderTop: `${dividerStyle.borderTopWidth} ${dividerStyle.borderTopStyle} ${dividerStyle.borderTopColor}`,
+          cardBg,
+          contrast,
+          ariaHidden: divider.getAttribute('aria-hidden'),
+          gapAbove: +(divider.getBoundingClientRect().top - operationBlock.getBoundingClientRect().bottom).toFixed(2),
+          gapBelow: +(tagsBlock.getBoundingClientRect().top - divider.getBoundingClientRect().bottom).toFixed(2),
+          prevIsOperation: operationBlock.nextElementSibling === divider,
+          nextIsTags: divider.nextElementSibling === tagsBlock,
+        } : { present: false },
+        editorOverflow: +(editor.scrollWidth - editor.clientWidth).toFixed(2),
+        bodyOverflow: +(document.body.scrollWidth - innerWidth).toFixed(2),
+        gpuNote: 'fullPageHeight=' + editor.getBoundingClientRect().height.toFixed(2),
+      };
+      globalThis.__MEASURE = measure;
+      const f = (n) => (typeof n === 'number' ? n.toFixed(2) : String(n));
+      const lines = [
+        `viewport=${measure.viewport.w} theme=${measure.theme}`,
+        `blockOrder=${measure.blockOrder.join(' / ')}`,
+        `tagsRows=${measure.tagsRows}`,
+      ];
+      for (const r of measure.rows) {
+        lines.push(`row[${r.op}] label="${r.label}" checked=${r.checked} layout=${r.layout} vGap=${f(r.vGap)} overlap=${r.overlap} rowW=${f(r.row.w)} rowH=${f(r.row.h)} labelW=${f(r.labelBox?.w)} groupW=${f(r.groupBox?.w)} groupRight=${f(r.groupBox?.right)} rowRight=${f(r.row.right)} insideRow=${r.groupInsideRow} segOverflow=${f(r.segOverflow)} clipped=${r.clipped.length ? r.clipped.join(',') : 'none'}`);
+      }
+      lines.push(`divider present=${measure.divider.present} border=${measure.divider.borderTop} onCard=${measure.divider.cardBg} contrast=${f(measure.divider.contrast)} h=${f(measure.divider.box?.h)} aria-hidden=${measure.divider.ariaHidden} gapAbove=${f(measure.divider.gapAbove)} gapBelow=${f(measure.divider.gapBelow)} prevIsOperation=${measure.divider.prevIsOperation} nextIsTags=${measure.divider.nextIsTags}`);
+      lines.push(`editorOverflow=${f(measure.editorOverflow)} bodyOverflow=${f(measure.bodyOverflow)} editorH=${f(measure.gpuNote.replace('fullPageHeight=', ''))}`);
+      out.textContent = lines.join('\n');
+    </script>
+  </body>
+</html>

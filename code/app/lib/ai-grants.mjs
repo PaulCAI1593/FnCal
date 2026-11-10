@@ -45,6 +45,18 @@ export const DELETE_MODE_PROPOSAL = 'proposal';
 export const DELETE_MODE_TRASH = 'trash';
 export const DELETE_MODES = Object.freeze([DELETE_MODE_PROPOSAL, DELETE_MODE_TRASH]);
 
+/**
+ * 0.7.12（M6 §2.1，用户「新建和编辑在一起、和日历权限一致」）：标签权限两档。
+ *
+ * `write` = 新建与编辑共用一项（对齐日历的「新建与编辑」），`delete` = 删除单列。
+ * 与 `WRITE_MODES` 同值域（提案 / 直接通过），默认提案；旧凭据没有这两个字段 → 提案。
+ */
+export const TAG_OPS = Object.freeze(['create', 'update', 'delete']);
+export const TAG_MODE_FIELDS = Object.freeze({
+  write: 'tagWriteMode',
+  delete: 'tagDeleteMode',
+});
+
 /** 不可见 = 404；与「uid 不存在」共用这一份字节（M8 §6 A2）。 */
 export const NOT_FOUND_BODY = Object.freeze({ ok: false, code: 'not_found' });
 /** 预序列化：保证两条路径的响应体逐字节相同。 */
@@ -106,12 +118,18 @@ export function normalizeCredentialLimits(input = {}) {
   const writeMode = WRITE_MODES.includes(input.writeMode) ? input.writeMode : WRITE_MODE_PROPOSAL;
   // 0.4.13 / M4 §2 硬规则①：删除模式按凭据存，默认 proposal；未知值降级为提案。
   const deleteMode = DELETE_MODES.includes(input.deleteMode) ? input.deleteMode : DELETE_MODE_PROPOSAL;
+  // 0.7.12（M6 §2.1）：标签两项（新建与编辑 / 删除）各自归一化，未知值降级提案；
+  // 与日历 grants 无关。旧字段 tagCreateMode / tagUpdateMode 读到即忽略，不做迁移。
+  const tagWriteMode = WRITE_MODES.includes(input.tagWriteMode) ? input.tagWriteMode : WRITE_MODE_PROPOSAL;
+  const tagDeleteMode = WRITE_MODES.includes(input.tagDeleteMode) ? input.tagDeleteMode : WRITE_MODE_PROPOSAL;
   return {
     grants,
     timeWindow: { pastDays, futureDays },
     fieldMask,
     writeMode,
     deleteMode,
+    tagWriteMode,
+    tagDeleteMode,
   };
 }
 
@@ -170,6 +188,36 @@ export function deleteModeOf(credential) {
   return credential && DELETE_MODES.includes(credential.deleteMode)
     ? credential.deleteMode
     : DELETE_MODE_PROPOSAL;
+}
+
+/**
+ * 0.7.12（M6 §2.1）：标签权限两项。
+ *
+ * **与日历档位完全无关**：标签是账号级全局注册表，不看 `grants`，也不要求
+ * 任何日历是 write 档——只读凭据同样可以按这两项直接建 / 改 / 删标签（标定口径）。
+ * 两个 `xxxModeOf` 只回 `'proposal' | 'direct'`，未知值按提案。
+ */
+export function tagWriteModeOf(credential) {
+  return credential && WRITE_MODES.includes(credential.tagWriteMode)
+    ? credential.tagWriteMode
+    : WRITE_MODE_PROPOSAL;
+}
+
+export function tagDeleteModeOf(credential) {
+  return credential && WRITE_MODES.includes(credential.tagDeleteMode)
+    ? credential.tagDeleteMode
+    : WRITE_MODE_PROPOSAL;
+}
+
+/**
+ * 标签操作的生效方式：`create` / `update` / `delete` → `'direct' | 'proposal'`。
+ * 新建与编辑同读 `tagWriteMode`；删除只读 `tagDeleteMode`。
+ * 未知识别为提案（宁可多一步确认，也不越权直写）。
+ */
+export function canTagWrite(credential, op) {
+  if (op === 'delete') return tagDeleteModeOf(credential);
+  if (op === 'create' || op === 'update') return tagWriteModeOf(credential);
+  return WRITE_MODE_PROPOSAL;
 }
 
 export function visibleCalendarIds(credential, calendarIds = []) {

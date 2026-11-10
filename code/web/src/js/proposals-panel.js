@@ -94,6 +94,12 @@ export function batchResultText(action, payload) {
   return t('settings.ai.batch.summary', { done, n: failedCount, reasons });
 }
 
+/** 0.7.11（M6 §4）：标签类提案动作（没有 uid / 日历 / ICS，卡片走另一套字段）。 */
+export const TAG_ACTIONS = Object.freeze(['tag_create', 'tag_update', 'tag_delete']);
+export function isTagProposalAction(action) {
+  return TAG_ACTIONS.includes(String(action || ''));
+}
+
 /**
  * 提案「变更前后」的展示值。
  *
@@ -104,6 +110,22 @@ export function batchResultText(action, payload) {
 export function proposalDiff(proposal) {
   const action = (proposal && proposal.action) || 'create';
   const uid = (proposal && proposal.uid) || '';
+  // 0.7.11（M6 §4）：标签提案没有 uid / ICS，卡片看 `tag` 卡片数据。
+  if (TAG_ACTIONS.includes(action)) {
+    const card = (proposal && proposal.tag) || {};
+    const label = (emoji, name) => `${emoji || ''}${name || ''}`.trim();
+    if (action === 'tag_create') {
+      const title = label(card.emoji, card.name);
+      return { action, uid: '', before: '', after: title, title, deleteOnly: false, isTag: true, affected: 0 };
+    }
+    if (action === 'tag_update') {
+      const before = label(card.before && card.before.emoji, card.before && card.before.name);
+      const after = label(card.after && card.after.emoji, card.after && card.after.name);
+      return { action, uid: '', before, after, title: after || before, deleteOnly: false, isTag: true, affected: 0 };
+    }
+    const title = label(card.emoji, card.name);
+    return { action, uid: '', before: title, after: '', title, deleteOnly: true, isTag: true, affected: Number(card.affected) || 0 };
+  }
   const beforeTitle = (proposal && proposal.before && proposal.before.title) || '';
   const afterTitle = (proposal && proposal.after && (proposal.after.title || proposal.after.summary)) || '';
   const before = action === 'create' ? '' : beforeTitle || uid;
@@ -115,6 +137,8 @@ export function proposalDiff(proposal) {
     // 列表行标题：新建/修改看新标题，删除看被删事件标题，两者都缺才退到 uid。
     title: action === 'delete' ? before : afterTitle || before || uid,
     deleteOnly: action === 'delete',
+    isTag: false,
+    affected: 0,
   };
 }
 
@@ -135,7 +159,10 @@ export function stripLeadingIcons(value) {
 /** 卡片/弹窗/aria-label 统一取这次显示的标题（剥离后为空按 M23 行①兜底顺序回退）。 */
 export function proposalDisplayTitle(proposal) {
   const diff = proposalDiff(proposal);
-  return stripLeadingIcons(diff.title)
+  // 0.7.11（M6 §4）：标签提案的标题就是「emoji + 名称」，不能按事件那样剥前导图标，
+  // 否则新建类卡片会丢掉 emoji。
+  const primary = diff.isTag ? diff.title : stripLeadingIcons(diff.title);
+  return primary
     || stripLeadingIcons(diff.after)
     || stripLeadingIcons(diff.before)
     || stripLeadingIcons((proposal && proposal.uid) || '');
@@ -878,7 +905,13 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
     const noteText = collapseWhitespace(proposal.note);
     const bodyTitle = [descText, descText && noteText ? `AI 备注：${noteText}` : ''].filter(Boolean).join(' · ') || noteText;
     let noteRow = null;
-    if (diff.deleteOnly) {
+    if (diff.isTag) {
+      // 0.7.11（M6 §4）：标签提案的影响行——删除写「影响 N 条」，其余写作用域提示。
+      const text = diff.action === 'tag_delete'
+        ? t('settings.ai.proposal.tagDeleteImpact', { n: diff.affected })
+        : t('settings.ai.proposal.tagScope');
+      noteRow = el('p', { class: 'ai-proposal__note ai-proposal__impact', text, title: text });
+    } else if (diff.deleteOnly) {
       const mode = deleteModeOfProposal(proposal);
       const impact = t(
         mode === 'trash' ? 'settings.ai.proposal.deleteImpactTrash' : 'settings.ai.proposal.deleteImpact',
@@ -915,7 +948,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
     });
     const deleteButton = () => textButton({
       cls: 'btn--danger ai-proposal__delete',
-      label: t('settings.ai.proposal.delete'),
+      label: diff.isTag ? t('settings.ai.proposal.tagDelete') : t('settings.ai.proposal.delete'),
       iconName: 'trash',
       onClick: () => requestDelete(proposal),
     });
@@ -957,7 +990,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
         ];
 
     // M19 §3 固定行序：①名称+徽标 ②日历 ③时间地点 ④影响/备注 ⑤diff ⑥操作区。
-    const timeText = formatProposalTime(proposal);
+    const timeText = diff.isTag ? '' : formatProposalTime(proposal);
     const locationText = proposalLocation(proposal);
     const rows = [
       el('div', { class: 'ai-proposal__head' }, [
@@ -966,7 +999,10 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
       ]),
       el('div', { class: 'ai-proposal__meta' }, [
         dot,
-        el('span', { class: 'ai-proposal__calendar', text: calendarName(proposal.calendarId) }),
+        el('span', {
+          class: 'ai-proposal__calendar',
+          text: diff.isTag ? t('settings.ai.proposal.tagScope') : calendarName(proposal.calendarId),
+        }),
       ]),
       timeText
         ? el('div', { class: 'ai-proposal__when' }, [
