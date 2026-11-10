@@ -12,6 +12,7 @@
  * 快捷键清单 0.6.15 起在头像菜单（`shortcuts-dialog.js`），不再是设置页签。
  */
 import { el } from './dom.js';
+import { enhanceSelect } from './select-listbox.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
 import { mountDialog } from './recurrence-dialog.js';
@@ -19,6 +20,9 @@ import { changePassword, logoutAll, updateProfile, ApiError, getCalDavSyncStatus
 import { t } from '../i18n/index.js';
 import { colorHex, customColorSwatch } from './colors.js';
 import { openCalendarSettings } from './calendar-dialog.js';
+// 0.7.0：设置第 2 页签「标签」（一般 → 标签 → CalDAV → AI）。
+import { createTagsPage } from './tags-settings.js';
+import { openDataCheckDialog } from './data-check.js';
 // 0.3.0（P4）：设置 → 「AI」页签（设计侧真源 design/M8-AI接入设置页-规范.md）。
 // 0.6.13（首包拆分）：AI 页约 67 KB 源码，改为切到该页签时才 `import()`，
 // 主包不再包含它；加载期间用静态骨架占位，失败给提示 + 重试（不白屏）。
@@ -175,7 +179,9 @@ export function openAccountDialog({
       }));
     });
     select.addEventListener('change', () => saveSetting({ defaultCalendarId: select.value }));
-    return select;
+    // 0.7.5：原生 select 换成全站自绘 listbox（取值与 change 仍走原生控件）。
+    const listbox = enhanceSelect(select);
+    return listbox ? listbox.wrapper : select;
   }
 
   /** 0.2.4 ⑭：主题色一排色块（6 个预设，当前选中描边）+ 末尾「自定义」圆。
@@ -313,6 +319,16 @@ export function openAccountDialog({
     weekNumberRow,
     weekModeRow,
     settingRow(t('settings.defaultCalendar'), buildDefaultCalendarSelect()),
+    // 0.7.2（m01416 用户）：数据体检入口；弹窗负责列出「所属日历缺失」的记录并一键修复。
+    settingRow(
+      t('settings.data.check'),
+      el('button', {
+        class: 'btn',
+        type: 'button',
+        text: t('settings.data.check'),
+        on: { click: () => openDataCheckDialog({ store }) },
+      }),
+    ),
     // 0.2.2（③）：「事件颜色（按日历/按分类）」设置项已删除——事件默认取所属
     // 日历色、可被事件级手动色覆盖，不再需要这个模式开关。
   ]);
@@ -585,7 +601,7 @@ export function openAccountDialog({
         el('span', {
           class: 'cal-table__cell cal-table__cell--dav',
           dataset: { label: t('settings.col.davAccess') },
-        }, [davSelect]),
+        }, [enhanceSelect(davSelect)?.wrapper || davSelect]),
       ]);
       row.dataset.calendarId = cal.id;
       const selectFromRow = (e) => {
@@ -811,8 +827,12 @@ export function openAccountDialog({
     return aiLoadPromise;
   }
 
+  const tagsView = createTagsPage({ store, toast });
+
   const tabs = [
     { id: 'general', label: t('settings.tab.general'), page: generalPage },
+    // 0.7.0（用户）：标签独占第 2 页签，位置固定在「一般」之后、「CalDAV」之前。
+    { id: 'tags', label: t('settings.tab.tags'), page: tagsView.page },
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV——页签由 5 枚回到 4 枚。
     { id: 'account', label: t('settings.tab.account'), page: accountPage },
     { id: 'ai', label: t('settings.tab.ai'), page: aiPageHost },
@@ -847,6 +867,8 @@ export function openAccountDialog({
       tabButtons[i].setAttribute('aria-selected', String(active));
       tabButtons[i].tabIndex = active ? 0 : -1;
       if (tabDef.id === 'account' && active) renderTable();
+      // 0.7.0：标签数量可能在别处（新建/删除日程）变过，每次切入重读一次。
+      if (tabDef.id === 'tags' && active) void tagsView.refresh();
       // AI 页每次切入都重新拉一次（服务开关/凭据/提案都可能被其它会话改过）。
       // 0.3.7：列表拉完再补一次红点计数——用户可能正好停在 AI 页看着队列，
       // 受理/驳回后这里也要跟着灭掉（ai-settings.js 里已经直接刷过一次）。
@@ -970,7 +992,7 @@ export function openAccountDialog({
     ]),
     el('div', { class: 'modal__body settings__body' }, [
       tabbar,
-      el('div', { class: 'settings__pages' }, [generalPage, accountPage, aiPageHost]),
+      el('div', { class: 'settings__pages' }, [generalPage, tagsView.page, accountPage, aiPageHost]),
     ]),
     // 0.5.22（用户 m00535 / m00549）：页脚收成「按钮行 + 左侧两行小块」。
     // 上面一行只放「有 N 项未应用」（N=0 时整行不渲染）；按钮行左侧小块两行：

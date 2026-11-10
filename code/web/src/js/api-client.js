@@ -813,3 +813,57 @@ export function clearAiTrash() {
 export function checkForUpdate() {
   return apiRequest(`${BASE}/update/check`);
 }
+
+/* ---- 0.7.0 标签：注册表由服务端保管，前端只做 CRUD ---- */
+
+/**
+ * 标签列表 + 数量。回 `{ ok, version, groups: [{ id, name, order }],
+ * tags: [{ id, emoji, name, groupId, order, createdAt, count }] }`；
+ * 数量由服务端按当前用户可见范围统计，前端不再各自累加。
+ */
+export function listTags() {
+  return apiRequest(`${BASE}/tags`);
+}
+
+/** 新建标签（名称必填，emoji 可空，groupId 可缺省）；重名 400 `TAG_NAME_DUPLICATE`。 */
+export function createTag(payload = {}) {
+  return apiRequest(`${BASE}/tags`, { method: 'POST', body: payload });
+}
+
+/** 改名/换 emoji/换分组；改名会连带改写所有引用事件的 categories（服务端批量）。 */
+export function updateTag(id, patch = {}) {
+  return apiRequest(`${BASE}/tags/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
+}
+
+/** 删除标签：服务端先清引用再删注册表；不影响日程本身。 */
+export function deleteTag(id) {
+  return apiRequest(`${BASE}/tags/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/** 0.7.1 批量排序（标签与分组一次提交；服务端整批原子）。 */
+export function reorderTags(payload = {}) {
+  return apiRequest(`${BASE}/tags/order`, { method: 'PATCH', body: payload });
+}
+
+/** 0.7.1 新建分组（重名 400 `GROUP_NAME_DUPLICATE`）。 */
+export function createTagGroup(payload = {}) {
+  return apiRequest(`${BASE}/tag-groups`, { method: 'POST', body: payload });
+}
+
+/** 0.7.1 分组改名。 */
+export function updateTagGroup(id, patch = {}) {
+  return apiRequest(`${BASE}/tag-groups/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch });
+}
+
+/** 0.7.1 删除分组：组内标签移到「未分组」，不删标签。 */
+export function deleteTagGroup(id) {
+  return apiRequest(`${BASE}/tag-groups/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+/**
+ * 0.7.1 从标题识别：把「标题开头正好是某标签 emoji」的日程补上这个标签。
+ * `dryRun` 默认 true，只统计与给样例；`dryRun:false` 才真正写入。
+ */
+export function applyTagsFromTitles(payload = {}) {
+  return apiRequest(`${BASE}/tags/apply-from-titles`, { method: 'POST', body: payload });
+}

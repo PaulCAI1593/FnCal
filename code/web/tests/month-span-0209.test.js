@@ -421,6 +421,7 @@ describe('⑪⑫ 样式断言', () => {
     expect(media).toMatch(/\.month__events \{[\s\S]{0,160}flex-direction: column;[\s\S]{0,160}overflow: visible;/);
     // 单日文字 chip 的 4px 圆角与 3px 日历色条仍保留（S2 不回归）。
     expect(media).toMatch(/\.chip \{[\s\S]{0,200}border-radius: var\(--r-xs\);/);
-    expect(media).toMatch(/\.chip::after \{[\s\S]{0,200}width: 3px;/);
+    // 0.7.8：3px 色条提升为全局规则（桌面与手机同一套），改查含 ≤520 块的整份样式。
+    expect(css).toMatch(/\.chip::after \{[\s\S]{0,200}width: 3px;/);
   });
 });

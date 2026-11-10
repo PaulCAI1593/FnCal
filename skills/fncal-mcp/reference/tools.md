@@ -16,6 +16,20 @@ No arguments.
 - Only calendars at `read` or `write` appear. `hidden` calendars are absent entirely — no placeholder, no count.
 - `access` is `"read"` or `"write"`. Use it to decide whether a write tool call is even worth attempting.
 
+## list_tags
+
+No arguments.
+
+```json
+{ "tags": [ { "id": "tag_1a2b3c4d", "name": "出行", "emoji": "🚄", "group": "旅行", "count": 12 } ] }
+```
+
+- `count` is how many events and tasks use the tag, limited to calendars this credential can read. A tag used only in calendars this credential cannot see reports `0`.
+- `group` is the group name the user filed the tag under (`未分组` when it has none). Groups are managed in FnCal only.
+- One tag per event. `emoji` may be an empty string for a tag created while importing a calendar whose CATEGORIES had no matching tag.
+- `id` and `name` are interchangeable wherever a tool takes `tag` or `tags`.
+- **What FnCal writes:** the tag's emoji goes into the **title** as `emoji 名称` (one half-width space, e.g. `🚄 出行`); `CATEGORIES` gets the bare tag name (`出行`), never the emoji. FnCal prepends the emoji itself — send a plain title and do not double it. Reading accepts `CATEGORIES:🚄 出行`, `🚄出行` and `出行`.
+
 ## list_events
 
 | arg | type | notes |
@@ -23,19 +37,22 @@ No arguments.
 | `from` | string | ISO 8601, inclusive; omitted = start of the credential's window |
 | `to` | string | ISO 8601, exclusive; omitted = end of the window |
 | `calendar` | string | calendar id; omitted = all readable calendars |
+| `tags` | string or string[] | optional; a tag name or id; several values mean **union** (match any), combined with the other filters as AND |
 
 ```json
 { "from": "…", "to": "…",
   "events": [ { "uid": "…", "calendarId": "…", "title": "…", "start": "…", "end": "…",
                 "allDay": false, "allDayDate": null, "allDayEndDate": null,
                 "status": "confirmed", "recurring": false, "busy": true,
-                "location": "…" } ] }
+                "location": "…",
+                "tag": { "id": "tag_1a2b3c4d", "name": "出行", "emoji": "🚄" } } ] }
 ```
 
 - The returned range is the **intersection** of your `from`/`to` and the credential's window. Do not assume you got what you asked for; use the returned `from`/`to`.
 - Recurring events are expanded to the occurrences inside the range, so a weekly event that started last year still appears.
 - `location`, `description`, `attendees` appear **only** if the credential's field mask allows them. A missing key means "not granted".
 - A calendar id that is hidden or unknown → not-found (not an empty list).
+- `tag` is `null` when the event has none; it is not filtered by the field mask.
 
 ## get_event
 
@@ -80,6 +97,7 @@ Same not-found answer for: hidden calendar, outside the window, no such uid, ano
 | `ics` | string | full iCalendar text, alternative to the structured fields |
 | `uid` | string | optional, auto-generated; must equal the `UID:` inside `ics` if both are given |
 | `note` | string | short explanation shown to the human on the proposal |
+| `tag` | string | optional; tag name or id, must already exist; one tag per event |
 
 ```json
 // direct mode
@@ -100,6 +118,7 @@ Same not-found answer for: hidden calendar, outside the window, no such uid, ano
 | `calendarId` | string | optional |
 | `title` `start` `end` `allDay` `location` `description` | | only the fields you pass change |
 | `ifMatch` | string | ETag you last saw; mismatch → conflict instead of overwriting |
+| `tag` | string | tag name or id; an empty string clears the tag; omitted leaves it unchanged |
 | `note` | string | proposal explanation |
 
 Same result shape as `create_event`, including `approvalUrl` in proposal mode for clients without elicitation. Changing the UID is rejected (`400` class) — cancel and create instead.

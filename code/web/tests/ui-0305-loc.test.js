@@ -166,14 +166,14 @@ describe('0.3.5 M10 · 时间网格地点行', () => {
     expect(short.getAttribute('aria-label')).toBe('评审会，10:00 – 10:30，3 号会议室');
   });
 
-  it('跨天定时事件：时间网格里是全天条（isMultiDayBar），不产生地点行节点', () => {
-    // 23:45→次日 01:00 在 splitDayEvents 里归入 multi-day bar，不进定时块；
-    // 地点行只属于定时事件块，因此这里既没有 tevent 也没有 tevent__loc。
+  it('跨天定时事件：0.7.9 起裁进时间网格，15 分钟残段放不下地点行', () => {
+    // 23:45→次日 01:00：当天只裁出 15 分钟（23:45–24:00）。0.7.9（D）起跨天定时事件
+    // 进时间轴而不再升到多日轨（用户：周/四日/日应进时间轴）；块高不足地点行，
+    // 因此既没有 tevent__loc，也不再是全天条。
     const event = makeEvent({ start: at(23, 45), end: at(1, 0, 1), location: '夜间值班室' });
     const { node } = renderTimeGrid([new Date(2026, 7, 19)], makeCtx([event]));
+    expect(node.querySelectorAll('.tevent')).toHaveLength(1);
     expect(node.querySelectorAll('.tevent__loc')).toHaveLength(0);
-    expect(node.querySelectorAll('.tevent')).toHaveLength(0);
-    // 跨天条仍在全天区可见（不是被丢弃）
     expect(node.textContent).toContain('评审会');
   });
   it('CSS：地点行 10px / 1.3 / inherit 墨色 / .85 透明，不加 margin', () => {

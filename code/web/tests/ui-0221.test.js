@@ -624,10 +624,11 @@ describe('0.2.21 不回归项', () => {
     expect(timegridJs).toContain("allday-chip--row-start");
   });
 
-  it('D5 的 400 上限、D10 的 1000ms 与 8px 圆点都没被这批改动带走', () => {
+  it('D5 的 400 上限、D10 的 1000ms 与圆点隐藏（0.7.8 口径）都没被这批改动带走', () => {
     expect(rule(viewsCss, '.search__panel')).toContain('max-width: 400px');
     expect(monthJs).toContain('const MORE_HOVER_DELAY_MS = 1000;');
-    expect(rule(viewsCss, '.chip__dot')).toContain('width: 8px');
+    // 0.7.8（用户：月格统一左竖条 + 透明底）：圆点不再画，规则改为隐藏。
+    expect(rule(viewsCss, '.chip__dot')).toContain('display: none');
   });
 
   it('跨天定时事件仍按多日条走（isMultiDayBar 口径不变）', () => {

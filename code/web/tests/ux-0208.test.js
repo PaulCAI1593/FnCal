@@ -507,15 +507,17 @@ describe('0.2.8 ②⑦⑧ app 级行为', () => {
     expect(document.querySelector('#settings-page-general').hidden).toBe(false);
   });
 
-    it('⑨ 设置页签（标签页造型）：三个页签、点击切换、选中态跟随；各页共用 .settings__page', () => {
+    it('⑨ 设置页签（标签页造型）：四个页签、点击切换、选中态跟随；各页共用 .settings__page', () => {
     openApp();
     document.querySelector('button[aria-label="设置"]').click();
     const tabs = [...document.querySelectorAll('.settings__tabs [role="tab"]')];
     // 0.6.4：「日历」页签收进 CalDAV 页；0.6.15（用户）：快捷键搬到头像菜单，设置回到三页签。
-    expect(tabs.map((b) => b.textContent)).toEqual(['一般', 'CalDAV', 'AI']);
+    // 0.7.0 起（用户）：新增「标签」第 2 页签。
+    expect(tabs.map((b) => b.textContent)).toEqual(['一般', '标签', 'CalDAV', 'AI']);
     expect(tabs[0].getAttribute('aria-selected')).toBe('true');
-    tabs[1].click();
-    expect(tabs[1].getAttribute('aria-selected')).toBe('true');
+    // 0.7.0 起：CalDAV 是第 3 枚（标签占第 2 枚）。
+    tabs[2].click();
+    expect(tabs[2].getAttribute('aria-selected')).toBe('true');
     expect(tabs[0].getAttribute('aria-selected')).toBe('false');
     expect(document.querySelector('#settings-page-account').hidden).toBe(false);
     expect(document.querySelector('#settings-page-general').hidden).toBe(true);
@@ -523,8 +525,8 @@ describe('0.2.8 ②⑦⑧ app 级行为', () => {
     expect(document.querySelector('#settings-page-general').hidden).toBe(false);
     // 0.2.9（用户 7）：一般 / 日历 / CalDAV 账户三页都吃同一个 .settings__page（间距统一）。
     const pages = [...document.querySelectorAll('.settings__pages > .settings__page')];
-    // 0.6.15（用户）：快捷键页搬到头像菜单；设置页签 3 个、页 3 个。
-    expect(pages.length).toBe(3);
+    // 0.6.15（用户）：快捷键页搬到头像菜单；0.7.0 起再加「标签」页，页签 4 个、页 4 个。
+    expect(pages.length).toBe(4);
     for (const page of pages) expect(page.classList.contains('settings__page')).toBe(true);
     // 0.2.9（用户 8）：日历表格里的原生复选框在 .settings-modal 作用域内（accent-color 规则覆盖）。
     expect(document.querySelectorAll(".settings-modal input[type='checkbox']").length).toBeGreaterThan(0);

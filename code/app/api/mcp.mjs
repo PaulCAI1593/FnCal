@@ -307,12 +307,25 @@ const READ_TOOLS = Object.freeze([
   tool(
     'list_events',
     '列出时间范围内的事件（只含你的凭据可读的日历，字段按凭据的字段掩码裁剪）。'
-      + '不传 from/to 时使用凭据的时间窗口；实际范围自动收在窗口内，窗口外的事件不会出现。',
+      + '不传 from/to 时使用凭据的时间窗口；实际范围自动收在窗口内，窗口外的事件不会出现。'
+      + '可按标签筛选（tags 传标签名称或 id，多个取并集，与其它条件取交集）。',
     {
       from: { type: 'string', description: 'ISO 8601 开始时间（含），可省略' },
       to: { type: 'string', description: 'ISO 8601 结束时间（不含），可省略' },
       calendar: { type: 'string', description: '只看某个日历 id，可省略' },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '按标签筛选：标签名称或 id；多个取并集，可省略（不筛）',
+      },
     },
+    [],
+  ),
+  tool(
+    'list_tags',
+    '列出你的凭据可见范围内的标签（id / 名称 / emoji / 数量）。'
+      + '数量只统计凭据可见日历里的事件与任务；标签本身不越权。',
+    {},
     [],
   ),
   tool(
@@ -354,6 +367,7 @@ const WRITE_TOOLS = Object.freeze([
       description: { type: 'string', description: '备注正文' },
       ics: { type: 'string', description: '直接给 iCalendar 文本（与结构化字段二选一）' },
       uid: { type: 'string', description: '指定 UID，可省略（自动生成）' },
+      tag: { type: 'string', description: '标签名称或 id（单标签，可省略；必须已存在）' },
       note: { type: 'string', description: '给用户的提案说明' },
     },
     ['calendarId'],
@@ -373,6 +387,7 @@ const WRITE_TOOLS = Object.freeze([
       allDay: { type: 'boolean', description: '是否全天事件' },
       location: { type: 'string', description: '地点' },
       description: { type: 'string', description: '备注正文' },
+      tag: { type: 'string', description: '标签名称或 id（单标签；空串表示清除标签）' },
       ifMatch: { type: 'string', description: '乐观锁 ETag；与库里不一致时返回冲突' },
       note: { type: 'string', description: '给用户的提案说明' },
     },
@@ -1084,9 +1099,19 @@ export function createMcp({
         const fromMs = optionalIso(args, 'from');
         const toMs = optionalIso(args, 'to');
         const calendar = optionalString(args, 'calendar', { max: 255 }) || '';
-        const result = await service.listEvents(ctx, { fromMs, toMs, calendar });
+        // 0.7.0：tags 支持数组（并集）；单个字符串也接受，省得调用方为一条标签包数组。
+        let tags = [];
+        if (Array.isArray(args.tags)) {
+          tags = args.tags.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20);
+        } else if (typeof args.tags === 'string' && args.tags.trim()) {
+          tags = [args.tags.trim()];
+        }
+        const result = await service.listEvents(ctx, { fromMs, toMs, calendar, tags });
         if (!result) return toolFailure(MISSING_CALENDAR_TEXT);
         return toolResult(result);
+      }
+      case 'list_tags': {
+        return toolResult(await service.listTags(ctx));
       }
       case 'get_event': {
         const uid = requireString(args, 'uid', { max: 255 });
@@ -1127,7 +1152,7 @@ export function createMcp({
         // 0.4.25（S5）：接受 summary 作为 title 的别名（不少客户端只发 summary）；title 优先。
         const createdTitle = optionalString(args, 'title', { max: 8000 }) ?? optionalString(args, 'summary', { max: 8000 });
         if (createdTitle !== undefined) body.title = createdTitle;
-        for (const field of ['ics', 'location', 'description', 'note', 'uid']) {
+        for (const field of ['ics', 'location', 'description', 'note', 'uid', 'tag']) {
           const value = optionalString(args, field, { max: field === 'ics' ? 200 * 1024 : 8000 });
           if (value !== undefined) body[field] = value;
         }
@@ -1149,7 +1174,7 @@ export function createMcp({
         // 0.4.25（S5）：summary 是 title 的别名；两者都给时 title 优先。
         const updatedTitle = optionalString(args, 'title', { max: 8000 }) ?? optionalString(args, 'summary', { max: 8000 });
         if (updatedTitle !== undefined) body.title = updatedTitle;
-        for (const field of ['location', 'description', 'note']) {
+        for (const field of ['location', 'description', 'note', 'tag']) {
           const value = optionalString(args, field, { max: 8000 });
           if (value !== undefined) body[field] = value;
         }

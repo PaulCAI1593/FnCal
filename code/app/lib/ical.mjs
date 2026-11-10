@@ -716,6 +716,9 @@ function propertyLines(record, titleFallback = '') {
   if (Array.isArray(record.categories) && record.categories.length) {
     push('CATEGORIES', record.categories.map((name) => escapeIcsText(name)).join(','));
   }
+  // 0.7.0：标签 id 只在本机有意义（emoji 也只存在本地注册表），放 X- 属性里，
+  // 外部客户端会忽略；标签名仍然写在 CATEGORIES 里，导出与互通不受影响。
+  if (record.tagId) push('X-FNCAL-TAG', escapeIcsText(String(record.tagId)));
   if (record.organizer && record.organizer.email) {
     const cn = record.organizer.name ? `;CN=${escapeIcsText(record.organizer.name)}` : '';
     push(`ORGANIZER${cn}`, `mailto:${record.organizer.email}`);
@@ -1067,6 +1070,14 @@ function createdByOf(block) {
   };
 }
 
+/** 0.7.0：本机标签 id（`X-FNCAL-TAG`），没有就返回空串。 */
+function tagIdOf(block) {
+  if (!block) return '';
+  const prop = propNamed(block, 'X-FNCAL-TAG');
+  if (!prop) return '';
+  return unescapeIcsText(String(prop.value || '').trim()).trim();
+}
+
 /** Date digits (local) of an instant that belongs to an all-day record. */
 function allDayDateOf(event, ms) {
   // Imported all-day records may carry the zone the file used; otherwise the
@@ -1150,6 +1161,8 @@ export async function eventFromIcs(text) {
   }
   const createdBy = createdByOf(masterBlock);
   if (createdBy) model.createdBy = createdBy;
+  const tagId = tagIdOf(masterBlock);
+  if (tagId) model.tagId = tagId;
   const lunar = lunarOfBlock(masterBlock);
   if (lunar) Object.assign(model, lunar);
   if (master && Array.isArray(master.exdates) && master.exdates.length) model.exdates = master.exdates;
@@ -1187,6 +1200,8 @@ export function taskToIcs(task = {}) {
   if (Array.isArray(task.categories) && task.categories.length) {
     body.push(`CATEGORIES:${task.categories.map((name) => escapeIcsText(name)).join(',')}`);
   }
+  // 0.7.0：标签 id 走 X- 属性，标签名仍在 CATEGORIES（见 propertyLines 注释）。
+  if (task.tagId) body.push(`X-FNCAL-TAG:${escapeIcsText(String(task.tagId))}`);
   if (Number.isFinite(task.createdAt)) body.push(`CREATED:${utcDigits(task.createdAt)}`);
   if (Number.isFinite(task.updatedAt)) body.push(`LAST-MODIFIED:${utcDigits(task.updatedAt)}`);
   body.push(...lunarPropertyLines(task, { allDay }));
@@ -1251,6 +1266,8 @@ export function taskFromIcs(text) {
   };
   const createdBy = createdByOf(todo);
   if (createdBy) result.createdBy = createdBy;
+  const tagId = tagIdOf(todo);
+  if (tagId) result.tagId = tagId;
   const lunar = lunarOfBlock(todo);
   if (lunar) Object.assign(result, lunar);
   return result;

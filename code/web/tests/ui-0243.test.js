@@ -197,10 +197,15 @@ describe('0.2.43 源码口径', () => {
   it('月视图与时间网格都只把「行首续段」纳入标题渲染', () => {
     const month = read('src/js/views/month.js');
     expect(month).toContain('const showTitle = showLabel || ends.contBefore;');
-    expect(month).toMatch(/text: showTitle \? event\.title/);
+    // 0.7.1 起（K.4）：标题拆成 emoji 节点 + 名称节点，名称文字是 chipLabel（标题去掉
+    // 开头标签 emoji 后的部分），仍只在 showTitle 的段渲染。
+    expect(month).toMatch(/text: showTitle \? chipLabel/);
     const grid = read('src/js/views/timegrid.js');
     expect(grid).toContain('const showTitle = showLabel || ends.contBefore;');
-    expect(grid).toMatch(/text: showTitle \? event\.title/);
+    // 0.7.1 起（K.4）：定时块标题拆成 emoji 节点 + 名称节点（名称是 parts.label），
+    // 全天/多日条仍只在 showTitle 的段渲染名称，后续段放零宽空格。
+    expect(grid).toMatch(/class: 'tevent__title-text', text: parts\.label/);
+    expect(grid).toMatch(/text: showTitle\s*\? \(alldayParts\.label/);
   });
 
   it('时间只在 showLabel 段渲染（续段不补时间）', () => {

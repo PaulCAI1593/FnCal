@@ -13,6 +13,8 @@ import { getProfile } from './api-client.js';
 import { clearSnapshot } from './offline-store.js';
 import { isBlocked, isOfflineError } from './offline.js';
 import { createEventModal } from './modal.js';
+import { tagForRecord } from './store.js';
+import { splitTagTitle } from './tag-display.js';
 // 0.5.16：键盘弹出把布局视口压矮会触发 window resize；此时重建视图会让月视图重排
 // 一帧，看起来就是「抖一下」。守卫要用焦点信号（比 resize 早）判断。
 import { keyboardState, isEditableFocused, onKeyboardChange } from './keyboard-inset.js';
@@ -82,7 +84,7 @@ import {
 } from './date-utils.js';
 import { colorHex, colorFg, EVENT_COLORS } from './colors.js';
 // 0.5.4（U3）：手机日历主体横滑切换周期（判定参数见 swipe-nav.js）。
-import { createSwipeNav } from './swipe-nav.js';
+import { canSwipe, createSwipeNav } from './swipe-nav.js';
 
 const viewLabelKey = (key) => (VIEWS.find((v) => v.key === key) || VIEWS[0]).labelKey;
 
@@ -1394,14 +1396,24 @@ export function createApp(root, { store, user }) {
   root.removeAttribute('aria-busy');
   root.append(shell);
 
-  // 0.5.4（U3）：≤720 日历主体横滑切换周期（触屏档箭头由 CSS 隐藏）。
+  // 0.5.4（U3）：日历主体横滑切换周期（触屏档箭头由 CSS 隐藏）。
   // 点击、纵向滚动、按钮/链接/开关、chip 行、任务视图都不触发（见 swipe-nav.js）。
+  // 0.7.8（用户：「另外平板等，应该也能支持手指左右滑动」）：启用条件从「窗口 ≤720」
+  // 改成「设备有触控能力」——平板（768–1280）也能横滑；鼠标仍不触发（swipe-nav 的
+  // pointerType 判断），所以触屏笔记本用鼠标拖不会误切。箭头保留，横滑只是额外通路。
+  const coarsePointerMedia =
+    typeof matchMedia === 'function' ? matchMedia('(any-pointer: coarse)') : null;
   const swipeNav = createSwipeNav({
     onPrev: () => shiftCursor(-1),
     onNext: () => shiftCursor(1),
     isEnabled: () =>
-      narrowSearchMedia.matches &&
+      canSwipe({
+        anyPointerCoarse: Boolean(coarsePointerMedia && coarsePointerMedia.matches),
+        maxTouchPoints: typeof navigator !== 'undefined' ? navigator.maxTouchPoints : 0,
+      }) &&
       !state.tasksView &&
+      // 0.7.8：日程列表（agenda）不参与横滑——它是纵向长列表，横滑切月只会打乱阅读位置。
+      state.view !== 'agenda' &&
       !document.querySelector('.modal, .popover, .date-popover, .search__overlay'),
   });
   swipeNav.attach(mainEl);
@@ -1522,6 +1534,9 @@ export function createApp(root, { store, user }) {
     const calId = task.calendarId || 'tasks';
     const cal = typeof store.getCalendar === 'function' ? store.getCalendar(calId) : null;
     const dueDate = new Date(task.due);
+    // 0.7.1（用户）：任务与日程同口径——列表里也显示 `emoji 任务名`。
+    const rowTag = tagForRecord(task);
+    const rowParts = splitTagTitle(rowTag, task.title || t('taskbar.untitled'));
     const overdue =
       !task.done &&
       (task.allDay ? endOfDay(dueDate).getTime() < now.getTime() : task.due < now.getTime());
@@ -1556,7 +1571,16 @@ export function createApp(root, { store, user }) {
         type: 'button',
         on: { click: () => modal.openEdit(task) },
       }, [
-        el('span', { class: 'task-row__title', text: task.title || t('taskbar.untitled') }),
+        el('span', { class: 'task-row__line' }, [
+          rowParts.emoji
+            ? el('span', { class: 'task-row__tag', text: rowParts.emoji, 'aria-hidden': 'true' })
+            : null,
+          // 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符，不用 CSS margin。
+          rowParts.emoji
+            ? el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' })
+            : null,
+          el('span', { class: 'task-row__title', text: rowParts.label || t('taskbar.untitled') }),
+        ]),
         el('span', { class: 'task-row__meta' }, [
           el('span', {
             class: `task-row__due${overdue ? ' is-overdue' : ''}`,

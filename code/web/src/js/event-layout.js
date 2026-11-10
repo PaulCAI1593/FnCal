@@ -200,21 +200,31 @@ export function layoutColumns(events) {
  * 0.2.19（D1）：跨天的**定时**事件也进全天/多日轨（`isMultiDayBar` 现在只看覆盖
  * 天数）。同时丢弃裁剪后长度为 0 的段——「19 日 18:30 → 20 日 00:00」在 20 日
  * 裁出来的是一个零长度块，用户看到的就是那条 `00:00` 的多余日程。
+ *
+ * 0.7.9 D（用户：周/四日/日里跨天定时事件被放进全天行）：周视图这几列按**时间轴**
+ * 表达定时事件，跨天定时块应像普通定时事件一样裁进当天、首尾相接，而不是升到
+ * 全天行。`clipMultiDay: true` 时只有 `allDay` 进全天轨，跨天定时事件按
+ * `max(start, dayStart) → min(end, dayEnd)` 裁段（零长度丢弃）；月视图仍用默认值，
+ * 多日连条不变。裁完的段带 `clippedEnd`（结束落在当天 24:00），供时间标签显示
+ * `24:00` 而不是跳回 `00:00`。
  */
-export function splitDayEvents(events, dayStart, dayEnd) {
+export function splitDayEvents(events, dayStart, dayEnd, options = {}) {
+  const clipMultiDay = Boolean(options.clipMultiDay);
   const allDay = [];
   const timed = [];
   for (const ev of events) {
-    if (ev.allDay || isMultiDayBar(ev)) {
+    if (ev.allDay || (!clipMultiDay && isMultiDayBar(ev))) {
       allDay.push(ev);
       continue;
     }
     const start = Math.max(ev.start, dayStart);
-    const end = Math.min(ev.end, dayEnd);
+    // 0.7.9 D：定时跨天段裁到「当天 24:00」（dayEnd 是 23:59:59.999，会让块差 1ms 贴不到列底）。
+    const limit = clipMultiDay ? dayStart + 24 * 60 * 60_000 : dayEnd;
+    const end = Math.min(ev.end, limit);
     // Half-open: an end that lands exactly on this day's midnight contributes
     // nothing to this day (the zero-length block the user reported).
     if (end <= start) continue;
-    timed.push({ ...ev, start, end });
+    timed.push({ ...ev, start, end, clippedEnd: clipMultiDay && ev.end > end });
   }
   return { allDay, timed };
 }

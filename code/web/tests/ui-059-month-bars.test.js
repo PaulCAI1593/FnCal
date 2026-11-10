@@ -72,7 +72,12 @@ describe('0.5.9 S1 手机月视图：跨天连续长条', () => {
     expect(compactCss).not.toMatch(/\.month__events \{[\s\S]{0,180}overflow-x: auto/);
     // 单日 chip 的 4px 圆角 + 3px 色条仍在（S2 不回归）
     expect(compactCss).toMatch(/\.chip \{[\s\S]{0,220}border-radius: var\(--r-xs\);/);
-    expect(compactCss).toMatch(/\.chip::after \{[\s\S]{0,220}width: 3px;/);
+    // 0.7.8（用户：「所有当天的日程和手机显示一致」）：3px 色条与 16% 底色提升为
+    // **全局**规则（桌面档也用同一套），所以这里改查全文件，不再要求落在 ≤520 块里。
+    expect(viewsCss).toMatch(/\.chip::after \{[\s\S]{0,220}width: 3px;/);
+    expect(viewsCss).toMatch(
+      /\.chip \{[\s\S]{0,900}background: color-mix\(in srgb, var\(--chip-color, var\(--accent\)\) 16%, transparent\);/,
+    );
   });
 
   it('条高与单日 chip 同口径：都不写死高度，沿用 --month-chip-h 实测值', () => {
@@ -93,16 +98,21 @@ describe('0.5.9 S1 手机月视图：跨天连续长条', () => {
 });
 
 describe('0.5.9 S2 手机月视图：长条不折叠、单日仍 2 条上限、横滑不劫持', () => {
-  it('手机档长条永不折叠：compact 分支把 visibleBars 拉回全部条', () => {
-    expect(monthJs).toMatch(/if \(compact\) \{\s*visibleBars = barNodes\.length;/);
-    expect(monthJs).toMatch(/visibleLaneNodes = laneNodes\.length;/);
-    expect(monthJs).toMatch(/visibleOthers = compactOthersCap;/);
-    // 容量再不够也只收单日，不让条出去
-    expect(monthJs).toMatch(/else if \(!compact && visibleBars > 0\)/);
+  it('手机档长条折叠口径（0.7.8 起改为与单日一起折叠）', () => {
+    // 0.7.8（用户「这几处应该折叠成还有 X 个的地方也没折叠」）：窄档不再把
+    // visibleBars 拉回全部条——容量不足时条也会收起，否则条会把「还有 N 个」
+    // 压出格底（9 月截图里「还有 5 个」被条盖住）。
+    expect(monthJs).not.toMatch(/if \(compact\) \{\s*visibleBars = barNodes\.length;/);
+    expect(monthJs).not.toMatch(/visibleLaneNodes = laneNodes\.length;\s*visibleOthers = compactOthersCap;/);
+    // 守卫循环里条在窄档同样可以让出名额（不再带 !compact 条件）。
+    expect(monthJs).toMatch(/else if \(visibleBars > 0\) \{/);
   });
 
-  it('单日 chip 上限仍为 2 条（口径 0.2.17 B1 不变）', () => {
-    expect(monthJs).toMatch(/const compactOthersCap = compact \? Math\.min\(2, otherNodes\.length\)/);
+  it('单日 chip 不再有「固定 2 条」上限（0.7.8 改为逐格实测容量）', () => {
+    // 0.2.17 B1 的「每格最多 2 条单日」在 0.7.8 取消：用户截图里「还有 5 个」被条压住，
+    // 折叠必须按本格实测可用高计算（见 month-078.test.js 的逐格容量用例）。
+    expect(monthJs).not.toMatch(/const compactOthersCap = compact \? Math\.min\(2, otherNodes\.length\)/);
+    expect(monthJs).toContain('planCellRows({');
   });
 
   it('长条落在 .month__events 内，该容器仍在横滑排除表里（A7）', () => {
@@ -168,24 +178,26 @@ describe('0.5.9 S4：大屏看得见的信息，手机也要看得见（不许�
     // 0.5.11（用户 m02171）：节日名一律不显示省略号，窄格先缩字号、再减到 1 个完整汉字。
     expect(bigBlock).toMatch(/\.month__dayhead {[^}]*flex-wrap:\s*nowrap/);
     // 0.5.18（W3）口径变更：承载盒宽度由 month.js 写成「自然宽 × scale」（布局宽 = 视觉宽），
-    // 所以承载盒不能再参与 flex 收缩（旧 flex: 0 1 auto / 1 1 auto 会把盒压窄 → 末字被裁）。
+    // 所以承载盒不能参与 flex 收缩（旧 flex: 0 1 auto / 1 1 auto 会把盒压窄 → 末字被裁）。
+    // 0.7.8（最终口径 m04435，用户「不用省略，当中还空着，调整一下位置就可以了」）：
+    // 农历/节日名保持完整、不省略也不收缩；空间由「今天」胶囊内收 + month.js 负外边距吸收。
     expect(bigBlock).toMatch(/\.month__holiday {[^}]*flex:\s*0 0 auto/);
     expect(bigBlock).toMatch(/\.month__holiday-icon {\s*display:\s*none;/);
     expect(bigBlock).toMatch(/\.month__holiday-name {[^}]*text-overflow:\s*clip/);
-    expect(bigBlock).not.toMatch(/\.month__holiday-name {[^}]*text-overflow:\s*ellipsis/);
     expect(bigBlock).toMatch(/\.month__holiday-name {[^}]*white-space:\s*nowrap/);
-    // 农历并进日号行（左），日号行仍是整格宽、只有一行；同样不收缩
+    // 农历并进日号行（左），日号行仍是整格宽、只有一行；与节日名同口径不收缩
     expect(bigBlock).toMatch(/\.month__lunar--inline {[^}]*flex:\s*0 0 auto/);
     expect(bigBlock).toMatch(/\.month__dayhead {[^}]*width:\s*100%[^}]*max-width:\s*100%/);
   });
 
   it('单日 chip 两行：标题一行、时间一行，且与长条同高 26px（信息不被挤掉）', () => {
     expect(bigBlock).toMatch(/\.chip {[^}]*min-height:\s*26px[^}]*line-height:\s*12px/);
+    // 0.7.1 起：带标签的 chip（含任务）走单行 `emoji + 名称`，这条两行规则排除它们。
     expect(bigBlock).toMatch(
-      /\.chip:not\(\.chip--span-start\):not\(\.chip--span-mid\):not\(\.chip--span-end\):not\(\.chip--task\)\s*\.chip__title {[^}]*order:\s*1/,
+      /\.chip:not\(\.chip--span-start\):not\(\.chip--span-mid\):not\(\.chip--span-end\):not\(\.chip--task\):not\(\.chip--tagged\)\s*\.chip__title {[^}]*order:\s*1/,
     );
     expect(bigBlock).toMatch(
-      /\.chip:not\(\.chip--span-start\):not\(\.chip--span-mid\):not\(\.chip--span-end\):not\(\.chip--task\)\s*\.chip__time {[^}]*order:\s*2[^}]*line-height:\s*12px/,
+      /\.chip:not\(\.chip--span-start\):not\(\.chip--span-mid\):not\(\.chip--span-end\):not\(\.chip--task\):not\(\.chip--tagged\)\s*\.chip__time {[^}]*order:\s*2[^}]*line-height:\s*12px/,
     );
   });
 
@@ -284,8 +296,12 @@ describe('0.5.18 / 0.5.21 W2：跨天条名称按整条展开，末端才省略'
     // showTitle = showLabel || ends.contBefore：标题只渲染一次（首段或行首段）。
     expect(monthJs).toMatch(/const showTitle = showLabel \|\| ends\.contBefore;/);
     // 桌面保留 0.5.18 的 max-width 路径；≤520 改成网格级标签层，段上只带全名。
-    expect(monthJs).toMatch(/span && showTitle && !compactChip \? \{ barLabel: '1' \} : \{\}\)/);
-    expect(monthJs).toMatch(/span && compactChip \? \{ barSeg: '1', barTitle: chipTitle \} : \{\}\)/);
+    // 0.7.10（用户：手机上单日全天事件没有 emoji）：只有真多段条才推迟给标签层，
+    // 单日全天（chip--span-single）改在 chip 内渲染，所以判定改用 multiSeg。
+    expect(monthJs).toMatch(/multiSeg && showTitle && !compactChip \? \{ barLabel: '1' \} : \{\}\)/);
+    // 0.7.1 起：≤520 标签层文本改成 emoji + 名称，barTitle 不再只是 chipTitle。
+    expect(monthJs).toMatch(/multiSeg && compactChip \? \{ barSeg: '1', barTitle: .*chipLabel.*\} : \{\}\)/);
+    expect(monthJs).toContain("chipEmoji ? `${chipEmoji} ` : ''");
     expect(monthJs.match(/barLabel: '1'/g)).toHaveLength(1);
   });
 
@@ -317,8 +333,12 @@ describe('0.5.18 / 0.5.21 W2：跨天条名称按整条展开，末端才省略'
     // 旧选择器（.chip--bar-label）从不匹配 data-bar-label，必须彻底消失
     expect(viewsCss).not.toContain('.chip--bar-label');
     // 手机档的段不带 data-bar-label，只带 barSeg + 全名
-    expect(monthJs).toMatch(/span && showTitle && !compactChip \? \{ barLabel: '1' \} : \{\}\)/);
-    expect(monthJs).toMatch(/span && compactChip \? \{ barSeg: '1', barTitle: chipTitle \} : \{\}\)/);
+    // 0.7.10（用户：手机上单日全天事件没有 emoji）：只有真多段条才推迟给标签层，
+    // 单日全天（chip--span-single）改在 chip 内渲染，所以判定改用 multiSeg。
+    expect(monthJs).toMatch(/multiSeg && showTitle && !compactChip \? \{ barLabel: '1' \} : \{\}\)/);
+    // 0.7.1 起：≤520 标签层文本改成 emoji + 名称，barTitle 不再只是 chipTitle。
+    expect(monthJs).toMatch(/multiSeg && compactChip \? \{ barSeg: '1', barTitle: .*chipLabel.*\} : \{\}\)/);
+    expect(monthJs).toContain("chipEmoji ? `${chipEmoji} ` : ''");
   });
 
   it('段间无断口、命中区不变：段宽/边距仍由 monthBarBoxes 一套几何写', () => {
@@ -359,9 +379,15 @@ describe('0.6.2 W2：每个行段各自显示名称，多窄都渲染（1 个字
     expect(monthJs).not.toMatch(/label\.style\.width = 'max-content';/);
     expect(monthJs).not.toMatch(/const natural = label\.scrollWidth/);
     expect(monthJs).not.toMatch(/if \(natural > avail \+ 0\.5\)/);
-    // 宽度 = 本段标题起点 → 本行最后一段右缘（行末「>」再留 12px）
-    expect(monthJs).toMatch(/const tail = lastBar\.classList\.contains\('chip--cont-after'\) \? 12 : 0;/);
-    expect(monthJs).toMatch(/const avail = Math\.max\(0, run\.right - tail - left\);/);
+    // 0.7.10（用户：「三角 < 后的空挡太大」）：让位只由 CSS 的 padding 承担
+    // （`.chip--cont-before` 的 16px），标签层不再额外 +11px 的 lead，也不再按
+    // 行末箭头扣 12px 的 tail——两处都是重复让位，实测空挡从 11px 收到 0px。
+    expect(monthJs).toMatch(/const lead = 0;/);
+    expect(monthJs).not.toMatch(/const tail = /);
+    // 0.7.8：右边界取「最后一个**可见**段的右缘」与整条右缘的较小者——折叠掉的段
+    // 不再把标签撑到已经不在的位置上（这条同时修「标签压住还有 N 个」）。
+    expect(monthJs).toMatch(/const right = Math\.min\(run\.right, lastRect\.right > 0 \? lastRect\.right : run\.right\) - lastPadEnd;/);
+    expect(monthJs).toMatch(/const avail = Math\.max\(0, right - left\);/);
     expect(monthJs).toMatch(/label\.style\.width = `\$\{avail\.toFixed\(1\)\}px`;/);
     // 位置相对网格；字体从段内标题复制，保证与原 chip 一致
     expect(monthJs).toMatch(/left - gridRect\.left/);

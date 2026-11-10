@@ -24,6 +24,7 @@ import {
   isScheduledOccurrence,
 } from './recurrence.js';
 import { startOfDay, endOfDay, addDays, MS_PER_DAY } from './date-utils.js';
+import { withTagEmoji } from './tag-display.js';
 import { getHolidaysInRange } from './holidays.js';
 import { solarTermItemsInRange } from './lib/solar-terms.js';
 // 0.4.6：KV 写链诊断与「保存后回读」留痕（详见 kv-rest.js 顶部注释）。
@@ -33,6 +34,7 @@ import { beginKvWriteTrace, endKvWriteTrace, recordSaveResult } from './kv-rest.
 const EVENT_PREFIX = 'cal:evt:';
 const TASK_PREFIX = 'cal:task:';
 const SETTINGS_KEY = 'cal:settings';
+const TAGS_KEY = 'cal:default:tags';
 const DEFAULT_CALENDAR_ID = 'default';
 const TASKS_CALENDAR_ID = 'tasks';
 const DEFAULT_CALENDAR_NAME = '我的日历';
@@ -41,6 +43,227 @@ const CALENDAR_TYPES = new Set(['vevent', 'vtodo']);
 const DEFAULT_DURATION_MS = 60 * 60_000;
 const DAY_MS = 86_400_000;
 const OCC_SEP = '::';
+
+/* ---- 0.7.0 标签 ------------------------------------------------------ */
+//
+// 标签注册表（id/emoji/名称/数量）由服务端保管，键 `cal:default:tags`；
+// 事件与任务只记 `tagId`（本机注册表 id）与 `categories`（写进 iCal 的
+// 标签名，单标签）。渲染时先按 tagId 找，找不到再按 categories[0] 匹配名称，
+// 这样外部导入或换了注册表的旧数据也能显示。
+//
+// 视图模块是同步渲染的，所以这里留一份模块级镜像：store.loadTags() 每次
+// 拿到新列表都会刷新它，`tagForRecord()` 因此不必等待任何请求。
+let TAG_REGISTRY = [];
+
+/** 0.7.1：分组（v2 注册表的一部分；视图与筛选菜单都要同步读取）。 */
+let TAG_GROUPS = [];
+
+/** 0.7.1：默认分组 id；与服务端 `DEFAULT_GROUP_ID` 一致。 */
+export const DEFAULT_TAG_GROUP_ID = 'grp_default';
+
+/** Replace the module-level tag mirror (safe against partial server rows). */
+export function setTagRegistry(list = []) {
+  TAG_REGISTRY = Array.isArray(list)
+    ? list
+        .filter((item) => item && typeof item.id === 'string' && item.id)
+        .map((item) => ({
+          id: item.id,
+          emoji: typeof item.emoji === 'string' ? item.emoji : '',
+          name: typeof item.name === 'string' ? item.name : '',
+          groupId: typeof item.groupId === 'string' ? item.groupId : DEFAULT_TAG_GROUP_ID,
+          order: Number.isFinite(item.order) ? item.order : 0,
+          count: Number.isFinite(item.count) ? item.count : 0,
+        }))
+    : [];
+  return TAG_REGISTRY;
+}
+
+/** 0.7.1：Replace the module-level group mirror. */
+export function setTagGroups(list = []) {
+  TAG_GROUPS = Array.isArray(list)
+    ? list
+        .filter((item) => item && typeof item.id === 'string' && item.id)
+        .map((item) => ({
+          id: item.id,
+          name: typeof item.name === 'string' ? item.name : '',
+          order: Number.isFinite(item.order) ? item.order : 0,
+        }))
+        .sort((a, b) => a.order - b.order)
+    : [];
+  return TAG_GROUPS;
+}
+
+export function getTagGroups() {
+  return TAG_GROUPS.slice();
+}
+
+export function getTagRegistry() {
+  return TAG_REGISTRY;
+}
+
+/**
+ * 0.7.4（用户）：标签的唯一显示顺序。
+ * 分组按 order 升序（未分组固定最前），组内标签按 order 升序；空分组保留。
+ * 标签的 groupId 指向不存在的分组时归入未分组。
+ * @param {Array<{id:string,name?:string,order?:number}>} groupsList
+ * @param {Array<{id:string,groupId?:string,order?:number}>} tagList
+ * @param {string} defaultName
+ * @returns {Array<{group:object, tags:Array<object>}>}
+ */
+export function orderTagSections(groupsList = [], tagList = [], defaultName = '未分组') {
+  const byOrder = (a, b) => (Number(a.order) || 0) - (Number(b.order) || 0);
+  const known = new Map();
+  for (const group of Array.isArray(groupsList) ? groupsList : []) {
+    if (!group || !group.id) continue;
+    known.set(group.id, { ...group });
+  }
+  if (!known.has(DEFAULT_TAG_GROUP_ID)) {
+    known.set(DEFAULT_TAG_GROUP_ID, { id: DEFAULT_TAG_GROUP_ID, name: defaultName, order: -1 });
+  }
+  const ordered = [...known.values()].sort((a, b) => {
+    if (a.id === DEFAULT_TAG_GROUP_ID) return -1;
+    if (b.id === DEFAULT_TAG_GROUP_ID) return 1;
+    return byOrder(a, b);
+  });
+  const tags = Array.isArray(tagList) ? tagList : [];
+  return ordered.map((group) => ({
+    group,
+    tags: tags
+      .filter((tag) => (known.has(tag.groupId) ? tag.groupId : DEFAULT_TAG_GROUP_ID) === group.id)
+      .slice()
+      .sort(byOrder),
+  }));
+}
+
+/**
+ * 0.7.1 K：写进 `CATEGORIES` 的标签值 = 标签名（不带 emoji）。
+ * 标签 emoji 由服务端写进标题开头（`SUMMARY` = `emoji 名称`）。
+ */
+export function tagCategoryLabel(tag) {
+  return String((tag && tag.name) || '').trim();
+}
+
+/** 第一个字素（emoji 可能是多码点，例如 ❤️ 带变体选择符）。 */
+const GRAPHEME_SEGMENTER = typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+  ? new Intl.Segmenter('zh-CN', { granularity: 'grapheme' })
+  : null;
+
+function firstGrapheme(text) {
+  const value = String(text ?? '');
+  if (!value) return '';
+  if (GRAPHEME_SEGMENTER) {
+    for (const part of GRAPHEME_SEGMENTER.segment(value)) return part.segment;
+  }
+  return [...value][0] || '';
+}
+
+/**
+ * 0.7.1 I：把分类值还原成标签名。开头一个 emoji 后面允许零个/多个空白
+ * （半角、全角都算）——`⚽运动` / `⚽ 运动` / `⚽　运动` 都还原成「运动」。
+ */
+export function categoryTagName(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const first = firstGrapheme(text);
+  if (!first || !/\p{Extended_Pictographic}/u.test(first)) return text;
+  return text.slice(first.length).replace(/^\s+/, '').trim();
+}
+
+/** The tag a record wears, or null. `tagId` wins; `categories[0]` is the fallback. */
+export function tagForRecord(record) {
+  if (!record) return null;
+  const id = typeof record.tagId === 'string' ? record.tagId : '';
+  if (id) {
+    const byId = TAG_REGISTRY.find((tag) => tag.id === id);
+    if (byId) return byId;
+  }
+  const name = Array.isArray(record.categories) && typeof record.categories[0] === 'string'
+    ? categoryTagName(record.categories[0])
+    : '';
+  if (!name) return null;
+  return TAG_REGISTRY.find((tag) => tag.name === name) || null;
+}
+
+/**
+ * 0.7.2（用户，缺陷 1）：系列编辑的字段白名单会把 `tagId` / `categories`
+ * 丢掉；服务端看到「原来有标签、这次没有」就当成取消标签，顺带删掉标题里的
+ * emoji。这里给 updateSeries / updateFuture 统一算写回字段：
+ * - `patch.tagId === undefined` 沿用 master 的标签；显式空串表示清除；
+ * - `categories` 只保留第一条标签名，其它分类原样跟在后面；
+ * - 标题走 withTagEmoji，保证前缀与服务端口径一致。
+ */
+function seriesTagFields(master, patch) {
+  const prevTag = tagForRecord(master);
+  const nextTag = patch.tagId === undefined
+    ? prevTag
+    : (patch.tagId ? tagForRecord({ tagId: patch.tagId, categories: patch.categories }) : null);
+  const nextName = nextTag ? tagCategoryLabel(nextTag) : '';
+  const base = Array.isArray(patch.categories)
+    ? patch.categories
+    : (Array.isArray(master.categories) ? master.categories : []);
+  const rest = base.filter((value) => {
+    const name = categoryTagName(value);
+    return name && name !== (prevTag && prevTag.name) && name !== (nextTag && nextTag.name);
+  });
+  const title = patch.title != null
+    ? withTagEmoji(prevTag, nextTag, patch.title)
+    : (nextTag !== prevTag ? withTagEmoji(prevTag, nextTag, master.title) : master.title);
+  return {
+    tagId: nextTag ? nextTag.id : '',
+    categories: nextName ? [nextName, ...rest] : rest,
+    title,
+  };
+}
+
+/** `emoji 名称` for lists and cards; emoji alone when the name does not fit. */
+export function tagDisplayName(tag, { emojiOnly = false } = {}) {
+  if (!tag) return '';
+  const name = tag.name || '';
+  if (emojiOnly) return tag.emoji || name;
+  if (tag.emoji && name) return `${tag.emoji} ${name}`;
+  return tag.emoji || name;
+}
+
+/**
+ * 0.7.1 J：标题首字素已经是这个标签的 emoji 时，不再前置标签 emoji
+ * （避免 `⚽ ⚽ 台球`）。只比首字素，标题中间或末尾的 emoji 不算。
+ */
+export function tagEmojiPrefix(tag, title) {
+  const emoji = String((tag && tag.emoji) || '');
+  if (!emoji) return '';
+  return firstGrapheme(String(title ?? '')) === emoji ? '' : emoji;
+}
+
+/**
+ * 0.7.1 K.3：编辑器标题框只显示名称。
+ *
+ * 标题首字素正好是这个标签的 emoji 时剥掉（连带后随空白）；别的 emoji 保留，
+ * 那是用户自己写的。纯显示层，不写库——保存时由服务端 `applyTagToSummary` 补回。
+ */
+export function titleWithoutTagEmoji(tag, title) {
+  const text = String(title ?? '');
+  const emoji = String((tag && tag.emoji) || '');
+  if (!emoji) return text;
+  const first = firstGrapheme(text);
+  if (first !== emoji) return text;
+  return text.slice(first.length).replace(/^\s+/, '');
+}
+
+/** 0.7.0：单个标签名规范化（与服务端 12 字上限一致；写入前用）。 */
+export function normalizeTagId(value) {
+  return typeof value === 'string' ? value.trim().slice(0, 64) : '';
+}
+
+function normalizeCategories(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(
+    value
+      .filter((item) => typeof item === 'string')
+      .map((item) => item.trim().slice(0, 64))
+      .filter(Boolean),
+  )].slice(0, 10);
+}
+
 
 /* ---- 0.2.0 multi-calendar key space ---------------------------------- */
 //
@@ -434,6 +657,10 @@ function sanitizeOverride(input) {
   if (Number.isFinite(input.start)) out.start = Math.round(input.start);
   if (Number.isFinite(input.end)) out.end = Math.round(input.end);
   if (Array.isArray(input.reminders)) out.reminders = normalizeReminders(input.reminders);
+  // 0.7.2（用户）：仅本次也可以单独挂/清标签，白名单不能把它丢掉。
+  // 空数组要保留：它表示「这个实例清掉标签」，丢成 undefined 会回落到 master。
+  if (typeof input.tagId === 'string') out.tagId = normalizeTagId(input.tagId);
+  if (Array.isArray(input.categories)) out.categories = normalizeCategories(input.categories);
   return out;
 }
 
@@ -522,6 +749,9 @@ export function normalizeEvent(input = {}, now = Date.now()) {
   // defaulted, so the legacy single-calendar key space keeps byte-identical
   // values for backends that never expose calendars.
   if (typeof input.calendarId === 'string' && input.calendarId) base.calendarId = input.calendarId;
+  // 0.7.2（用户，缺陷 2）：**不在这里补默认日历**。saveEvent / importEvents 先按
+  // 「显式 → lastCalendarId → 我的日历」决定归属，normalize 提前补 default 会把
+  // 多日历设置覆盖掉（store-multical 回归）。显示层用 calendarIdOfEvent() 兜底。
   // 0.2.0：事件级手动改色标记（覆盖日历色）；只增字段，旧数据默认继承日历色。
   if (input.colorOverride === true) base.colorOverride = true;
 
@@ -553,6 +783,12 @@ export function normalizeEvent(input = {}, now = Date.now()) {
 
   // 0.2.12（C11-3）：农历标记（服务端权威换算，前端只记用户的农历月日）。
   applyLunarFields(base, input);
+
+  // 0.7.0 标签：只增字段，旧事件（无 tagId/categories）形状不变。
+  const tagId = normalizeTagId(input.tagId);
+  if (tagId) base.tagId = tagId;
+  const categories = normalizeCategories(input.categories);
+  if (categories.length) base.categories = categories;
 
   return base;
 }
@@ -595,6 +831,11 @@ export function normalizeTask(input = {}, now = Date.now()) {
   if (typeof input.calendarId === 'string' && input.calendarId) task.calendarId = input.calendarId;
   // 0.2.12（C11-3）：任务同样可以标农历日期（任务没有「每年」规则）。
   applyLunarFields(task, input);
+  // 0.7.0：任务也能带一个标签，字段与事件同口径（只增）。
+  const tagId = normalizeTagId(input.tagId);
+  if (tagId) task.tagId = tagId;
+  const categories = normalizeCategories(input.categories);
+  if (categories.length) task.categories = categories;
   return task;
 }
 
@@ -648,10 +889,15 @@ function reproject(anchorMs, editStartMs, editEndMs, allDay) {
   return { start, end: start + dur };
 }
 
-export function createStore(backend) {
+export function createStore(backend, options = {}) {
   const events = new Map();
   const tasks = new Map();
   const calendars = new Map();
+  // 0.7.0：标签注册表由服务端保管（改名/删除会批量清引用），所以 CRUD 走
+  // 注入的 tagsApi；没有注入时退回 KV 通用键 + 本地统计，既有单测不受影响。
+  const tagsApi = options && options.tagsApi ? options.tagsApi : null;
+  let tags = setTagRegistry([]);
+  let groups = setTagGroups([]);
   // Multi-calendar is only active when the backend exposes the calendar API
   // (0.2.0 backend). Older stand-ins / deployments keep the pre-0.2.0 key space
   // and single-calendar behavior untouched.
@@ -1326,6 +1572,9 @@ export function createStore(backend) {
       const cal = calendars.get(ev.calendarId);
       if (cal && !ev.colorOverride && !ev.ooo) ev.color = cal.color;
     }
+    // 0.7.2（用户，Bug A）：编辑器只显示名称，标题里的标签 emoji 由这里补回，
+    // 与服务端 applyTagToSummary 同语义——本地对象就是服务端将写入的结果。
+    ev.title = withTagEmoji(tagForRecord(existing), tagForRecord(ev), ev.title);
     events.set(ev.id, ev);
     emit();
     await writeOrRevert(events, ev.id, ev, existing, () => kv.set(eventKey(ev), ev));
@@ -1513,8 +1762,20 @@ export function createStore(backend) {
     const snap = cloneEvent(master);
 
     const applySlice = (m) => {
+      // 0.7.2（用户，缺陷 1）：仅本次也允许单独挂标签；不改标签时仍跟随 master。
+      // 覆盖实例不携带 calendarId，日历始终跟随系列。
+      const slice = { ...patch };
+      delete slice.calendarId;
+      if (slice.tagId !== undefined || slice.title != null) {
+        const fields = seriesTagFields(m, patch);
+        if (slice.title != null) slice.title = fields.title;
+        if (slice.tagId !== undefined) {
+          slice.tagId = fields.tagId;
+          slice.categories = fields.categories;
+        }
+      }
       const overrides = { ...(m.overrides || {}) };
-      overrides[rid] = { ...(overrides[rid] || {}), ...patch };
+      overrides[rid] = { ...(overrides[rid] || {}), ...slice };
       return { ...m, overrides, exdates: (m.exdates || []).filter((x) => x !== rid) };
     };
     const updated = normalizeEvent(applySlice(master));
@@ -1600,8 +1861,11 @@ export function createStore(backend) {
 
     const updated = normalizeEvent({
       ...master,
-      ...(adoptedCalendarId ? { calendarId: adoptedCalendarId } : {}),
-      title: patch.title != null ? patch.title : master.title,
+      // 0.7.2（用户，缺陷 2）：系列写回必须显式带 calendarId，否则 key 会落到
+      // 默认日历，原日历里的记录对不上。
+      calendarId: targetCalendarId,
+      // 0.7.2（用户，缺陷 1）：系列编辑保留/同步标签字段与标题前缀。
+      ...seriesTagFields(master, patch),
       description: patch.description != null ? patch.description : master.description,
       location: patch.location != null ? patch.location : master.location,
       color: patch.color != null ? patch.color : master.color,
@@ -1730,8 +1994,11 @@ export function createStore(backend) {
 
     const newMaster = normalizeEvent({
       id: undefined,
-      ...(adoptedCalendarId ? { calendarId: adoptedCalendarId } : {}),
-      title: patch.title != null ? patch.title : master.title,
+      // 0.7.2（用户，缺陷 2）：尾系列必须落在原日历（或显式采用的日历），
+      // 否则键会退回默认日历，客户端解析不到就显示「未知日历」。
+      calendarId: targetCalendarId,
+      // 0.7.2（用户，缺陷 1）：尾系列沿用 master 的标签与标题前缀。
+      ...seriesTagFields(master, patch),
       description: patch.description != null ? patch.description : master.description,
       location: patch.location != null ? patch.location : master.location,
       color: patch.color != null ? patch.color : master.color,
@@ -2065,6 +2332,8 @@ export function createStore(backend) {
       const cal = calendars.get(t.calendarId);
       if (cal && !t.colorOverride) t.color = cal.color;
     }
+    // 0.7.2（用户，Bug A）：任务与事件同口径，本地标题先补回标签 emoji。
+    t.title = withTagEmoji(tagForRecord(existing), tagForRecord(t), t.title);
     tasks.set(t.id, t);
     emit();
     await writeOrRevert(tasks, t.id, t, existing, () => kv.set(taskKey(t), t));
@@ -2234,10 +2503,454 @@ export function createStore(backend) {
     return getSettings();
   }
 
+  /* ---- 0.7.0 标签 ---------------------------------------------------- */
+
+  /** 该记录在给定列表里戴的标签（服务端行或本地行都适用）。 */
+  function tagOf(list, record) {
+    if (!record) return null;
+    const id = typeof record.tagId === 'string' ? record.tagId : '';
+    if (id) {
+      const byId = list.find((tag) => tag.id === id);
+      if (byId) return byId;
+    }
+    const name = Array.isArray(record.categories) && typeof record.categories[0] === 'string'
+      ? categoryTagName(record.categories[0])
+      : '';
+    if (!name) return null;
+    return list.find((tag) => tag.name === name) || null;
+  }
+
+  /** KV 兜底（未注入 tagsApi）时的数量：事件与任务各算一条。 */
+  function localTagCounts(list) {
+    const counts = new Map(list.map((tag) => [tag.id, 0]));
+    const add = (record) => {
+      const tag = tagOf(list, record);
+      if (tag && counts.has(tag.id)) counts.set(tag.id, counts.get(tag.id) + 1);
+    };
+    for (const ev of events.values()) add(ev);
+    for (const task of tasks.values()) add(task);
+    return list.map((tag) => ({ ...tag, count: counts.get(tag.id) || 0 }));
+  }
+
+  function applyTags(list, groupList = groups) {
+    tags = setTagRegistry(list);
+    groups = setTagGroups(groupList);
+    return tags;
+  }
+
+  function getTags() {
+    return tags.slice();
+  }
+
+  /** 0.7.1：分组列表（按 order 升序，模块镜像同一份）。 */
+  function getTagGroups() {
+    return groups.slice();
+  }
+
+  /**
+   * 0.7.4（用户）：标签页、编辑器下拉、筛选下拉共用的唯一顺序。
+   * 分组按 order 升序（未分组 grp_default 固定最前），组内标签按 order 升序；
+   * 空分组也返回，供下拉显示分组标题。不缓存，每次从当前注册表重算。
+   */
+  function getTagsForDisplay() {
+    return orderTagSections(groups, tags);
+  }
+
+  function tagGroupById(id) {
+    if (!id) return null;
+    return groups.find((group) => group.id === id) || null;
+  }
+
+  /**
+   * KV 兜底把旧形状（v1 裸数组 / 旧对象）规整成 v2，口径与服务端
+   * `migrateTagState()` 一致：默认分组「未分组」、旧标签按原序挂进去。
+   */
+  function normalizeLocalTagState(raw) {
+    const groupsIn = raw && !Array.isArray(raw) && Array.isArray(raw.groups) ? raw.groups : [];
+    const listIn = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.tags) ? raw.tags : []);
+    const groupList = groupsIn
+      .filter((group) => group && typeof group.id === 'string' && group.id)
+      .map((group, index) => ({
+        id: group.id,
+        name: typeof group.name === 'string' && group.name.trim()
+          ? group.name.trim().slice(0, 12)
+          : '未分组',
+        order: Number.isFinite(group.order) ? group.order : index,
+      }))
+      .sort((a, b) => a.order - b.order);
+    if (!groupList.some((group) => group.id === DEFAULT_TAG_GROUP_ID)) {
+      groupList.unshift({ id: DEFAULT_TAG_GROUP_ID, name: '未分组', order: -1 });
+    }
+    groupList.forEach((group, index) => { group.order = index; });
+    const known = new Set(groupList.map((group) => group.id));
+    const tagList = listIn
+      .filter((tag) => tag && typeof tag.id === 'string' && tag.id)
+      .map((tag, index) => ({
+        ...tag,
+        groupId: known.has(tag.groupId) ? tag.groupId : DEFAULT_TAG_GROUP_ID,
+        order: Number.isFinite(tag.order) ? tag.order : index,
+      }));
+    return { version: 2, groups: groupList, tags: tagList };
+  }
+
+  async function loadTags() {
+    if (tagsApi && typeof tagsApi.list === 'function') {
+      const payload = await tagsApi.list();
+      const list = payload && Array.isArray(payload.tags) ? payload.tags : [];
+      const groupList = payload && Array.isArray(payload.groups) ? payload.groups : [];
+      return applyTags(list, groupList);
+    }
+    let state = normalizeLocalTagState(null);
+    try {
+      state = normalizeLocalTagState(await kv.get(TAGS_KEY));
+    } catch {
+      state = normalizeLocalTagState(null);
+    }
+    return applyTags(localTagCounts(state.tags), state.groups);
+  }
+
+  /** KV 兜底写回：计数是派生值，不落盘。 */
+  async function persistLocalTags(nextTags, nextGroups) {
+    const clean = nextTags.map(({ count, ...rest }) => rest);
+    await kv.set(TAGS_KEY, { version: 2, groups: nextGroups, tags: clean });
+  }
+
+  function localOrder(items, groupId) {
+    return items
+      .filter((item) => item.groupId === groupId)
+      .reduce((max, item) => Math.max(max, Number.isFinite(item.order) ? item.order : -1), -1) + 1;
+  }
+
+  function tagById(id) {
+    if (!id) return null;
+    return tags.find((tag) => tag.id === id) || null;
+  }
+
+  /** 当前列表（服务端的数量是权威值；KV 兜底用本地统计补齐）。 */
+  function tagCounts() {
+    return tagsApi ? tags.slice() : localTagCounts(tags);
+  }
+
+  function newTagId() {
+    const hex = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
+    return `tag_${hex}`;
+  }
+
+  function newGroupId() {
+    const hex = Math.random().toString(16).slice(2, 10).padEnd(8, '0');
+    return `grp_${hex}`;
+  }
+
+  /**
+   * KV 兜底：把引用 previous 的事件/任务改成 nextTag（改名）或清掉（删除）。
+   * 服务端路径由 /api/v1/tags 批量处理，这里只在没有注入 tagsApi 时用。
+   */
+  async function rewriteTagReferences(previous, nextTag) {
+    const writes = [];
+    const rewrite = (record, key, setter) => {
+      if (!tagOf([previous], record)) return;
+      const copy = { ...record };
+      if (nextTag) {
+        copy.tagId = nextTag.id;
+        // 0.7.1 K：分类只写标签名，和其它写入路径保持一致。
+        copy.categories = [tagCategoryLabel(nextTag)];
+      } else {
+        delete copy.tagId;
+        const rest = (copy.categories || []).filter((value) => categoryTagName(value) !== previous.name);
+        if (rest.length) copy.categories = rest; else delete copy.categories;
+      }
+      setter(copy);
+      writes.push(kv.set(key, copy));
+    };
+    for (const [id, ev] of [...events]) {
+      rewrite(ev, eventKey(ev), (copy) => events.set(id, copy));
+    }
+    for (const [id, task] of [...tasks]) {
+      rewrite(task, taskKey(task), (copy) => tasks.set(id, copy));
+    }
+    if (writes.length) {
+      await Promise.all(writes);
+      emit();
+    }
+  }
+
+  async function createTag(payload = {}) {
+    if (tagsApi && typeof tagsApi.create === 'function') {
+      const created = await tagsApi.create(payload);
+      await loadTags();
+      emit();
+      return created && created.tag ? created.tag : created;
+    }
+    const groupId = payload.groupId && tagGroupById(payload.groupId)
+      ? payload.groupId
+      : DEFAULT_TAG_GROUP_ID;
+    const tag = {
+      id: newTagId(),
+      emoji: typeof payload.emoji === 'string' ? payload.emoji : '',
+      name: String(payload.name || '').trim().slice(0, 12),
+      groupId,
+      order: localOrder(tags, groupId),
+      createdAt: Date.now(),
+    };
+    const next = [...tags, tag];
+    await persistLocalTags(next, groups);
+    applyTags(next, groups);
+    emit();
+    return tag;
+  }
+
+  async function updateTag(id, patch = {}) {
+    if (tagsApi && typeof tagsApi.update === 'function') {
+      const updated = await tagsApi.update(id, patch);
+      // 改名会连带改写引用事件的 categories，本地缓存必须重读才不会显示旧名。
+      await load().catch(() => {});
+      await loadTags();
+      return updated && updated.tag ? updated.tag : updated;
+    }
+    const previous = tagById(id);
+    if (!previous) throw new Error('tag not found');
+    const nextTag = { ...previous, ...patch, id };
+    if (patch.groupId !== undefined) {
+      nextTag.groupId = tagGroupById(patch.groupId) ? patch.groupId : DEFAULT_TAG_GROUP_ID;
+      if (nextTag.groupId !== previous.groupId) nextTag.order = localOrder(tags, nextTag.groupId);
+    }
+    const next = tags.map((tag) => (tag.id === id ? nextTag : tag));
+    await persistLocalTags(next, groups);
+    applyTags(next, groups);
+    await rewriteTagReferences(previous, nextTag);
+    return nextTag;
+  }
+
+  async function deleteTag(id) {
+    if (tagsApi && typeof tagsApi.delete === 'function') {
+      const removed = await tagsApi.delete(id);
+      await load().catch(() => {});
+      await loadTags();
+      return removed;
+    }
+    const previous = tagById(id);
+    if (!previous) throw new Error('tag not found');
+    const next = tags.filter((tag) => tag.id !== id);
+    await persistLocalTags(next, groups);
+    applyTags(next, groups);
+    await rewriteTagReferences(previous, null);
+    return { ok: true, removed: { id: previous.id, name: previous.name } };
+  }
+
+  /* ---- 0.7.1 分组与排序 ---------------------------------------------- */
+
+  async function createTagGroup(payload = {}) {
+    if (tagsApi && typeof tagsApi.createGroup === 'function') {
+      const created = await tagsApi.createGroup(payload);
+      await loadTags();
+      emit();
+      return created && created.group ? created.group : created;
+    }
+    const name = String(payload.name || '').trim().slice(0, 12);
+    if (!name) {
+      const err = new Error('分组名不能为空');
+      err.code = 'GROUP_NAME_EMPTY';
+      throw err;
+    }
+    if (groups.some((group) => group.name === name)) {
+      const err = new Error('分组名已存在');
+      err.code = 'GROUP_NAME_DUPLICATE';
+      throw err;
+    }
+    if (groups.length >= 50) {
+      const err = new Error('分组数量已达上限（50）');
+      err.code = 'GROUP_LIMIT';
+      throw err;
+    }
+    const group = { id: newGroupId(), name, order: groups.length };
+    const nextGroups = [...groups, group];
+    await persistLocalTags(tags, nextGroups);
+    applyTags(tags, nextGroups);
+    emit();
+    return group;
+  }
+
+  async function updateTagGroup(id, patch = {}) {
+    if (tagsApi && typeof tagsApi.updateGroup === 'function') {
+      const updated = await tagsApi.updateGroup(id, patch);
+      await loadTags();
+      emit();
+      return updated && updated.group ? updated.group : updated;
+    }
+    const previous = tagGroupById(id);
+    if (!previous) {
+      const err = new Error('分组不存在');
+      err.code = 'GROUP_NOT_FOUND';
+      throw err;
+    }
+    const name = String(patch.name === undefined ? previous.name : patch.name).trim().slice(0, 12);
+    if (!name) {
+      const err = new Error('分组名不能为空');
+      err.code = 'GROUP_NAME_EMPTY';
+      throw err;
+    }
+    if (groups.some((group) => group.id !== id && group.name === name)) {
+      const err = new Error('分组名已存在');
+      err.code = 'GROUP_NAME_DUPLICATE';
+      throw err;
+    }
+    const nextGroups = groups.map((group) => (group.id === id ? { ...group, name } : group));
+    await persistLocalTags(tags, nextGroups);
+    applyTags(tags, nextGroups);
+    emit();
+    return nextGroups.find((group) => group.id === id);
+  }
+
+  async function deleteTagGroup(id) {
+    if (tagsApi && typeof tagsApi.deleteGroup === 'function') {
+      const removed = await tagsApi.deleteGroup(id);
+      await loadTags();
+      emit();
+      return removed;
+    }
+    const previous = tagGroupById(id);
+    if (!previous) {
+      const err = new Error('分组不存在');
+      err.code = 'GROUP_NOT_FOUND';
+      throw err;
+    }
+    if (id === DEFAULT_TAG_GROUP_ID) {
+      const err = new Error('「未分组」不可删除');
+      err.code = 'GROUP_DEFAULT_PROTECTED';
+      throw err;
+    }
+    const moved = tags.filter((tag) => tag.groupId === id).length;
+    const base = localOrder(tags, DEFAULT_TAG_GROUP_ID);
+    let offset = 0;
+    const nextTags = tags.map((tag) => (tag.groupId === id
+      ? { ...tag, groupId: DEFAULT_TAG_GROUP_ID, order: base + offset++ }
+      : tag));
+    const nextGroups = groups.filter((group) => group.id !== id);
+    await persistLocalTags(nextTags, nextGroups);
+    applyTags(nextTags, nextGroups);
+    emit();
+    return { ok: true, removed: { id: previous.id, name: previous.name }, moved };
+  }
+
+  /** 批量排序：整批一次提交；服务端路径失败时重读并回滚。 */
+  async function reorderTags(payload = {}) {
+    if (tagsApi && typeof tagsApi.reorder === 'function') {
+      const before = { tags: tags.slice(), groups: groups.slice() };
+      try {
+        const next = await tagsApi.reorder(payload);
+        if (next && Array.isArray(next.tags)) applyTags(next.tags, next.groups || groups);
+        else await loadTags();
+        emit();
+        return next;
+      } catch (err) {
+        applyTags(before.tags, before.groups);
+        emit();
+        throw err;
+      }
+    }
+    const orderOf = new Map();
+    for (const row of Array.isArray(payload.groups) ? payload.groups : []) {
+      if (row && typeof row.id === 'string') orderOf.set(`g:${row.id}`, row.order);
+    }
+    for (const row of Array.isArray(payload.tags) ? payload.tags : []) {
+      if (row && typeof row.id === 'string') orderOf.set(`t:${row.id}`, row);
+    }
+    const known = new Set(groups.map((group) => group.id));
+    const nextGroups = groups
+      .map((group) => ({ ...group, order: Number.isFinite(orderOf.get(`g:${group.id}`)) ? orderOf.get(`g:${group.id}`) : group.order }))
+      .sort((a, b) => a.order - b.order)
+      .map((group, index) => ({ ...group, order: index }));
+    const nextTags = tags
+      .map((tag) => {
+        const row = orderOf.get(`t:${tag.id}`);
+        if (!row) return tag;
+        const groupId = known.has(row.groupId) ? row.groupId : tag.groupId;
+        return { ...tag, groupId, order: Number.isFinite(row.order) ? row.order : tag.order };
+      })
+      .map((tag, index) => ({ ...tag, order: Number.isFinite(tag.order) ? tag.order : index }));
+    await persistLocalTags(nextTags, nextGroups);
+    applyTags(nextTags, nextGroups);
+    emit();
+    return { version: 2, groups: nextGroups, tags: nextTags };
+  }
+
+  /**
+   * 0.7.2（m01416 用户）：设置 → 数据 → 检查数据。
+   * 找出 `calendarId` 指向不存在日历（含空串）的事件与任务。磁盘数据按目录
+   * 回填 calendarId，通常不会出现；会出现的场景是系列拆分、旧快照或客户端
+   * 内存对象丢字段，所以这里同时覆盖内存里的记录。
+   */
+  function checkCalendarIntegrity() {
+    const describe = (record, date) => ({
+      id: record.id,
+      title: record.title || '',
+      date,
+      calendarId: record.calendarId || '',
+    });
+    const badEvents = [];
+    const badTasks = [];
+    for (const ev of events.values()) {
+      if (!ev.calendarId || !calendars.has(ev.calendarId)) badEvents.push(describe(ev, ev.start));
+    }
+    for (const task of tasks.values()) {
+      if (!task.calendarId || !calendars.has(task.calendarId)) badTasks.push(describe(task, task.due));
+    }
+    return { events: badEvents, tasks: badTasks, total: badEvents.length + badTasks.length };
+  }
+
+  /**
+   * 把检查出的记录移到各自类型的第一个日历（事件 → 我的日历，任务 → 任务
+   * 日历）。保存走 `saveEvent` / `saveTask`，所以是「写新键 + 删旧键」，
+   * 失败逐条计数，不影响其它记录。
+   */
+  async function repairCalendarIntegrity() {
+    const report = checkCalendarIntegrity();
+    const taskTarget = (getTaskCalendars()[0] || { id: TASKS_CALENDAR_ID }).id;
+    let repaired = 0;
+    let failed = 0;
+    for (const row of report.events) {
+      const current = events.get(row.id);
+      if (!current) continue;
+      try {
+        await saveEvent({ ...current, calendarId: DEFAULT_CALENDAR_ID });
+        repaired += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    for (const row of report.tasks) {
+      const current = tasks.get(row.id);
+      if (!current) continue;
+      try {
+        await saveTask({ ...current, calendarId: taskTarget });
+        repaired += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { repaired, failed };
+  }
+
   return {
     load,
     subscribe,
     revision,
+    // 0.7.0 标签
+    getTags,
+    tagById,
+    loadTags,
+    createTag,
+    updateTag,
+    deleteTag,
+    tagCounts,
+    // 0.7.1 分组与排序
+    getTagGroups,
+    getTagsForDisplay,
+    tagGroupById,
+    createTagGroup,
+    updateTagGroup,
+    deleteTagGroup,
+    reorderTags,
     // 0.2.0 calendars（后端不支持时返回内置的 default/tasks 两个）
     getCalendars,
     refreshCalendars,
@@ -2276,6 +2989,9 @@ export function createStore(backend) {
     saveTask,
     toggleTask,
     deleteTask,
+    // 0.7.2 数据体检
+    checkCalendarIntegrity,
+    repairCalendarIntegrity,
     getSettings,
     saveSettings,
   };

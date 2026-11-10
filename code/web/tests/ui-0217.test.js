@@ -194,7 +194,12 @@ describe('0.2.17 B1 手机月视图：文字 chip 取代点阵（≤520px）', (
     expect(block).toMatch(/\.chip__title \{[\s\S]*?order: 1/);
     expect(block).toMatch(/\.chip__time \{[\s\S]*?order: 2/);
     // 日历色语义改成左侧 3px 竖条
-    expect(block).toMatch(/\.chip::after \{[\s\S]*?width: 3px/);
+    // 0.7.8（用户：「所有当天的日程和手机显示一致，用左侧竖条和底色透明填色框」）：
+    // 竖条与透明底从 ≤520 提到全局 `.chip`，这里改查整份样式表；紧凑档不再重复定义。
+    expect(viewsCss).toMatch(/\.chip::after \{[\s\S]*?width: 3px/);
+    expect(viewsCss).toMatch(
+      /\.chip \{[\s\S]*?background: color-mix\(in srgb, var\(--chip-color, var\(--accent\)\) 16%, transparent\)/,
+    );
     // 命中区撑大（不靠穿透点击）
     expect(block).toMatch(/\.chip::before \{[\s\S]*?inset: -6px 0/);
     // 标题单行省略
@@ -205,7 +210,7 @@ describe('0.2.17 B1 手机月视图：文字 chip 取代点阵（≤520px）', (
     expect(block).not.toMatch(/\.chip \{[\s\S]{0,200}width: 7px/);
   });
 
-  it('DOM：窄屏每格只显示 2 条，其余折成「还有 N 个」', () => {
+  it('DOM：窄屏也折叠，可见条数由实测容量决定，其余折成「还有 N 个」', () => {
     const restore = stubMatchMedia({ compact: true });
     try {
       const events = [timed('a', 8, 9), timed('b', 8, 11), timed('c', 8, 13), timed('d', 8, 15)];
@@ -219,7 +224,10 @@ describe('0.2.17 B1 手机月视图：文字 chip 取代点阵（≤520px）', (
       document.body.append(node);
       // 0.5.9：紧凑档不再按 children 下标盲切，改为与宽屏同一条「实测容量」路径；
       // jsdom 没有布局，这里补上 chip 高度（20px = CSS 里 .chip 的实际高度），
-      // 让折叠逻辑能测到真实口径（每格最多 2 条单日 + 「还有 N 个」）。
+      // 让折叠逻辑能测到真实口径。
+      // 0.7.8（用户：「这几处应该折叠成『还有X个』的地方也没折叠」）：容量改为**逐格按
+      // 实测可用高**计算（格高 − 日号行 − 内边距），不再有「每格固定 2 条」的上限；
+      // 因此这里不再断言恰好 2 条，而是断言「可见 + 隐藏 = 总数」且确实发生了折叠。
       node.querySelectorAll('.chip').forEach((c) => {
         Object.defineProperty(c, 'offsetHeight', { configurable: true, value: 20 });
       });
@@ -229,28 +237,34 @@ describe('0.2.17 B1 手机月视图：文字 chip 取代点阵（≤520px）', (
       const cell = node.querySelector(`.month__cell[data-day="${day8}"]`);
       const chips = [...cell.querySelectorAll('.chip')];
       expect(chips).toHaveLength(4);
-      expect(chips.filter((c) => !c.hidden)).toHaveLength(2);
-      expect(chips.filter((c) => c.hidden)).toHaveLength(2);
-      // 折起来的 2 条 + 1 个「还有 N 个」入口
-      expect(cell.querySelector('.month__more').textContent).toBe('还有 2 个');
+      const visible = chips.filter((c) => !c.hidden).length;
+      expect(chips.filter((c) => c.hidden).length).toBeGreaterThan(0);
+      const more = cell.querySelector('.month__more');
+      expect(more).toBeTruthy();
+      const hiddenCount = Number((more.textContent.match(/还有 (\d+) 个/) || [])[1]);
+      expect(visible + hiddenCount).toBe(4);
+      expect(more.textContent).toBe(`还有 ${hiddenCount} 个`);
     } finally {
       restore();
     }
   });
 
-  it('容量上限写死为 2，且窄屏同样跑多日条端点几何（0.5.9 口径变更）', () => {
-    // 0.5.9：旧的「按 children 下标 i >= 2 盲切」实现已删除，上限改由
-    // compactOthersCap = Math.min(2, otherNodes.length) 表达（语义仍是每格 2 条）。
-    expect(monthJs).toMatch(/const compactOthersCap = compact \? Math\.min\(2, otherNodes\.length\)/);
-    // 0.5.9：旧口径「紧凑档走自己的分支后直接 return，几何只服务宽屏」作废——
-    // 几何段（monthBarBoxes）在紧凑标记之后**无条件执行**，四档手机宽度同样跑。
+  it('容量来自逐格实测高，不再有「紧凑档固定 2 条 / 条永不折叠」的口径（0.7.8）', () => {
+    // 0.5.9：旧的「按 children 下标 i >= 2 盲切」实现已删除。
+    // 0.7.8（用户截图：「还有 5 个」被条压住）：紧凑档的 compactOthersCap 与
+    // 「手机上长条永不折叠」两条豁免删除——全天条、定时 chip、任务三类一起折叠，
+    // 容量统一按格内实测可用高 ÷ 实测条高算，并把「还有 N 个」行计入占位。
+    expect(monthJs).not.toMatch(/if \(compact\) \{\s*visibleBars = barNodes\.length;/);
+    expect(monthJs).not.toMatch(/else if \(!compact && visibleBars > 0\)/);
+    expect(monthJs).not.toMatch(/compactOthersCap/);
+    // 几何段（monthBarBoxes）仍在紧凑标记之后无条件执行，四档手机宽度同样跑。
     const compactAt = monthJs.indexOf('const compact = isCompactScreen();');
     const boxAt = monthJs.indexOf('monthBarBoxes(');
     expect(compactAt).toBeGreaterThan(-1);
     expect(boxAt).toBeGreaterThan(compactAt);
-    // 手机上长条永不折叠（只收单日/任务），容量再不够也不让条出去。
-    expect(monthJs).toMatch(/if \(compact\) \{\s*visibleBars = barNodes\.length;/);
-    expect(monthJs).toMatch(/else if \(!compact && visibleBars > 0\)/);
+    // 容量按实测高：读取格子内容高与条高
+    expect(monthJs).toMatch(/planCellRows\(/);
+    expect(monthJs).toMatch(/capacity/);
   });
 
   it('宽屏不受影响：>520 仍是可测量容量的填色条（不进入紧凑分支）', () => {
@@ -425,7 +439,8 @@ describe('0.2.17 B4 周数算法联动 + 快捷键清单', () => {
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4。
     // 0.6.15（用户）：快捷键页签搬到头像菜单，设置回到三页签。
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', 'CalDAV', 'AI']);
+    // 0.7.0 起（用户）：第 2 页签是「标签」；快捷键仍然不在设置里。
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', '标签', 'CalDAV', 'AI']);
     expect(dialog.querySelector('#settings-tab-shortcuts')).toBeNull();
     expect(dialog.querySelector('#settings-page-shortcuts')).toBeNull();
 

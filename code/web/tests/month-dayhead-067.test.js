@@ -179,9 +179,14 @@ describe('0.6.7：日号行承载盒留 1px 保护边（不再裁掉最后一笔
         expect(hostW * scale - visual).toBeLessThan(2);
         expect(hostW * scale + 2 + 14).toBeLessThanOrEqual(42.01);
       }
-      // 同一页统一一个缩放值：自然宽较小的节日格也跟节气格同值
-      const scales = new Set(geos.map(({ parts }) => parts.head.style.getPropertyValue('--dayhead-scale')));
-      expect(scales.size).toBe(1);
+      // 0.7.10（用户：11/22「小雪」被裁、11/7「立冬」完整）：缩放改为**逐格**按本格
+      // 可用宽算，不再全页统一取最小值（统一值会让宽格跟着最紧的一格缩，或反过来
+      // 把紧的一格压到裁字）。这里只锁每格 scale 落在 [0.5, 1] 且各自不越界。
+      const scales = geos.map(({ parts }) => parseFloat(parts.head.style.getPropertyValue('--dayhead-scale') || '1'));
+      for (const s of scales) {
+        expect(s).toBeGreaterThanOrEqual(0.5);
+        expect(s).toBeLessThanOrEqual(1);
+      }
     } finally {
       restore();
     }

@@ -12,6 +12,14 @@
  */
 import { el, clear, linkify } from './dom.js';
 import { icon } from './icons.js';
+// 0.7.0：详情卡标题前显示「emoji 名称」；注册表镜像由 store.loadTags() 维护。
+import { categoryTagName, tagCategoryLabel, tagForRecord, tagDisplayName, titleWithoutTagEmoji } from './store.js';
+import { splitTagTitle } from './tag-display.js';
+// 0.7.5（用户「下拉菜单的分组也可以折叠」）：与筛选面板下拉共用折叠状态。
+import { expandAllGroups, isGroupCollapsed, toggleGroupCollapsed } from './tag-dropdown-collapse.js';
+import { enhanceSelect } from './select-listbox.js';
+// 0.7.7（用户「名称和地点能选之前写过的」）：标题与地点下方的历史候选。
+import { createTextSuggest, stripLeadingEmoji } from './text-suggest.js';
 import { toast } from './toast.js';
 import { closeOnBackdrop } from './scrim.js';
 import { EVENT_COLORS, DEFAULT_COLOR, categoryLabel, colorHex, customColorSwatch } from './colors.js';
@@ -122,6 +130,9 @@ export function createEventModal({
   // 切到任务 = 任务日历（色随日历），切回事件 = 回到这个日历（没有则用默认日历）。
   let lastEventCalendarId = '';
   const fields = {};
+  // 0.7.0：标签控件建在 uildForm() 里（跟着表单生命周期），保存与回填在工厂层用到，
+  // 所以由 uildForm() 结束时把三个入口挂到这里；未建表单时为 null。
+  let formApi = null;
   const OOO_COLOR = 'graphite';
 
   /** 后端是否提供多日历 API（旧部署/测试替身没有，日历下拉整个不出现）。 */
@@ -192,6 +203,8 @@ export function createEventModal({
   function syncCalendarField() {
     if (!fields.calendarTrigger) return;
     const cal = currentCalendar();
+    // 0.7.2（m01416 用户）：编辑器保留「我的日历」兜底，不再显示「已删除的日历」
+    // 这一项；记录级 calendarId 损坏交给 设置 → 数据 → 检查数据 修复。
     fields.calendarDot.style.background = cal ? colorHex(cal.color) : 'transparent';
     fields.calendarName.textContent = cal ? cal.displayName : '';
     fields.calendarName.title = cal ? cal.displayName : '';
@@ -557,6 +570,244 @@ export function createEventModal({
       autocomplete: 'off',
       'aria-label': t('editor.title'),
     });
+    // --- Tag（0.7.0，用户）-------------------------------------------------
+    // 标题左侧一个 32×32 的标签按钮：有标签显 emoji，没有显「+」。点开是单选
+    // 下拉（第一项「无标签」），选中立即收起并把焦点送回标题输入框。
+    // 标签清单来自 store.getTags()（服务端注册表），这里不缓存第二份。
+    fields.tagId = '';
+    fields.tagButton = el('button', {
+      class: 'editor__tag',
+      type: 'button',
+      'aria-haspopup': 'listbox',
+      'aria-expanded': 'false',
+      'aria-label': t('tags.addAria'),
+      text: '+',
+    });
+    fields.tagList = el('div', {
+      class: 'editor__tag-list',
+      role: 'listbox',
+      'aria-label': t('tags.pickAria'),
+      // 0.7.0：下拉里的 Escape 归自己处理，别冒到对话框（见 time-field ownsEscape）。
+      'data-esc-owned': 'true',
+      hidden: true,
+    });
+
+    // 0.7.7（用户「名称要能选之前写过的」）：这一层同时是标题候选弹层的定位
+    // 容器（.has-suggest 给 position: relative），候选由 createTextSuggest 挂进来。
+    fields.titleField = el('div', { class: 'field field--title editor__title-field' }, [
+      fields.tagButton,
+      fields.title,
+      fields.tagList,
+    ]);
+
+    function tagChoices() {
+      return typeof store.getTags === 'function' ? store.getTags() : [];
+    }
+
+    function selectedTag() {
+      if (!fields.tagId) return null;
+      return tagChoices().find((tag) => tag.id === fields.tagId) || null;
+    }
+
+    /* 0.7.6（用户「下拉菜单点击旁边失焦的时候也关闭」）：点标签按钮与菜单以外的区域关闭。
+       用 pointerdown 捕获（鼠标与触屏都覆盖）；每次打开只挂一个监听，关闭即解绑，
+       避免 open/close 多轮后监听堆积。 */
+    function onTagListOutside(event) {
+      const target = event.target;
+      if (target instanceof Node && (fields.tagList.contains(target) || fields.tagButton.contains(target))) return;
+      closeTagList();
+    }
+
+    function closeTagList({ restoreFocus = false } = {}) {
+      fields.tagList.hidden = true;
+      fields.tagButton.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('pointerdown', onTagListOutside, true);
+      if (restoreFocus) fields.tagButton.focus();
+    }
+
+    function syncTagButton() {
+      const tag = selectedTag();
+      // 没有 emoji 的标签退到名称首字：按钮里只有 32px，放不下整名。
+      const glyph = tag ? (tag.emoji || [...(tag.name || '')][0] || '+') : '+';
+      fields.tagButton.textContent = glyph;
+      fields.tagButton.classList.toggle('editor__tag--set', Boolean(tag));
+      fields.tagButton.setAttribute('aria-label', tag
+        ? t('tags.currentAria', { name: tag.name })
+        : t('tags.addAria'));
+    }
+
+    function chooseTag(id) {
+      fields.tagId = id || '';
+      syncTagButton();
+      closeTagList();
+      fields.title.focus();
+    }
+
+    function tagSections() {
+      // 0.7.4（用户）：与管理页、筛选下拉共用同一顺序（未分组在首）。
+      if (store && typeof store.getTagsForDisplay === 'function') {
+        // 0.7.4（用户「未分组0个的时候隐藏」）：下拉只列有标签的分组，空分组不出现。
+        const sections = store.getTagsForDisplay().filter((section) => section.tags.length);
+        if (sections.length) return sections;
+      }
+      const tags = tagChoices();
+      return tags.length ? [{ group: null, tags }] : [];
+    }
+
+    function openTagList() {
+      // 0.7.6（用户「下拉菜单默认都是全展开，不用记忆折叠与否」）：每次打开都从全展开开始。
+      // 本次打开期间仍可折叠；关闭即丢弃，不写 localStorage、不同步服务端。
+      expandAllGroups();
+      const items = [el('button', {
+        class: 'tag-select__item',
+        type: 'button',
+        role: 'option',
+        'aria-selected': String(!fields.tagId),
+        dataset: { tagId: '' },
+        text: t('tags.none'),
+        on: { click: () => chooseTag('') },
+      })];
+      const optionFor = (tag, grouped) => el('button', {
+        class: `tag-select__item${grouped ? ' tag-select__item--grouped' : ''}`,
+        type: 'button',
+        role: 'option',
+        'aria-selected': String(tag.id === fields.tagId),
+        dataset: { tagId: tag.id },
+        text: tag.emoji ? `${tag.emoji} ${tag.name}` : tag.name,
+        on: { click: () => chooseTag(tag.id) },
+      });
+      for (const section of tagSections()) {
+        if (section.group) {
+          // 0.7.5（用户「下拉菜单的分组也可以折叠」）：分组标题整行可点，右侧 ▸/▾；
+          // 标题是 button（Tab 可达、Enter/Space 切换），方向键仍只走标签条目。
+          const groupId = section.group.id;
+          const bodyId = `tag-list-body-${groupId}`;
+          const body = el('div', { class: 'tag-select__group-body', role: 'presentation', id: bodyId });
+          for (const tag of section.tags) body.append(optionFor(tag, true));
+          const isCollapsed = isGroupCollapsed(groupId);
+          const caret = el('span', {
+            class: 'tag-select__group-caret',
+            'aria-hidden': 'true',
+            text: isCollapsed ? '▸' : '▾',
+          });
+          const label = el('span', {
+            class: 'tag-select__group-name',
+            text: `${section.group.name} ${t('settings.tags.groupCount', { count: section.tags.length })}`,
+          });
+          const toggle = el('button', {
+            class: 'tag-select__group-toggle',
+            type: 'button',
+            'aria-expanded': String(!isCollapsed),
+            'aria-controls': bodyId,
+            on: {
+              click: () => {
+                // 共用 tag-dropdown-collapse 的状态：筛选面板下拉下次打开即一致。
+                const next = toggleGroupCollapsed(groupId);
+                body.hidden = next;
+                toggle.setAttribute('aria-expanded', String(!next));
+                caret.textContent = next ? '▸' : '▾';
+              },
+            },
+          }, [caret, label]);
+          body.hidden = isCollapsed;
+          items.push(el('div', { class: 'tag-select__group', role: 'presentation' }, [toggle]), body);
+        } else {
+          for (const tag of section.tags) items.push(optionFor(tag, false));
+        }
+      }
+      fields.tagList.replaceChildren(...items);
+      fields.tagList.hidden = false;
+      fields.tagButton.setAttribute('aria-expanded', 'true');
+      document.addEventListener('pointerdown', onTagListOutside, true);
+      const options = visibleTagItems();
+      const active = options.find((item) => item.getAttribute('aria-selected') === 'true') || options[0];
+      if (active) active.focus();
+    }
+
+    /** 可见的标签条目（折叠组内的不参与方向键遍历）。 */
+    function visibleTagItems() {
+      return [...fields.tagList.querySelectorAll('.tag-select__item')]
+        .filter((item) => !item.closest('[hidden]'));
+    }
+
+    fields.tagButton.addEventListener('click', () => {
+      if (fields.tagList.hidden) openTagList();
+      else closeTagList();
+    });
+    fields.tagList.addEventListener('keydown', (e) => {
+      const items = visibleTagItems();
+      const activeEl = document.activeElement;
+      const toggle = activeEl && activeEl.closest ? activeEl.closest('.tag-select__group-toggle') : null;
+      const i = items.indexOf(activeEl);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeTagList();
+        fields.tagButton.focus();
+        return;
+      }
+      // 0.7.5（用户）：分组标题里的切换按钮用 Tab 到达；↓ 进本组第一个标签、↑ 回上一个标签。
+      if (toggle && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+        e.preventDefault();
+        const all = [...fields.tagList.querySelectorAll('.tag-select__item')];
+        if (e.key === 'ArrowDown') {
+          const body = toggle.getAttribute('aria-controls')
+            ? fields.tagList.querySelector(`#${toggle.getAttribute('aria-controls')}`)
+            : null;
+          const first = body && !body.hidden ? body.querySelector('.tag-select__item') : null;
+          const next = first || all.find((item) => toggle.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING);
+          if (next) next.focus();
+        } else {
+          const prev = [...all].reverse()
+            .find((item) => toggle.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_PRECEDING);
+          if (prev) prev.focus();
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!items.length) return;
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        const from = i < 0 ? (step > 0 ? -1 : 0) : i;
+        const next = items[(from + step + items.length) % items.length];
+        if (next) next.focus();
+        return;
+      }
+      if (e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        if (!items.length) return;
+        (e.key === 'Home' ? items[0] : items[items.length - 1]).focus();
+        return;
+      }
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        if (document.activeElement && document.activeElement.click) document.activeElement.click();
+        return;
+      }
+      // 0.7.5：Tab 要能走到分组标题的切换按钮，所以焦点在标题上时不关闭列表。
+      if (e.key === 'Tab' && !toggle) closeTagList();
+    });
+    /** 回填：优先 tagId；只有 categories 的外部数据按名称匹配注册表（旧形态 `emoji 名称` 也认）。 */
+    function applyTagFor(record) {
+      fields.tagId = '';
+      if (record) {
+        const tags = tagChoices();
+        if (record.tagId && tags.some((tag) => tag.id === record.tagId)) {
+          fields.tagId = record.tagId;
+        } else if (Array.isArray(record.categories) && record.categories[0]) {
+          const name = categoryTagName(record.categories[0]);
+          const byName = tags.find((tag) => tag.name === name);
+          if (byName) fields.tagId = byName.id;
+        }
+      }
+      syncTagButton();
+    }
+
+    /** 保存时随记录写出的标签字段：标签名进 categories（0.7.1 K：不带 emoji），清空时两者都显式给空。 */
+    function tagPayload() {
+      const tag = selectedTag();
+      return { tagId: tag ? tag.id : '', categories: tag ? [tagCategoryLabel(tag)] : [] };
+    }
 
     // --- Calendar（0.2.0 B2，事件/任务所属日历） ---
     // 触发器：色点 + 日历名 + ▾；展开列表 role=listbox，方向键移动、Enter 选中、
@@ -663,24 +914,27 @@ export function createEventModal({
     // 农历切换。fields.startDate / endDate 仍是那个隐藏的 input[type=date]（公历真值）。
     fields.startDateField = createDateField(t('editor.startDate'));
     fields.startDate = fields.startDateField.input;
-    // Time fields open their 15-minute list on the time they already hold (see
-    // time-field.js). Choices, not constraints: typing any minute stays
-    // allowed, so an off-grid time (say an imported 9:07 start) is kept as-is
-    // and can't be refused at Save.
+    // Time fields open their two-column list (hours × 5-minute rows) on the
+    // time they already hold (see time-field.js). Choices, not constraints:
+    // typing any minute stays allowed, so an off-grid time (say an imported
+    // 9:07 start) is kept as-is and can't be refused at Save.
     const hour12 = () => store.getSettings().hour12;
     fields.startTime = createTimeField({ label: t('editor.startTime'), hour12 });
     fields.endDateField = createDateField(t('editor.endDate'));
     fields.endDate = fields.endDateField.input;
-    // The end list runs from the start time onward, each choice labeled with
-    // the event's length, so the times before the start sit at the bottom and
-    // read as the next morning — which is what saving one means here (see
-    // timeOrderProblem). Only while the end is on the start's date: once it
-    // is on a later date every time of day is a plain choice, and a "1 hr"
-    // label next to 10:00 would be a lie.
+    // 0.7.7（用户「时和分，分成两列选择」）：时间下拉改成两列（小时 × 5 分钟），
+    // 原来的「从开始时间轮转到第二天 + 时长标签」随单列一起取消——两列没有可轮转的
+    // 行序，也不再有行内时长位置。开始/结束两个字段现在共用同一套两列选择器。
+    // 0.7.7（总监口径「时长提示保留，改成面板底部一行」）：结束时间面板底部显示
+    // 「距开始 1 小时 30 分钟」/「次日 · …」，日期与时间完全相同或结束日期早于
+    // 开始日期时显示红字错误。开始侧只提供值，跨午夜与跨天的判断在 time-field.js。
     fields.endTime = createTimeField({
       label: t('editor.endTime'),
       hour12,
-      after: () => (fields.endDate.value && fields.endDate.value === fields.startDate.value ? fields.startTime.value : ''),
+      spanFrom: () => ({
+        start: { date: fields.startDate.value, time: fields.startTime.value },
+        endDate: fields.endDate.value,
+      }),
     });
 
     fields.startLabel = el('span', { class: 'field__label', text: t('editor.label.start') });
@@ -698,7 +952,7 @@ export function createEventModal({
     fields.repeat.addEventListener('change', onRepeatChange);
     fields.repeatField = el('div', { class: 'field' }, [
       el('span', { class: 'field__label', text: t('editor.repeat') }),
-      fields.repeat,
+      enhanceSelect(fields.repeat)?.wrapper || fields.repeat,
     ]);
 
     // 0.2.20（E6）：顶部「农历」开关整行删掉——语种唯一入口在弹层日历的两段式，
@@ -711,7 +965,7 @@ export function createEventModal({
 
     // --- Location ---
     fields.location = el('input', {
-      class: 'input',
+      class: 'input input--location',
       type: 'text',
       placeholder: t('editor.placeholder.location'),
       autocomplete: 'off',
@@ -721,6 +975,36 @@ export function createEventModal({
       el('span', { class: 'field__label', text: t('editor.label.location') }),
       fields.location,
     ]);
+
+    // 0.7.7（用户「名称和地点能选之前写过的」）：候选只从本地快照里取，不请求接口。
+    // 标题取事件与任务的标题（比较时去掉开头的标签 emoji，填入的仍是原样），
+    // 地点取带地点的事件；两者都按最近修改优先。任务模式没有地点行，候选也就不会出现。
+    const recent = (items) =>
+      items
+        .filter((item) => item && item.text && item.text.trim())
+        .sort((a, b) => (b.at || 0) - (a.at || 0));
+    function titleCandidates() {
+      const events = typeof store.getAllEvents === 'function' ? store.getAllEvents() : [];
+      const tasks = typeof store.getAllTasks === 'function' ? store.getAllTasks() : [];
+      return recent([
+        ...events.map((ev) => ({ text: ev.title || '', key: stripLeadingEmoji(ev.title), at: ev.updatedAt })),
+        ...tasks.map((tk) => ({ text: tk.title || '', key: stripLeadingEmoji(tk.title), at: tk.updatedAt })),
+      ]);
+    }
+    function locationCandidates() {
+      const events = typeof store.getAllEvents === 'function' ? store.getAllEvents() : [];
+      return recent(
+        events
+          .filter((ev) => ev.location && ev.location.trim())
+          .map((ev) => ({ text: ev.location.trim(), key: ev.location.trim(), at: ev.updatedAt })),
+      );
+    }
+    fields.titleSuggest = createTextSuggest({ input: fields.title, container: fields.titleField, source: titleCandidates });
+    fields.locationSuggest = createTextSuggest({
+      input: fields.location,
+      container: fields.locationField,
+      source: locationCandidates,
+    });
 
     // --- Meeting link (只读；生成会议链接的云模块已移除) ---
     fields.meetingBox = el('div', { class: 'meeting' });
@@ -866,7 +1150,7 @@ export function createEventModal({
           style: { display: 'none' },
         })),
         fields.modeToggle,
-        el('div', { class: 'field field--title' }, [fields.title]),
+        fields.titleField,
         fields.calendarField,
         allDayRow,
         startRow,
@@ -981,7 +1265,17 @@ export function createEventModal({
     // appear unable to clear.
     ['startDate', 'startTime', 'endDate', 'endTime'].forEach((k) =>
       fields[k].addEventListener('change', () => {
-        if (timesValid()) showError('');
+        // 0.7.7：结束时间底行时长依赖开始侧与结束日期，任一 change 都要重算。
+        fields.endTime.refreshSpan();
+        // 0.7.7（总监「即时行内错误」）：结束与开始完全相同、或结束日期早于开始
+        // 日期时立刻报出来，不用等到保存；同一天里早于开始是「次日」，不算错。
+        const problem = timeOrderProblem();
+        const timeProblem =
+          problem === t('editor.error.endTimeBeforeStart') || problem === t('editor.error.endBeforeStart');
+        if (problem) showError(problem);
+        else if (timesValid()) showError('');
+        if (timeProblem) fields.endTime.input.setAttribute('aria-invalid', 'true');
+        else fields.endTime.input.removeAttribute('aria-invalid');
         syncLunarRow();
         // 0.2.18（C6④）：任一日期变更后两个农历控件都要重读真值——改开始日期会
         // 连带把结束日期推走（shiftEndWithStart），那次重写不派发 change。
@@ -989,6 +1283,7 @@ export function createEventModal({
       }),
     );
 
+    formApi = { applyTagFor, tagPayload };
     return form;
   }
 
@@ -1627,6 +1922,8 @@ export function createEventModal({
       // Null removes an existing link (see store.updateSeries); out-of-office
       // blocks never carry one.
       meeting: !isOoo && meeting ? { ...meeting } : null,
+      // 0.7.0（用户）：单标签；名称写进 categories 供 iCal 导出/外部匹配。
+      ...(isOoo || !formApi ? {} : formApi.tagPayload()),
       // 0.3.9：所属日历。系列编辑也传——store.updateSeries / updateFuture 会校验，
       // 并在真的换日历时重写键空间（新键落地后再删旧键）。
       ...(multiCalendar() && calendarId ? { calendarId } : {}),
@@ -1755,6 +2052,8 @@ export function createEventModal({
       // 0.2.12（C11-3）：任务同样可以只标农历日期（没有「每年」——任务没有重复）。
       ...(lunar ? { lunar: true, lunarMonth, lunarDay, lunarLeap } : { lunar: false }),
       ...(multiCalendar() && calendarId ? { calendarId } : {}),
+      // 0.7.0（用户）：任务同样单标签。
+      ...(formApi ? formApi.tagPayload() : {}),
     };
     setSaving(true);
     showError('');
@@ -2116,7 +2415,8 @@ export function createEventModal({
     // Populate.
     if (event && event.isTask) {
       fields.titleHeading.textContent = t('editor.editTask');
-      fields.title.value = event.title || '';
+      // 0.7.1 K.3：标题框只显示名称（剥掉标签 emoji，保存时服务端补回）。
+      fields.title.value = titleWithoutTagEmoji(tagForRecord(event), event.title || '');
       fields.description.value = event.notes || '';
       fields.allDay.checked = Boolean(event.allDay);
       fields.doneToggle.checked = Boolean(event.done);
@@ -2125,7 +2425,7 @@ export function createEventModal({
       fields.deleteBtn.style.display = '';
     } else if (event) {
       fields.titleHeading.textContent = mode === 'ooo' ? t('editor.editOoo') : t('editor.editEvent');
-      fields.title.value = event.title || '';
+      fields.title.value = mode === 'ooo' ? (event.title || '') : titleWithoutTagEmoji(tagForRecord(event), event.title || '');
       fields.description.value = event.description || '';
       fields.location.value = event.location || '';
       fields.allDay.checked = event.allDay;
@@ -2179,6 +2479,10 @@ export function createEventModal({
       lastDuration = hasEnd ? end.getTime() - start.getTime() : 60 * 60_000;
       fields.deleteBtn.style.display = 'none';
     }
+
+    // 0.7.0：标签按钮按当前记录回填；新建、以及「离开办公室」这种没有标签的
+    // 形态都显示「+」。
+    formApi?.applyTagFor(mode === 'ooo' ? null : event);
 
     // Seed the all-day span from the now-populated date inputs, so moving the
     // start of a multi-day all-day event preserves its length (the timed
@@ -2399,6 +2703,8 @@ export function createEventModal({
           }),
           el('span', { class: 'view__cal-name', text: name, title: name }),
         ]),
+        // 0.7.2（用户）：日历被删或没同步到本机时，把「未知日历」说清楚。
+        cal ? null : el('div', { class: 'view__cal-hint', text: t('event.detail.unknownCalendarHint') }),
       ]),
     ]);
   }
@@ -2609,6 +2915,30 @@ export function createEventModal({
     ]);
   }
 
+  /** 0.7.1（用户，最终口径）：详情卡保留独立标签行（emoji + 标签名），整行在
+   *  标题行之前；色块只和标题行首行对齐。事件显示（月格 / 周 / 日 / 列表）不显示
+   *  标签名，两处口径分开。无标签时不输出节点。 */
+  function buildViewTag(item) {
+    const tag = tagForRecord(item);
+    if (!tag) return null;
+    return el('div', { class: 'view__tag-row' }, [
+      el('span', { class: 'view__tag', text: tagDisplayName(tag) }),
+    ]);
+  }
+
+  /** 0.7.2（用户，Bug B）：详情卡标题拆成 emoji 节点 + 名称节点；两者之间只放
+   *  一个真实空格字符（独立节点），不用 CSS margin。无标签或无 emoji 时只有名称节点。 */
+  function buildViewTitle(item, fallback) {
+    const parts = splitTagTitle(tagForRecord(item), item.title || fallback);
+    const children = [];
+    if (parts.emoji) {
+      children.push(el('span', { class: 'view__title-tag', text: parts.emoji, 'aria-hidden': 'true' }));
+      children.push(el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' }));
+    }
+    children.push(el('span', { class: 'view__title-text', text: parts.label }));
+    return el('h2', { class: 'view__title', id: 'view-title' }, children);
+  }
+
   function buildViewCard(item) {
     if (item.holiday || item.term) return buildHolidayCard(item);
     const isTask = Boolean(item.isTask);
@@ -2731,10 +3061,12 @@ export function createEventModal({
     }, [
       head,
       el('div', { class: 'modal__body view__body' }, [
+        // 0.7.1：标签行整行在标题行之前，色块按标题首行光学对齐。
+        buildViewTag(item),
         el('div', { class: 'view__title-row' }, [
           el('span', { class: 'view__color', style: { background: colorHex(item.color) } }),
           el('div', { class: 'view__title-main' }, [
-            el('h2', { class: 'view__title', id: 'view-title', text: item.title || t('agenda.event.untitled') }),
+            buildViewTitle(item, t('agenda.event.untitled')),
             badges.length ? el('div', { class: 'view__badges' }, badges) : null,
           ]),
         ]),

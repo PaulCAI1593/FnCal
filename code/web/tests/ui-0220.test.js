@@ -606,13 +606,13 @@ describe('0.2.20 E10：「还有 N 个」浮层 1000ms + 8px 圆点', () => {
     expect(monthJs).toContain('MORE_HOVER_HIDE_MS = 120');
   });
 
-  it('浮层行是「圆点 → 时间 → 标题」，没有左侧竖条', () => {
+  it('浮层行是「(隐藏的圆点) → 时间 → 标题」，没有左侧竖条', () => {
     expect(rule(viewsCss, '.month__more-row')).not.toContain('inset 3px 0 0');
-    // 实现直接复用 chip 的 8px 圆点（E10 口径：与格内 chip 同款）
+    // 0.2.20（E10）口径是「与格内 chip 同款的 8px 圆点」；0.7.8（用户：月格统一
+    // 左竖条 + 透明底、全天实色块）把圆点整体隐藏，浮层行沿用同一节点但不显示。
     const dotRule = rule(viewsCss, '.chip__dot');
-    expect(dotRule).toMatch(/width:\s*8px/);
-    expect(dotRule).toMatch(/height:\s*8px/);
-    expect(dotRule).toContain('border-radius: 50%');
+    expect(dotRule).toContain('display: none');
+    expect(dotRule).not.toContain('width: 8px');
     expect(monthJs).toContain("class: 'chip__dot'");
   });
 
@@ -750,7 +750,8 @@ describe('0.2.20 E13–E16：设置页', () => {
     const tabs = [...dialog.querySelectorAll('.settings__tabs [role="tab"]')].map((b) => b.textContent);
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，五个变四个。
     // 0.6.15（用户）：快捷键搬到头像菜单，设置回到三页签，第 4 页签与页面一起删除。
-    expect(tabs).toEqual(['一般', 'CalDAV', 'AI']);
+    // 0.7.0 起（用户）：新增「标签」第 2 页签。
+    expect(tabs).toEqual(['一般', '标签', 'CalDAV', 'AI']);
     expect(dialog.querySelector('#settings-page-shortcuts')).toBeNull();
     // 键位清单搬进独立模块，设置对话框不再持有
     const shortcuts = READ('src/js/shortcuts-dialog.js');

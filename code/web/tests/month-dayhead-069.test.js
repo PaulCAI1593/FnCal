@@ -212,7 +212,9 @@ describe('0.6.9 E：日号行两个字的节日 / 节气名', () => {
     expect(monthJs).toMatch(/entry\.text\.style\.width = `\$\{\(entry\.usable \/ 0\.5\)\.toFixed\(1\)\}px`;/);
     expect(monthJs).not.toMatch(/entry\.usable \/ scale\)\.toFixed/);
     expect(monthJs).not.toMatch(/if \(!entry\.isLunar\)/);
-    // ≤520 的节日名默认 clip，只有 is-truncated 才画省略号
+    // 0.7.8（最终口径 m04435，用户「不用省略，当中还空着，调整一下位置就可以了」）：
+    // 节日名保持完整、不省略——`text-overflow: clip` 是兜底，不是首选压缩手段；
+    // 空间由「今天」胶囊内收 + month.js 的负外边距吸收。is-truncated 分支保留给缩到下限的极端情形。
     expect(viewsCss).toMatch(/\.month__holiday-name \{[^}]*text-overflow: clip/);
     expect(viewsCss).toMatch(/\.month__holiday-name\.is-truncated \{[^}]*text-overflow: ellipsis/);
   });

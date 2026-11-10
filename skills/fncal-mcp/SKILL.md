@@ -1,8 +1,8 @@
 ---
 name: fncal-mcp
 description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.6.14
-fncalMinVersion: 0.6.14
+version: 0.7.10
+fncalMinVersion: 0.7.10
 user-invocable: true
 license: MIT
 ---
@@ -100,8 +100,9 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 | `list_events` | read | — (`calendar`, `from`, `to` optional) |
 | `get_event` | read | `uid` |
 | `find_free_slots` | read | — (`from`, `to`, `minMinutes` optional) |
-| `create_event` | write | `calendarId`, plus `title`+start/end or a full `ics` |
-| `update_event` | write | `uid` (`ifMatch` optional, for ETag safety) |
+| `list_tags` | read | — (returns `id`, `name`, `emoji`, `group`, `count`) |
+| `create_event` | write | `calendarId`, plus `title`+start/end or a full `ics` (`tag` optional) |
+| `update_event` | write | `uid` (`ifMatch` optional, for ETag safety; `tag` optional, `""` clears it) |
 | `delete_event` | write | `uid` (proposal or trash — see §2) |
 | `list_proposals` | read (needs agent approval) | — |
 | `approve_proposal` | decide (needs agent approval; no popup → `approval_requires_ui` + `approvalUrl`) | `id` (`confirmed` deprecated) |
@@ -125,6 +126,28 @@ Exact argument and result shapes: [reference/tools.md](reference/tools.md).
 
 Result shape is uniformly `{ content: [{ type: "text", text: "<JSON>" }] }`; a tool-level failure sets `isError: true` with the same text form. Parse the JSON out of `text` before using it. Do not echo raw tool JSON to the user — speak in dates and titles.
 
+### Tags — one per event, never invented
+
+FnCal events carry **one** tag (0.7.0). The registry is managed by the user under **设置 → 标签**; the MCP endpoint has **no** tool to create, rename or delete a tag — if the user asks for that, tell them to do it in FnCal and read the result back with `list_tags`.
+
+- **Look before you label.** Call `list_tags` and use a `name` or `id` it returned. `count` is how many events and tasks on calendars **this credential can read** carry that tag — it is not a global count, so do not present it as one.
+- **Reading:** `list_events` takes `tags: ["工作", "重要"]`. Several tags are a **union**: an event matches when it carries any one of them. The tag filter is **ANDed** with everything else (calendar, time window, mask). An event with no tag never matches a non-empty `tags` filter. The result also carries `tag: { id, name, emoji }` when the event has one.
+- **Writing:** `create_event` and `update_event` take `tag` as a name or an id. `"tag": ""` clears the tag; leaving it out keeps whatever the event already had. A write is still governed by §2 — proposal mode returns `applied: false`.
+- **What is stored (0.7.1):** both fields carry the tag, split by role. The **title** becomes `emoji 名称` — the tag's emoji, one half-width space, then the name the user wrote (`SUMMARY` for events, the task title for `VTODO`). The **`CATEGORIES`** field gets the bare tag name, no emoji. FnCal adds the emoji itself on every write, so pass the plain title: `"summary": "年会晚宴"` — do not type the emoji, and never leave a doubled prefix. Reading accepts `CATEGORIES:🚄 出行`, `CATEGORIES:🚄出行` and `CATEGORIES:出行` alike (first `X-FNCAL-TAG`, then the exact label, then the name). Formatting the title with the emoji is safe for third-party clients, but do not promise they will render it as an icon.
+- **Unknown tag:** the call fails with `标签「X」不存在`. Do not silently drop the tag and do not create it — call `list_tags`, show the closest real names, and ask which one the user meant (or tell them to create it in 设置 → 标签).
+
+Two worked calls:
+
+```json
+// 1) 建一个带标签的日程（proposal 模式会返回 applied:false + proposal）
+{"name":"create_event","arguments":{
+  "calendarId":"cal_default","title":"周会","start":"2026-11-10T10:00:00+08:00",
+  "end":"2026-11-10T10:30:00+08:00","tag":"工作"}}
+
+// 2) 只看「工作」或「重要」标签的事件（并集，与时间窗取交集）
+{"name":"list_events","arguments":{"from":"2026-11-09","to":"2026-11-16","tags":["工作","重要"]}}
+```
+
 ### Approval receipts — do not poll
 
 When the user settles a proposal on the FnCal approval page, the result comes back to the MCP client in one of three ways; no polling loop is needed.
@@ -144,6 +167,7 @@ Receipts are kept for 24 hours; an expired, undelivered one is dropped. A decisi
 5. **Report the truncated picture honestly.** If you cannot see a calendar or a field, say what you could see; do not invent the rest.
 6. **Never claim a change is done when it is a proposal.** Read `applied` in the result.
 7. **Never settle a queue on your own initiative, and never choose the mode for the user.** With two or more pending and a popup-capable client, the popup asks; with exactly one, go straight to the single popup. Without elicitation nothing can be settled from the conversation — hand it to FnCal's 提案 panel. Treating a chat "yes" as the click is a failure, not a shortcut.
+8. **Label only with real tags.** When the user asks for a label, read `list_tags` first and pass a name it returned; when they ask what a label is for, filter with `list_events` `tags` instead of scanning titles. Creating or renaming a tag is the user's job in 设置 → 标签.
 
 Worked examples (day plan, scheduling a meeting, moving an event, deleting with confirmation, weekly review): [reference/examples.md](reference/examples.md).
 

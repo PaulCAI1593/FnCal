@@ -5,6 +5,9 @@
 import { el } from '../dom.js';
 import { icon } from '../icons.js';
 import { colorHex, colorFg } from '../colors.js';
+// 0.7.0（用户）：日程列表行标题前显示标签「emoji 名称」。
+import { tagForRecord } from '../store.js';
+import { splitTagTitle } from '../tag-display.js';
 import { emptyBlock, emptyButton, hiddenBuckets, hiddenTitle } from './empty-state.js';
 import { t } from '../../i18n/index.js';
 import {
@@ -585,12 +588,23 @@ function buildRow(event, dayStart, ctx) {
     'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}，${timeText}${dayPart ? '，' + dayPart : ''}${location ? '，' + location : ''}`,
   });
   // 标题与「（天 n/m）」并列占第一行；地址（若有）独占第二行。
-  const mainChildren = [
-    el('span', { class: 'agenda__event-title', text: event.title || t('agenda.event.untitled') }),
-  ];
+  // 0.7.1（用户）：列表行只显示「emoji 名称」，标签名不进 DOM。
+  const mainChildren = [];
+  const rowTag = tagForRecord(event);
+  // 0.7.1（K.4）：标题首字素是该标签 emoji 时拆到 emoji 节点，名称只放剩余部分。
+  const rowParts = splitTagTitle(rowTag, event.title || t('agenda.event.untitled'));
+  if (rowParts.emoji) {
+    mainChildren.push(el('span', { class: 'agenda__event-tag' }, [
+      el('span', { class: 'agenda__event-tag-emoji', text: rowParts.emoji, 'aria-hidden': 'true' }),
+      // 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符，不用 CSS margin。
+      el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' }),
+    ]));
+  }
+  mainChildren.push(el('span', { class: 'agenda__event-title', text: rowParts.label }));
   if (dayPart) mainChildren.push(el('span', { class: 'agenda__event-daypart', text: dayPart }));
   if (location) mainChildren.push(el('span', { class: 'agenda__event-location', text: location }));
-  const main = el('span', { class: 'agenda__event-main' }, mainChildren);
+  // 0.7.0：带标签时网格多一列（标签 / 标题 / 时段），见 calendar.css 的 --tagged 规则。
+  const main = el('span', { class: 'agenda__event-main' + (rowTag ? ' agenda__event-main--tagged' : '') }, mainChildren);
   if (location) row.classList.add('agenda__event--has-location');
 
   // 0.5.9（F2）：手机档时间列改短格式区间；两个片段各自 nowrap（CSS），
@@ -698,10 +712,24 @@ function buildTaskRow(task, ctx) {
     },
   });
 
+  // 0.7.1（用户）：任务行同样只显示「emoji 名称」，标签名不进 DOM。
+  const taskTag = tagForRecord(task);
+  const taskTitleNodes = [];
+  // 0.7.1（K.4）：任务标题同样拆 emoji + 名称。
+  const taskEmoji = splitTagTitle(taskTag, task.title || t('agenda.task.untitled'));
+  if (taskEmoji.emoji) {
+    taskTitleNodes.push(el('span', { class: 'agenda__event-tag' }, [
+      el('span', { class: 'agenda__event-tag-emoji', text: taskEmoji.emoji, 'aria-hidden': 'true' }),
+      // 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符，不用 CSS margin。
+      el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' }),
+    ]));
+  }
+  taskTitleNodes.push(el('span', { class: 'agenda__event-title agenda__task-title', text: taskEmoji.label }));
+
   row.append(
     check,
     el('span', { class: 'agenda__event-time', text: timeText }),
-    el('span', { class: 'agenda__event-title agenda__task-title', text: task.title || t('agenda.task.untitled') }),
+    ...taskTitleNodes,
   );
 
   row.addEventListener('click', () => ctx.actions.openTask(task));

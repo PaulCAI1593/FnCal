@@ -32,6 +32,7 @@ import {
   writeModeOf,
 } from './ai-grants.mjs';
 import { busyIntervals, dateDigitsInZone, eventFromIcs, eventToIcs, eventsOf, matchesTimeRange, proposalFieldsOfIcs, uidOf } from './ical.mjs';
+import { applyTagToSummary, categoryTagName, tagCategoryLabel } from './tags.mjs';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 /** 事件 UID：字母数字开头，允许 `._-@`，总长 ≤255（与 store 的文件名约束一致）。 */
@@ -205,6 +206,8 @@ export function createAiService({
   aiStore = null,
   trash = null,
   health = null,
+  // 0.7.0：标签注册表（AI 侧读写同一份；未装配时 create/update 的 tag 入参直接报参数错误）。
+  tags: tagStore = null,
   now = () => Date.now(),
 } = {}) {
   if (!aiStore) throw new Error('createAiService 需要 aiStore');
@@ -264,6 +267,150 @@ export function createAiService({
       });
     }
     return maskEventForCredential(credential, payload);
+  }
+
+  /* --------------------------------------------------------------- 标签 */
+
+  /** CATEGORIES 值按未转义逗号拆分（iCal 用 `\,` 表示字面逗号）。 */
+  function splitCategoryLine(value) {
+    const out = [];
+    let buf = '';
+    const text = String(value || '');
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (ch === '\\' && i + 1 < text.length) {
+        buf += text[i + 1];
+        i += 1;
+        continue;
+      }
+      if (ch === ',') {
+        if (buf.trim()) out.push(buf.trim());
+        buf = '';
+        continue;
+      }
+      buf += ch;
+    }
+    if (buf.trim()) out.push(buf.trim());
+    return out;
+  }
+
+  /**
+   * 从 ICS 原文取标签字段。列表路径对每个对象都要跑一次，这里不整份解析，
+   * 只展开折行后取 `X-FNCAL-TAG` 与第一行 `CATEGORIES`。
+   */
+  function tagFieldsOfText(text) {
+    const unfolded = String(text || '').replace(/\r?\n[ \t]/g, '');
+    const out = {};
+    const tagLine = /^X-FNCAL-TAG:(.*)$/im.exec(unfolded);
+    if (tagLine && tagLine[1].trim()) out.tagId = tagLine[1].trim();
+    const catLine = /^CATEGORIES:(.*)$/im.exec(unfolded);
+    if (catLine) {
+      const names = splitCategoryLine(catLine[1]);
+      if (names.length) out.categories = names;
+    }
+    return out;
+  }
+
+  /** 标签筛选：`wanted` 里任一项（id / 名称 / `emoji 名称`）命中即保留；空数组 = 不筛。 */
+  function tagMatches(fields, wanted) {
+    if (!Array.isArray(wanted) || !wanted.length) return true;
+    const first = Array.isArray(fields.categories) ? fields.categories[0] : '';
+    // 0.7.1 H/I：导出值可能是 `🎉 年会`，筛选按名称比较，emoji 不影响命中。
+    const name = categoryTagName(first);
+    return wanted.some((ref) => (fields.tagId && fields.tagId === ref) || (name && name === ref));
+  }
+
+  /**
+   * `tag` 入参三种含义：`undefined` 未指定（不改）、空串 null（清空）、
+   * 名称或 id（写成 CATEGORIES + X-FNCAL-TAG）。
+   */
+  async function resolveTagRef(ref, ctx) {
+    if (ref === undefined) return undefined;
+    if (!tagStore) throw invalidError('tag', '标签功能未启用');
+    const raw = String(ref ?? '').trim();
+    if (!raw) return null;
+    // 0.7.0：注册表落在用户级 KV 里，读它需要请求上下文——MCP/REST 都从凭据拿 userId。
+    const tag = await aiStore.withUser(ctx.userId, () => tagStore.resolve(raw));
+    if (!tag) throw invalidError('tag', `标签「${raw}」不存在`);
+    return tag;
+  }
+
+  /** 0.7.1 K.2：取记录原先挂的标签（换/取消标签时用来剥旧 emoji）。 */
+  async function previousTagById(tagId, ctx) {
+    const id = String(tagId ?? '').trim();
+    if (!tagStore || !id) return null;
+    try {
+      return await aiStore.withUser(ctx.userId, () => tagStore.resolve(id));
+    } catch {
+      return null;
+    }
+  }
+
+  async function withTag(ics, ref, ctx) {
+    const tag = await resolveTagRef(ref, ctx);
+    if (tag === undefined) return { ics, tag: undefined };
+    const model = await eventFromIcs(ics);
+    const next = { ...model };
+    // 0.7.1 K：分类只写标签名；标题补/换/删 emoji 前缀（AI 传纯名称即可）。
+    const prevTag = await previousTagById(model.tagId, ctx);
+    if (tag) {
+      next.tagId = tag.id;
+      next.categories = [tagCategoryLabel(tag)];
+      next.title = applyTagToSummary(model.title, tag, prevTag);
+    } else {
+      next.tagId = '';
+      next.categories = [];
+      next.title = applyTagToSummary(model.title, null, prevTag);
+    }
+    // 0.7.0：改标签要重排 ICS，但 UID 必须**逐字**保留——`eventToIcs()` 会给裸 id
+    // 补 `@caldav.local`（M3.9 导出规则），而对象文件名用的是裸 UID，补域名后 store 会拒绝
+    // （`app/store/file-store.mjs:53` 的 UID_RE 不含 `@`）。这里把原文的 UID 行贴回去。
+    const uidLine = /^UID:(.*)$/im.exec(String(ics));
+    let out = eventToIcs(next);
+    if (uidLine) out = out.replace(/^UID:[^\r\n]*/m, `UID:${uidLine[1].trim()}`);
+    return { ics: out, tag: tag || null };
+  }
+
+  /** 把标签写进对外 payload：显式设置时给 `tag` 对象，读路径给原文里的字段。 */
+  function withTagPayload(payload, fields, tag) {
+    if (tag) {
+      payload.tagId = tag.id;
+      payload.tag = { id: tag.id, name: tag.name, emoji: tag.emoji || '' };
+      payload.categories = [tagCategoryLabel(tag)];
+      return payload;
+    }
+    if (tag === null) {
+      payload.categories = [];
+      return payload;
+    }
+    if (fields && fields.tagId) payload.tagId = fields.tagId;
+    if (fields && Array.isArray(fields.categories) && fields.categories.length) {
+      payload.categories = fields.categories;
+    }
+    return payload;
+  }
+
+  /** 凭据可见范围内的标签与数量（`list_tags`；不可见日历不计数）。 */
+  async function listTags(ctx) {
+    if (!tagStore) return { tags: [] };
+    const metas = await aiStore.listCalendarMetasFor(ctx.userId);
+    const calendarIds = (Array.isArray(metas) ? metas : [])
+      .filter((meta) => meta && isReadable(ctx.credential, meta.id))
+      .map((meta) => meta.id);
+    // 0.7.0：注册表在用户级 KV 里，必须带请求上下文读取（MCP 没有 HTTP 上下文）。
+    // 0.7.1：注册表返回 `{ groups, tags }`；`list_tags` 每条带分组名。
+    const data = await aiStore.withUser(ctx.userId, () => tagStore.list({ withCounts: true, calendarIds }));
+    const groups = Array.isArray(data.groups) ? data.groups : [];
+    const groupName = new Map(groups.map((group) => [group.id, group.name]));
+    return {
+      tags: data.tags.map((tag) => ({
+        id: tag.id,
+        name: tag.name,
+        emoji: tag.emoji || '',
+        group: groupName.get(tag.groupId) || '',
+        count: tag.count || 0,
+      })),
+    };
   }
 
   /**
@@ -409,7 +556,8 @@ export function createAiService({
 
   /* --------------------------------------------------------------- 读端点 */
 
-  async function listEvents(ctx, { fromMs = null, toMs = null, calendar = '' } = {}) {
+  async function listEvents(ctx, { fromMs = null, toMs = null, calendar = '', tags: tagFilter = [] } = {}) {
+    const wanted = (Array.isArray(tagFilter) ? tagFilter : []).map((item) => String(item || '').trim()).filter(Boolean);
     const range = effectiveRange(ctx, { fromMs, toMs });
     const ids = await targetCalendars(ctx, calendar);
     if (!ids) return null;
@@ -419,6 +567,8 @@ export function createAiService({
         const objects = await aiStore.listObjectsFor(ctx.userId, calendarId);
         for (const object of Array.isArray(objects) ? objects : []) {
           if (!object || typeof object.content !== 'string') continue;
+          const tagFields = tagFieldsOfText(object.content);
+          if (!tagMatches(tagFields, wanted)) continue;
           let parsed = [];
           try {
             parsed = await eventsOf(object.content);
@@ -435,7 +585,7 @@ export function createAiService({
               : overlapsRange(event.start, end, range.startMs, range.endMs + 1)
                 && isWithinWindow(ctx.credential, event.start, end, ctx.nowMs);
             if (!overlaps) continue;
-            events.push(eventPayload(ctx.credential, event, calendarId, object.uid));
+            events.push(withTagPayload(eventPayload(ctx.credential, event, calendarId, object.uid), tagFields, undefined));
           }
         }
       }
@@ -478,7 +628,11 @@ export function createAiService({
     return {
       calendarId: located.calendarId,
       etag: located.object.etag || null,
-      event: eventPayload(ctx.credential, master, located.calendarId, uid),
+      event: withTagPayload(
+        eventPayload(ctx.credential, master, located.calendarId, uid),
+        tagFieldsOfText(located.object.content),
+        undefined,
+      ),
     };
   }
 
@@ -523,7 +677,8 @@ export function createAiService({
     if (!isReadable(ctx.credential, calendarId)) throw writeReject('not-found');
     if (!(await aiStore.calendarExistsFor(ctx.userId, calendarId))) throw writeReject('not-found');
     if (!isWritable(ctx.credential, calendarId)) throw writeReject('not-writable');
-    const ics = buildIcs(body);
+    const tagged = await withTag(buildIcs(body), body.tag, ctx);
+    const ics = tagged.ics;
     const event = await eventFromIcs(ics);
     // 文件名必须与 ICS 里的 UID 一致（与 DAV PUT 同一约束），否则下次按 uid 取不到。
     const uid = String(event.uid || uidOf(ics) || '').trim();
@@ -549,7 +704,7 @@ export function createAiService({
         applied: true,
         etag: applied.etag,
         calendarId,
-        event: eventPayload(ctx.credential, event, calendarId, uid),
+        event: withTagPayload(eventPayload(ctx.credential, event, calendarId, uid), null, tagged.tag),
       };
     }
 
@@ -603,6 +758,8 @@ export function createAiService({
       ics = icsForUid(merged, uid);
     }
 
+    const tagged = await withTag(ics, payload.tag, ctx);
+    ics = tagged.ics;
     const next = await eventFromIcs(ics);
     if (next.uid && String(next.uid) !== uid) throw invalidError('uid', 'UID 不可修改');
     if (isBadRange(next)) throw writeReject('bad-range');
@@ -623,7 +780,7 @@ export function createAiService({
         applied: true,
         etag: applied.etag,
         calendarId: located.calendarId,
-        event: eventPayload(ctx.credential, next, located.calendarId, uid),
+        event: withTagPayload(eventPayload(ctx.credential, next, located.calendarId, uid), null, tagged.tag),
       };
     }
 
@@ -853,6 +1010,7 @@ export function createAiService({
   return {
     availability,
     listCalendars,
+    listTags,
     hasWritableCalendar,
     effectiveRange,
     targetCalendars,

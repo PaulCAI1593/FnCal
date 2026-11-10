@@ -103,11 +103,14 @@ describe('⑰ 事件详情显示所属日历', () => {
     expect($('.view__row--calendar .view__cal-name').textContent).toBe('任务');
   });
 
-  it('日历被删 / 找不到 → 显示「未知日历」，不空白也不报错', () => {
+  // 0.7.2 起（m01416 用户）：文案改成「所属日历缺失」，并给出修复入口提示；
+  // 仍然不空白、不报错，色点照旧。
+  it('日历被删 / 找不到 → 显示「所属日历缺失」，不空白也不报错', () => {
     modal.openView(event({ calendarId: 'gone' }));
     const row = $('.view__row--calendar');
-    expect(row.querySelector('.view__cal-name').textContent).toBe('未知日历');
+    expect(row.querySelector('.view__cal-name').textContent).toBe('所属日历缺失');
     expect(row.querySelector('.view__cal-dot')).toBeTruthy();
+    expect(row.querySelector('.view__cal-hint').textContent).toContain('检查数据');
   });
 
   it('i18n：日历标签与未知日历兜底名都在词典里', () => {

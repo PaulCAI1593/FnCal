@@ -1136,6 +1136,42 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 0.7.2（用户）：日历缺失时的说明行，小字、不抢标题。 */
+.view__cal-hint {
+  margin-top: 2px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+/* 0.7.2（m01416 用户）：设置 → 数据 → 检查数据 的结果列表。 */
+.data-check__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-top: var(--sp-2);
+}
+.data-check__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.data-check__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.data-check__date {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  /* 0.7.2：新增界面不沿用 11px 小字，检查清单里的日期要能读（≥12px）。 */
+  font-size: var(--fs-sm);
+}
 .view__muted {
   color: var(--text-3);
   font-size: var(--fs-sm);
@@ -1301,14 +1337,14 @@
   z-index: 5;
   top: calc(100% + 4px);
   left: 0;
-  /* At least the input's width; wider when an end field's span labels need it. */
-  min-width: 100%;
-  max-height: 216px;
-  overflow-y: auto;
+  --time-row: 32px;
+  /* 0.7.7（用户「时和分，分成两列选择」）：两列并排，各 58px；面板宽度随内容
+     （约 126px），不再撑到输入框宽度——原单列最宽也就这么宽。结束时间的面板
+     底部多一行时长提示，所以这里是纵向：两列一行 + 底部提示一行。 */
+  width: max-content;
   padding: var(--sp-1);
   display: flex;
   flex-direction: column;
-  gap: 1px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -1316,6 +1352,41 @@
 }
 .time-field__list[hidden] {
   display: none;
+}
+.time-field__cols {
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+}
+/* Each column scrolls on its own: 8 rows visible, the rest a scroll away. The
+   columns share the panel's width; with an end-time footer the panel widens to
+   fit 「距开始 …」and both columns grow with it instead of leaving a blank
+   right half. */
+.time-field__col {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 58px;
+  max-height: calc(var(--time-row) * 8);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.time-field__foot {
+  margin-top: var(--sp-1);
+  padding: 2px var(--sp-2) 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.time-field__foot[hidden] {
+  display: none;
+}
+.time-field__foot--invalid {
+  color: var(--danger-ink);
 }
 /* With the Popover API the list renders in the top layer, so no scrolling
    dialog body can clip it; the field sets top/left/width from the input's
@@ -1329,20 +1400,14 @@
 .time-field__option {
   flex: none;
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
+  justify-content: center;
+  align-items: center;
+  min-height: var(--time-row);
+  padding: 0 var(--sp-2);
   border-radius: var(--r-sm);
   cursor: pointer;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-}
-/* An end field's choices carry the span they make from the start ("1 hr 30
-   min"), set off to the right so the times still line up as a column. */
-.time-field__duration {
-  color: var(--text-2);
-  font-size: var(--fs-sm);
 }
 .time-field__option[aria-selected='true'] {
   background: var(--surface-3);
@@ -2006,6 +2071,8 @@
 }
 .io-cal-picker__row {
   display: flex;
+  /* 0.7.1：.io-cal-picker 是 flex column + max-height + 滚动，行不许被压扁。 */
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -3168,5 +3235,58 @@
   }
   .app.app--sidebar-collapsed .sidebar {
     display: none;
+  }
+}
+/* ---- 0.7.7（用户「名称和地点能选之前写过的」）：标题/地点历史候选 ----------
+   与自绘下拉同一套令牌；宽度跟输入框一致，挂在 .has-suggest 容器下方。 */
+.has-suggest {
+  position: relative;
+}
+.text-suggest {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+.text-suggest[hidden] {
+  display: none;
+}
+.text-suggest__option {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.text-suggest__hit {
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+.text-suggest__option[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .text-suggest__option:hover {
+    background: var(--surface-2);
   }
 }

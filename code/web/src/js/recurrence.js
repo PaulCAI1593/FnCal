@@ -424,6 +424,14 @@ function buildOccurrence(master, recurrenceId, override, dur) {
     // renders as OOO and counts as busy exactly like a one-off block.
     ooo: Boolean(pick('ooo')),
     declined: Boolean(master.declined),
+    // 0.7.2（用户：「应用到所有事件，一个都没改」）：标签与日历必须带到每个
+    // 实例上，否则视图拿 occurrence 去查标签会得到 null，看起来像没写入。
+    // 覆盖实例可以单独挂标签；没挂时跟随 master。
+    ...(pick('tagId') ? { tagId: pick('tagId') } : {}),
+    ...(Array.isArray(pick('categories')) && pick('categories').length
+      ? { categories: pick('categories') }
+      : {}),
+    ...(master.calendarId ? { calendarId: master.calendarId } : {}),
     createdAt: master.createdAt,
     updatedAt: master.updatedAt,
     isOccurrence: true,

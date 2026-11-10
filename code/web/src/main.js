@@ -23,7 +23,10 @@ import { el, clear } from './js/dom.js';
 import { icon } from './js/icons.js';
 import { toast } from './js/toast.js';
 import { signIn, signOut, getUser } from './js/auth.js';
-import { getSession, setUnauthorizedHandler, clearSessionCache, verifyTotpStep } from './js/api-client.js';
+import {
+  getSession, setUnauthorizedHandler, clearSessionCache, verifyTotpStep,
+  listTags, createTag, updateTag, deleteTag,
+} from './js/api-client.js';
 import { needsPasswordChange, renderForcePasswordScreen } from './js/force-password.js';
 import { createPasswordField } from './js/password-field.js';
 import { createRestKv } from './js/kv-rest.js';
@@ -545,9 +548,14 @@ async function bootInner() {
     const kv = createOfflineKv(createRestKv());
     kv.ensureUser(user && (user.uid || user.id || user.username));
 
-    const rawStore = createStore(kv);
+    // 0.7.0：标签 CRUD 由服务端做（改名/删除要批量清引用），这里只注入接口。
+    const rawStore = createStore(kv, {
+      tagsApi: { list: listTags, create: createTag, update: updateTag, delete: deleteTag },
+    });
     kv.resetReachable();
     await rawStore.load();
+    // 标签注册表单独读一次；失败（离线/后端未升级）不阻塞日历，标签先空着。
+    await rawStore.loadTags().catch(() => {});
 
     const effectivelyOffline = navigator.onLine === false || kv.wasOffline();
     if (effectivelyOffline && !kv.hasSnapshot()) {

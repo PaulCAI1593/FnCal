@@ -1177,10 +1177,9 @@ describe('event modal — time fields', () => {
     document.body.innerHTML = '';
   });
 
-  it('gives both time fields a 15-minute list that opens on the time they hold', () => {
-    // The old <input type="time"> + <datalist> always opened on 00:00 (Chrome
-    // renders a datalist top-down, ignoring the value); the combobox opens
-    // with the field's own slot highlighted, so "adjust from here" works.
+  it('gives both time fields a two-column list that opens on the time they hold', () => {
+    // 0.7.7（用户「时和分，分成两列选择」）：原来的 96 条单列换成小时 × 5 分钟两列，
+    // 打开时仍落在字段自己的时间上，所以「从这里接着改」不变。
     modal.openNew({ start: new Date(2026, 7, 26, 9, 30).getTime() });
     const startTime = $('input[aria-label="开始时间"]');
     const endTime = $('input[aria-label="结束时间"]');
@@ -1191,13 +1190,19 @@ describe('event modal — time fields', () => {
     fire(startTime, 'focus');
     const list = document.getElementById(startTime.getAttribute('aria-controls'));
     expect(list.hidden).toBe(false);
-    const options = [...list.querySelectorAll('[role="option"]')];
-    expect(options).toHaveLength(96);
-    expect(options[0].textContent).toBe('上午12:00');
-    expect(options[options.length - 1].textContent).toBe('下午11:45');
-    const active = options.find((o) => o.getAttribute('aria-selected') === 'true');
-    expect(active.dataset.min).toBe(String(9 * 60 + 30));
-    expect(startTime.getAttribute('aria-activedescendant')).toBe(active.id);
+    const hours = [...list.querySelectorAll('[data-col="hour"]')];
+    const minutes = [...list.querySelectorAll('[data-col="minute"]')];
+    expect(hours).toHaveLength(24);
+    expect(minutes).toHaveLength(12);
+    expect(hours[0].textContent).toBe('上午12');
+    expect(hours[hours.length - 1].textContent).toBe('下午11');
+    expect(minutes[0].textContent).toBe('00');
+    expect(minutes[minutes.length - 1].textContent).toBe('55');
+    const activeHour = hours.find((o) => o.getAttribute('aria-selected') === 'true');
+    const activeMinute = minutes.find((o) => o.getAttribute('aria-selected') === 'true');
+    expect(activeHour.textContent).toBe('上午9');
+    expect(activeMinute.textContent).toBe('30');
+    expect(startTime.getAttribute('aria-activedescendant')).toBe(activeHour.id);
   });
 
   it('follows the 24-hour setting in the field and its list', () => {
@@ -1208,7 +1213,8 @@ describe('event modal — time fields', () => {
     expect(startTime.value).toBe('13:00');
     fire(startTime, 'focus');
     const list = document.getElementById(startTime.getAttribute('aria-controls'));
-    expect(list.querySelector('[aria-selected="true"]').textContent).toBe('13:00');
+    expect(list.querySelector('[data-col="hour"][aria-selected="true"]').textContent).toBe('13');
+    expect(list.querySelector('[data-col="minute"][aria-selected="true"]').textContent).toBe('00');
   });
 
   it('keeps off-grid times as typed instead of snapping them to the list', () => {
@@ -1610,13 +1616,20 @@ describe('event details card — focus after an in-place rebuild', () => {
   });
 });
 
+
 describe('event modal — the end time list', () => {
   const H = 3_600_000;
   let modal;
   let saveEvent;
-  const opts = (input) => [...input.closest('.time-field').querySelectorAll('[role="option"]')];
-  const highlighted = (input) => opts(input).find((o) => o.getAttribute('aria-selected') === 'true') || null;
-  const span = (opt) => opt.querySelector('.time-field__duration')?.textContent ?? null;
+  const cols = (input) => {
+    const list = input.closest('.time-field');
+    return {
+      hours: [...list.querySelectorAll('[data-col="hour"]')],
+      minutes: [...list.querySelectorAll('[data-col="minute"]')],
+    };
+  };
+  const selected = (input, col) =>
+    input.closest('.time-field').querySelector(`[data-col="${col}"][aria-selected="true"]`);
   beforeEach(() => {
     saveEvent = vi.fn(async (e) => e);
     modal = createEventModal({ store: { ...makeStore(), saveEvent } });
@@ -1634,32 +1647,29 @@ describe('event modal — the end time list', () => {
     await Promise.resolve();
   };
 
-  it('runs from the start onward, each choice labeled with the length it makes', () => {
+  it('0.7.7 起结束时间与开始时间同一套两列，不再轮转也不再标时长', () => {
     openTimed();
     const endTime = $('input[aria-label="结束时间"]');
     fire(endTime, 'focus');
-    const shown = opts(endTime);
-    expect(shown).toHaveLength(95);
-    expect(shown.some((o) => o.dataset.min === String(22 * 60))).toBe(false);
-    expect(shown[0].dataset.min).toBe(String(22 * 60 + 15));
-    expect(span(shown[0])).toBe('15 分钟');
-    expect(highlighted(endTime).dataset.min).toBe(String(23 * 60));
-    expect(span(highlighted(endTime))).toBe('1 小时');
-    // 1 AM is still on offer — as the next morning, after 11:45 PM, not as a
-    // time before the start.
-    const one = shown.find((o) => o.dataset.min === String(60));
-    const lastTonight = shown.find((o) => o.dataset.min === String(23 * 60 + 45));
-    expect(shown.indexOf(one)).toBeGreaterThan(shown.indexOf(lastTonight));
-    expect(span(one)).toBe('3 小时');
+    const { hours, minutes } = cols(endTime);
+    expect(hours).toHaveLength(24);
+    expect(minutes).toHaveLength(12);
+    // 22:00 仍在列表里（旧版把等于开始时间的档排除掉）。
+    expect(hours.some((o) => o.dataset.hour === '22')).toBe(true);
+    expect(selected(endTime, 'hour').textContent).toBe('下午11');
+    expect(selected(endTime, 'minute').textContent).toBe('00');
+    expect(document.querySelector('.time-field__duration')).toBe(null);
   });
 
-  it('saves a picked next-morning choice across midnight', async () => {
+  it('saves a picked next-morning minute across midnight', async () => {
     openTimed();
     const endTime = $('input[aria-label="结束时间"]');
     fire(endTime, 'focus');
-    opts(endTime)
-      .find((o) => o.dataset.min === String(60))
-      .click();
+    // 先点小时 01（保留分钟、面板不关），再点分钟 00（提交并关闭）。
+    cols(endTime).hours.find((o) => o.dataset.hour === '1').click();
+    expect(timeOf(endTime)).toBe('01:00');
+    expect(endTime.getAttribute('aria-expanded')).toBe('true');
+    cols(endTime).minutes.find((o) => o.dataset.minute === '0').click();
     expect(timeOf(endTime)).toBe('01:00');
     await submit();
     expect(saveEvent).toHaveBeenCalledTimes(1);
@@ -1676,37 +1686,32 @@ describe('event modal — the end time list', () => {
     fire(startTime, 'change');
     expect(timeOf(endTime)).toBe('10:00');
     fire(endTime, 'focus');
-    expect(opts(endTime)[0].dataset.min).toBe(String(9 * 60 + 15));
-    expect(highlighted(endTime).dataset.min).toBe(String(10 * 60));
-    expect(span(highlighted(endTime))).toBe('1 小时');
+    expect(selected(endTime, 'hour').textContent).toBe('上午10');
+    expect(selected(endTime, 'minute').textContent).toBe('00');
   });
 
-  it('offers every time of day plainly once the end is on a later date', () => {
+  it('offers the same rows once the end is on a later date', () => {
     openTimed();
     const endDate = $('input[aria-label="结束日期"]');
     const endTime = $('input[aria-label="结束时间"]');
     endDate.value = '2026-07-15';
     fire(endDate, 'change');
     fire(endTime, 'focus');
-    const shown = opts(endTime);
-    expect(shown).toHaveLength(96);
-    expect(shown[0].dataset.min).toBe('0');
-    expect(span(shown[0])).toBe(null);
-    expect(highlighted(endTime).dataset.min).toBe(String(23 * 60));
-    expect(highlighted(endTime).textContent).toBe('下午11:00');
+    const { hours, minutes } = cols(endTime);
+    expect(hours).toHaveLength(24);
+    expect(minutes).toHaveLength(12);
+    expect(selected(endTime, 'hour').textContent).toBe('下午11');
+    expect(selected(endTime, 'minute').textContent).toBe('00');
   });
 
-  it('leaves the start field’s own list plain', () => {
+  it('leaves the start field’s own list plain too', () => {
     openTimed();
     const startTime = $('input[aria-label="开始时间"]');
     fire(startTime, 'focus');
-    const shown = opts(startTime);
-    expect(shown).toHaveLength(96);
-    expect(shown[0].dataset.min).toBe('0');
-    expect(span(shown[0])).toBe(null);
-    expect(highlighted(startTime).textContent).toBe('下午10:00');
+    const { hours, minutes } = cols(startTime);
+    expect(hours).toHaveLength(24);
+    expect(minutes).toHaveLength(12);
+    expect(selected(startTime, 'hour').textContent).toBe('下午10');
+    expect(document.querySelector('.time-field__duration')).toBe(null);
   });
 });
-
-
-

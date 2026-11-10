@@ -66,6 +66,18 @@ const DATA_MUTATORS = new Set([
   'clearCalendar',
   'restoreCalendar',
   'setCalendarVisible',
+  // 0.7.0 标签：注册表在服务端，离线写不进去，直接拦下比留一个假标签好。
+  'createTag',
+  'updateTag',
+  'deleteTag',
+  // 0.7.1 分组与排序同理：整批顺序写不进去，离线一律拦。
+  'createTagGroup',
+  'updateTagGroup',
+  'deleteTagGroup',
+  'reorderTags',
+  // 0.7.2（m01416）：数据体检的修复会写事件/任务，和 saveEvent 同口径拦下；
+  // 检查本身（checkCalendarIntegrity）是只读，不在此列。
+  'repairCalendarIntegrity',
 ]);
 
 // Module-level so the editor opener (modal.js) can consult it

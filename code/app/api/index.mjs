@@ -103,7 +103,7 @@ function readJsonBody(req) {
   });
 }
 
-export function createApiHandler({ version, auth, kv, admin, data, calendars, ai = null, aiRest = null, widgetRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
+export function createApiHandler({ version, auth, kv, admin, data, calendars, tags = null, ai = null, aiRest = null, widgetRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
   async function handleAuth(req, res, pathnameIn) {
     const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
     // M2 §6.2 paths are `/api/v1/auth/*`; the M3.2 implementation used
@@ -428,6 +428,8 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
     const identityRead = pathname === '/api/v1/me' || pathname === '/api/me';
     const gated = pathname.startsWith('/api/v1/kv')
       || pathname.startsWith('/api/v1/calendars')
+      || pathname.startsWith('/api/v1/tags')
+      || pathname.startsWith('/api/v1/tag-groups')
       || pathname.startsWith('/api/v1/ai')
       || pathname === '/api/v1/import'
       || pathname === '/api/v1/export'
@@ -555,6 +557,13 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
     if (pathname === '/api/v1/calendars' || pathname.startsWith('/api/v1/calendars/')
 ) {
       return handleCalendars(req, res, url);
+    }
+    // 0.7.0：标签注册表（会话读写；写需 CSRF）。0.7.1 加分组与批量排序。
+    if (pathname === '/api/v1/tags' || pathname.startsWith('/api/v1/tags/')) {
+      return handleTags(req, res, url);
+    }
+    if (pathname === '/api/v1/tag-groups' || pathname.startsWith('/api/v1/tag-groups/')) {
+      return handleTags(req, res, url);
     }
     if (pathname === '/api/v1/import' || pathname === '/api/v1/export') {
       return handleData(req, res, url, pathname === '/api/v1/import' ? 'import' : 'export');
@@ -692,9 +701,32 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ai
     return kv.handle(req, res, url, { authenticated: true, csrfOk });
   }
 
+  /** 0.7.0 标签注册表：读要会话，写要会话 + CSRF。 */
+  async function handleTags(req, res, url) {
+    if (!tags) return sendJson(res, 501, { ok: false, code: 'not_implemented' });
+    const identity = await auth.authenticate(req);
+    if (!identity.ok || !identity.account) {
+      return sendJson(res, 401, { ok: false, code: 'unauthorized', message: '请先登录' });
+    }
+    const isWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    if (isWrite && identity.via !== 'session') {
+      return sendJson(res, 401, { ok: false, code: 'session_required', message: '写操作需要登录会话' });
+    }
+    const context = currentContext();
+    if (context) {
+      context.userId = identity.account.id;
+      context.username = identity.account.username;
+      context.displayName = identity.account.displayName || identity.account.username;
+    }
+    const csrfOk = identity.via === 'session' ? auth.validateCsrf(req, identity.account) : false;
+    if (isWrite && !csrfOk) {
+      return sendJson(res, 403, { ok: false, code: 'csrf', message: 'CSRF 校验失败，请刷新后重试' });
+    }
+    return tags.handle(req, res, url);
+  }
+
   /** Calendar collection REST (0.2.0): session for reads, session+CSRF for writes. */
-  async function handleCalendars(req, res, url) {
-    if (!calendars) return sendJson(res, 501, { ok: false, code: 'not_implemented' });
+  async function handleCalendars(req, res, url) {    if (!calendars) return sendJson(res, 501, { ok: false, code: 'not_implemented' });
     const identity = await auth.authenticate(req);
     if (!identity.ok) return sendJson(res, 401, { ok: false, code: 'unauthorized', message: '请先登录' });
     const isWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);

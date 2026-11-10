@@ -245,10 +245,18 @@ export function createStore({ root, logger = null }) {
   /** Rebuild meta.json from what is on disk (used when it is unreadable). */
   async function rebuildMeta(userId, calendarId, reason) {
     await fs.mkdir(objectsDir(userId, calendarId), { recursive: true });
+    // 0.7.2（m01416 用户）：自定义日历丢了 meta.json 时，用「日历 <id 前 6 位>」
+    // 作临时名，完整 id 放进日志，避免界面上出现一长串目录名。
     const fallbackName = calendarId === DEFAULT_CALENDAR_ID
       ? DEFAULT_CALENDAR_NAME
-      : (calendarId === TASKS_CALENDAR_ID ? TASKS_CALENDAR_NAME : calendarId);
-    const meta = newMeta(calendarId, { displayName: fallbackName });
+      : (calendarId === TASKS_CALENDAR_ID ? TASKS_CALENDAR_NAME : `日历 ${String(calendarId).slice(0, 6)}`);
+    // 0.7.2：重建必须保留组件类型，否则「任务」日历会被补成 VEVENT，
+    // 任务对象在 CalDAV 侧就查不到 VTODO 集合了。
+    const meta = newMeta(calendarId, {
+      displayName: fallbackName,
+      type: calendarId === TASKS_CALENDAR_ID ? 'vtodo' : 'vevent',
+      color: calendarId === TASKS_CALENDAR_ID ? TASKS_COLOR : DEFAULT_COLOR,
+    });
     const state = await readState(userId, calendarId);
     const uids = await listUids(userId, calendarId);
     meta.ctag = uids.length ? 1 : 0;
@@ -283,6 +291,34 @@ export function createStore({ root, logger = null }) {
 
   /* -------------------------------------------------------------- calendars */
 
+  /**
+   * 0.7.2（用户）：目录存在但没有 meta.json 时按磁盘对象重建。只有确实像一个
+   * 日历（有 objects/ 目录或 .ics 文件）才重建，避免给随机目录造元数据。
+   */
+  async function healCalendarMeta(userId, calendarId) {
+    let looksLikeCalendar = false;
+    try {
+      looksLikeCalendar = (await fs.stat(objectsDir(userId, calendarId))).isDirectory();
+    } catch {
+      try {
+        const entries = await fs.readdir(calendarDir(userId, calendarId));
+        looksLikeCalendar = entries.some((name) => name.toLowerCase().endsWith('.ics'));
+      } catch {
+        looksLikeCalendar = false;
+      }
+    }
+    if (!looksLikeCalendar) return false;
+    try {
+      await rebuildMeta(userId, calendarId, new Error('meta.json 缺失，按目录自愈'));
+      return true;
+    } catch (err) {
+      logEvent('meta-heal-failed', {
+        userId, calendarId, reason: String(err && err.message ? err.message : err),
+      });
+      return false;
+    }
+  }
+
   async function listCalendars(userIdExplicit) {
     const userId = contextUserId(userIdExplicit);
     try {
@@ -290,11 +326,20 @@ export function createStore({ root, logger = null }) {
       const out = [];
       for (const entry of entries) {
         if (!entry.isDirectory() || !ID_RE.test(entry.name)) continue;
+        let hasMeta = false;
         try {
-          if ((await fs.stat(metaPath(userId, entry.name))).isFile()) out.push(entry.name);
+          hasMeta = (await fs.stat(metaPath(userId, entry.name))).isFile();
         } catch {
-          /* not a calendar */
+          /* missing meta — try the self-heal below */
         }
+        if (!hasMeta) {
+          // 0.7.2（用户：日历变「未知日历」）：目录在、meta.json 丢了，事件还在
+          // 里面。只按目录名重建最小元数据，别把整目录当垃圾跳过——否则该日历
+          // 的所有事件都会在客户端变成「未知日历」，而且刷新也恢复不了。
+          const healed = await healCalendarMeta(userId, entry.name);
+          if (!healed) continue;
+        }
+        out.push(entry.name);
       }
       out.sort();
       return out;

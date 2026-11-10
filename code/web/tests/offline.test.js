@@ -26,6 +26,17 @@ const DATA_MUTATORS = [
   'clearCalendar',
   'restoreCalendar',
   'setCalendarVisible',
+  // 0.7.0：标签注册表在服务端，离线时与日历数据同口径——直接拦住写，不改内存。
+  'createTag',
+  'updateTag',
+  'deleteTag',
+  // 0.7.1：分组与整批排序也是服务端写，离线一律拦。
+  'createTagGroup',
+  'updateTagGroup',
+  'deleteTagGroup',
+  'reorderTags',
+  // 0.7.2（m01416）：数据体检的修复写事件/任务，与 offline.js 的名单保持一致。
+  'repairCalendarIntegrity',
 ];
 
 const READS = [
@@ -50,6 +61,19 @@ const READS = [
   'isCalendarVisible',
   // 「只显示此日历」= 设置写入，离线也允许（与 saveSettings 同口径）
   'setOnlyCalendarVisible',
+  // 0.7.0：标签读取面（注册表、按 id 取、计数）都不写盘，离线照常读。
+  'getTags',
+  // 0.7.1：分组读取面同样只读。
+  'getTagGroups',
+  'tagGroupById',
+  'tagById',
+  'tagCounts',
+  'loadTags',
+  // 0.7.2（m01416）：数据体检只扫内存、不写盘，离线可看；修复动作在
+  // offline.js 的 DATA_MUTATORS 里被拦下。
+  'checkCalendarIntegrity',
+  // 0.7.4（N）：下拉与标签页共用的分组视图只读注册表，不写盘。
+  'getTagsForDisplay',
 ];
 
 function makeStore() {

@@ -198,22 +198,24 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     await aiReady(dialog);
   }
 
-  it('三个页签：顺序是 一般 / CalDAV / AI，文案不裁', () => {
+  it('四个页签：顺序是 一般 / 标签 / CalDAV / AI，文案不裁', () => {
     const dialog = open();
     const buttons = [...dialog.querySelectorAll('.settings__tabs button')];
     // 0.6.2：删除「卡片」页签（卡片跟随 App 登录态，不再发令牌）。
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4；CalDAV 是第 2 枚。
     // 0.6.15（用户）：快捷键页签搬到头像菜单，设置退回三页签。
-    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', 'CalDAV', 'AI']);
+    // 0.7.0 起（用户）：新增「标签」第 2 页签，CalDAV 第 3、AI 第 4。
+    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', '标签', 'CalDAV', 'AI']);
       // 其余页签不带 aria-label（可见文字即全称）
-    expect(buttons[2].getAttribute('aria-label')).toBe(null);
+    expect(buttons[3].getAttribute('aria-label')).toBe(null);
     expect(buttons.map((b) => b.id)).toEqual([
       'settings-tab-general',
+      'settings-tab-tags',
       'settings-tab-account',
       'settings-tab-ai',
     ]);
     // 第 2 枚不再是「CalDAV 账户」（窄屏就是它把页签撑爆的）
-    expect(buttons[1].textContent).not.toContain('账户');
+    expect(buttons[2].textContent).not.toContain('账户');
     // 页签与页一一对应
     buttons.forEach((button, i) => {
       const panelId = button.getAttribute('aria-controls');

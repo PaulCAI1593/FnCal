@@ -35,13 +35,13 @@ README.md             本文件
 
 ## 版本对应
 
-- 技能包版本与 FnCal 版本解耦：`SKILL.md` frontmatter 的 `version` 是技能包自己的版本（1.0.x），`fncalMinVersion` 声明它要求的最低 FnCal 版本。网页版发版不再改这一行，也不再重建 zip。
+- 技能包版本号与最低 FnCal 版本同号：`SKILL.md` frontmatter 的 `version` 与 `fncalMinVersion` 一致（当前 0.7.0），`fncalMinVersion` 声明它要求的最低 FnCal 版本。网页版发版不改这两行，也不重建 zip。
 - 工具面以本包 `reference/tools.md` 为准；改动 MCP 工具（增删、改参数、改权限语义）时，**同一提交内**同步 `SKILL.md` §3 与 `reference/tools.md`，否则发布物会教错模型。
 - 权限语义的唯一真源是 FnCal 源码里的 `code/app/lib/ai-grants.mjs`；本包只描述它，不复制判断逻辑。
 
 ## 发布打包
 
-技能包单独发版：技能包版本号与最低 FnCal 版本同号（当前 0.6.14），tag 用 `skill-v<技能版本>`（如 `skill-v0.6.14`），Release 标题固定为「FnCal MCP Skill <技能版本>」（如「FnCal MCP Skill 0.6.14」），正文写明最低 FnCal 版本，只挂本 zip 一个资产。GitHub 与 Gitee 两处标题必须一致。只有在 `SKILL.md` 或 `reference/` 内容变化时才发；网页版发版不动技能包。
+技能包单独发版：技能包版本号与最低 FnCal 版本同号（当前 0.7.0），tag 用 `skill-v<技能版本>`（如 `skill-v0.7.0`），Release 标题固定为「FnCal MCP Skill <技能版本>」（如「FnCal MCP Skill 0.7.0」），正文写明最低 FnCal 版本，只挂本 zip 一个资产。GitHub 与 Gitee 两处标题必须一致。只有在 `SKILL.md` 或 `reference/` 内容变化时才发；网页版发版不动技能包。
 
 zip 内必须只有一个顶层目录 `fncal-mcp/`——解压后直接得到 `.dsh/skills/fncal-mcp/SKILL.md`。用 `-Path '…\*'` 打包会把这一层压平，装到技能目录就少一层，属已发生过的缺陷（0.3.4 曾打成 `skillzip/fncal-mcp/`）。
 

@@ -247,6 +247,24 @@ async function main() {
     ['default', 'tasks'].every((id) => (restOnly.json.calendars || []).some((c) => c.id === id)));
   check('REST 补齐后 meta 落盘', true, await metaExists('default'), await metaExists('default'));
 
+  /* 3b) 0.7.2（m01416 用户）：自定义日历 meta 丢失 → 目录自愈，名称用「日历 <前 6 位>」，
+     事件仍能列出（用户真机「刷新后仍是未知日历」的根因之一）。 */
+  const putCustom = await fetch(`${BASE}/calendars/${USER}/${customId}/heal-1.ics`, {
+    method: 'PUT',
+    headers: { Authorization: BASIC, 'Content-Type': 'text/calendar; charset=utf-8' },
+    body: VCAL,
+  });
+  check('自定义日历 PUT 201', 201, putCustom.status, putCustom.status === 201);
+  await removeMeta(customId);
+  const healedCustom = await rest(session, 'GET', '/api/v1/calendars');
+  const healedCal = (healedCustom.json.calendars || []).find((c) => c.id === customId);
+  const expectedHealName = `日历 ${customId.slice(0, 6)}`;
+  check('自定义日历 meta 丢失 → 自愈名「日历 <前 6 位>」', expectedHealName,
+    healedCal && healedCal.displayName,
+    Boolean(healedCal) && healedCal.displayName === expectedHealName);
+  const healedProps = await propfindCalendar(customId);
+  check('自愈后自定义日历事件仍在', true, /heal-1\.ics/.test(healedProps.text), /heal-1\.ics/.test(healedProps.text));
+
   /* 4) 组件集：default = VEVENT、tasks = VTODO */
   const defaultProps = await propfindCalendar('default');
   check('default PROPFIND 207', 207, defaultProps.status, defaultProps.status === 207);

@@ -435,6 +435,9 @@ body.is-reordering {
 }
 .cal-select__item {
   display: flex;
+  /* 0.7.1：同一类压缩坑——.cal-select__list 是 flex column + max-height + 滚动，
+     条目必须固定高度不被压扁。 */
+  flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   min-height: 32px;
@@ -882,6 +885,8 @@ body.is-reordering {
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
+/* 0.7.1：上面「行不被压缩」需要子项固定高度才成立；补上 flex 不缩。 */
+.taskbar__list > * { flex: 0 0 auto; }
 .task-row {
   display: flex;
   align-items: center;
@@ -934,6 +939,20 @@ body.is-reordering {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 0.7.1（用户）：任务列表同样是 `emoji + 任务名`，emoji 在标题前、不收缩。 */
+.task-row__line {
+  display: flex;
+  align-items: baseline;
+  /* 0.7.2（用户）：emoji 与名称之间由 `.tag-gap` 的空格字符负责，不用 flex gap。 */
+  gap: 0;
+  min-width: 0;
+}
+.task-row__tag {
+  flex: 0 0 auto;
+  font-size: var(--fs-md);
+  line-height: 1;
+}
+.task-row__line .task-row__title { flex: 1 1 auto; min-width: 0; }
 .task-row.is-done .task-row__title {
   color: var(--text-3);
   text-decoration: line-through;
@@ -1227,6 +1246,9 @@ label,
 .search__filters[hidden] {
   display: none;
 }
+/* 0.7.1：筛选面板是 flex column + max-height + 滚动，各行同样不许被压扁
+   （否则 chip 与标题互相叠住）。 */
+.search__filters > * { flex: 0 0 auto; }
 .search__filter-row {
   display: flex;
   flex-direction: column;
@@ -2425,6 +2447,8 @@ label,
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 0.7.1：审计列表是 flex column + max-height + 滚动，每条不许被压缩。 */
+  flex: 0 0 auto;
 }
 .security-audit-list {
   display: flex;
@@ -2762,6 +2786,8 @@ label,
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  /* 0.7.1：矩阵滚动区是 flex column + max-height，行容器不许被压扁。 */
+  flex: 0 0 auto;
 }
 .ai-matrix__row {
   display: flex;
@@ -3670,4 +3696,727 @@ label,
     padding: 0 8px;
     font-size: var(--fs-sm);
   }
+}
+
+/* ---- 0.7.0（用户）：标签系统 ----
+   设置页的四列表格与两个对话框、筛选下拉、月格/时间条/日程列表/详情卡的
+   「emoji 名称」显示。颜色全部走 token，深色主题自动跟随；≤520 时表格改成
+   两行卡片，避免横向滚动。 */
+.tag-page__toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.tag-page__hint { flex: 1 1 220px; min-width: 0; }
+.tag-page__create,
+.tag-page__create-group { flex: 0 0 auto; }
+/* 0.7.1：320/390 档工具栏只有一行按钮位置——提示独占一行，两个按钮留在下一行右侧，
+   「新建分组」在左、「新建标签」在右；不许一个按钮被挤到左侧换行。 */
+@media (max-width: 520px) {
+  .tag-page__toolbar { row-gap: 8px; }
+  .tag-page__hint { flex: 1 1 100%; }
+  .tag-page__create-group { margin-left: auto; }
+}
+.tag-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.tag-table[hidden] { display: none; }
+/* 0.7.1：多一列握把；列宽不变（名称列让出 28px）。 */
+.tag-table__head,
+.tag-table__row {
+  display: grid;
+  grid-template-columns: 28px 56px minmax(0, 1fr) 64px 132px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+}
+.tag-table__head {
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.tag-table__row { border-top: 1px solid var(--border); }
+.tag-table__cell {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 0.7.1（用户）：表内 emoji 视觉尺寸收到 16px（≤18px），行高用 24px 撑住不变。 */
+.tag-table__cell--emoji { font-size: 16px; line-height: 24px; text-align: center; }
+/* 0.7.4（用户「这个字体还是太大了」）：表头四列统一 var(--fs-sm)=12px，
+   与「名称 / 数量 / 操作」一致；行内 emoji 仍 16px / 行高 24px。
+   注：项目令牌 --fs-xs 是 11px，12px 对应 --fs-sm。 */
+.tag-table__head .tag-table__cell { font-size: var(--fs-sm); }
+.tag-table__preview { display: none; }
+.tag-table__name { font-weight: 600; }
+.tag-table__preview { margin-left: 6px; color: var(--text-3); font-size: var(--fs-xs); }
+.tag-table__cell--count { color: var(--text-2); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.tag-table__cell--actions { display: flex; gap: 4px; justify-content: flex-end; }
+.tag-table__action { padding: 0 10px; min-height: 32px; font-size: var(--fs-sm); text-decoration: none; }
+.tag-table__action--danger { color: var(--danger-ink); }
+.tag-table__empty { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px 0; }
+
+/* 0.7.1（用户）：分组标题行（组名 + 标签数 + 编辑/删除）与组内空态。 */
+.tag-table__group-head {
+  display: grid;
+  grid-template-columns: 28px 56px minmax(0, 1fr) 64px 132px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+}
+.tag-table__group-head .tag-table__cell { white-space: normal; }
+.tag-table__cell--group { display: flex; align-items: baseline; gap: 8px; min-width: 0; grid-column: 2 / 4; cursor: pointer; }
+.tag-table__collapse {
+  flex: 0 0 auto;
+  /* 0.7.5：44×44 触碰目标；负外边距让行高保持在 24px 的视觉节奏里。
+     0.7.6（用户「折叠用的三角太小了」）：三角 12px → 16px，并用 flex 居中
+     （原来靠 44px 行高把字形压到底部，视觉偏下、偏小）。 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -10px -10px -10px -6px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+/* 0.7.4（mobile-layout 断言）：悬停态只给鼠标设备，触屏不粘滞。
+   0.7.6（用户「鼠标移上去的时候，不要有选中状态，也就是这片白色」）：
+   分组标题与折叠三角悬停不改底色，只加深文字/三角作为反馈。 */
+@media (hover: hover) and (pointer: fine) {
+  .tag-table__collapse:hover { color: var(--text); }
+}
+.tag-table__collapse:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag-table__group-body[hidden] { display: none; }
+.tag-table__group-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-table__group-count { color: var(--text-2); font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.tag-table__cell--group-actions { display: flex; gap: 4px; justify-content: flex-end; grid-column: 5; }
+.tag-table__group-empty {
+  margin: 0;
+  padding: 4px 12px 10px 48px;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+}
+
+/* 0.7.1（用户）：拖动排序的握把、拖动中的行、落点指示线。 */
+.tag-table__grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 0.7.5：44×44 触碰目标。 */
+  width: 44px;
+  min-height: 44px;
+  margin: -8px -8px -8px -8px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  cursor: grab;
+  touch-action: none;
+}
+.tag-table__grip:active { cursor: grabbing; }
+@media (hover: hover) and (pointer: fine) {
+  .tag-table__grip:hover { color: var(--text); background: var(--surface-3, var(--surface-2)); }
+}
+.tag-table__grip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 六点握把：两列三行用 flex 排，避免给「全部网格都要 minmax(0,1fr)」的审计开例外。 */
+.tag-table__dots { display: flex; flex-wrap: wrap; width: 9px; gap: 3px; justify-content: center; }
+.tag-table__dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
+.tag-table__row.is-dragging,
+.tag-table__group-head.is-dragging { opacity: 0.55; box-shadow: 0 6px 18px rgb(0 0 0 / 18%); }
+.tag-drop-line {
+  height: 2px;
+  margin: -1px 12px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tag-table__row { transition: background-color 120ms ease; }
+}
+/* 0.7.1（用户）：emoji 选择器——分组条 + 8×4 格网 + 翻页条。
+   分组条横向滚动（不折行挤压格网），选中态用 accent-soft 底 + accent 描边；
+   浅色/深色下正文色对 accent-soft 都 ≥13:1，比 accent 上的白字稳。 */
+.tag-editor__emoji-picker { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 0; }
+.tag-editor__emoji-groups {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+.tag-editor__emoji-group {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tag-editor__emoji-group[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}
+@media (hover: hover) and (pointer: fine) {
+  .tag-editor__emoji-group:hover { border-color: var(--border-strong); }
+  .tag-editor__emoji-group[aria-pressed='true']:hover { border-color: var(--accent); }
+}
+/* 0.7.6（用户「第二页只有一行」）：取消分页，整组一次渲染，格网限高 5 行、内部纵向滚动。
+   行高与格间距走自定义属性，窄档只改这两个值即可保持「5 行」上限。 */
+.tag-editor__emoji-grid {
+  --emoji-row-h: 38px;
+  --emoji-gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  align-content: start;
+  gap: var(--emoji-gap);
+  max-height: calc(var(--emoji-row-h) * 5 + var(--emoji-gap) * 4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+}
+.tag-editor__emoji {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.tag-editor__emoji[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft, var(--surface-2));
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.tag-editor__emoji-input { width: 100%; max-width: 280px; }
+.tag-editor__error { margin: 0; font-size: var(--fs-sm); color: var(--danger-ink); }
+.tag-delete__text { margin: 0 0 6px; font-size: var(--fs-base); }
+/* 0.7.1（用户）：页脚左侧「从标题识别」，触屏命中区不小于 40px。 */
+.tag-editor__apply { min-height: 40px; }
+.tag-apply__summary { margin: 0 0 8px; font-size: var(--fs-base); }
+.tag-apply__stats {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tag-apply__stat { display: flex; justify-content: space-between; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text-2); }
+.tag-apply__stat--match { color: var(--text); font-weight: 600; }
+.tag-apply__stat--warn { color: var(--danger-ink); }
+.tag-apply__samples {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tag-apply__sample {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-height: 20px;
+  font-size: var(--fs-sm);
+}
+.tag-apply__sample > * { flex: 0 0 auto; }
+.tag-apply__emoji { font-size: 16px; line-height: 20px; }
+.tag-apply__name { color: var(--text-2); }
+.tag-apply__sep { color: var(--text-3); }
+.tag-apply__sample-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tag-apply__omitted { padding-top: 2px; font-size: var(--fs-sm); color: var(--text-3); }
+.tag-apply__none { margin: 10px 0 0; font-size: var(--fs-sm); color: var(--text-2); }
+
+@media (max-width: 520px) {
+  .tag-table { border: 0; overflow: visible; }
+  .tag-table__head { display: none; }
+  .tag-table__row {
+    grid-template-columns: 24px 40px minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    margin-bottom: 8px;
+    padding: 10px 12px;
+    row-gap: 2px;
+  }
+  .tag-table__cell--grip { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
+  .tag-table__cell--name { grid-column: 3; grid-row: 1; }
+  .tag-table__cell--emoji { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+  .tag-table__cell--count { grid-column: 3; grid-row: 2; color: var(--text-3); font-size: var(--fs-sm); }
+  .tag-table__cell--actions { grid-column: 4; grid-row: 1 / span 2; }
+  .tag-table__group-head {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    margin-bottom: 6px;
+  }
+  .tag-table__cell--group { grid-column: 2; }
+  .tag-table__cell--group-actions { grid-column: 3; }
+  .tag-table__group-empty { padding-left: 48px; }
+  .tag-table__grip { width: 24px; }
+  /* 0.7.1（用户）：窄档保持 8 列。弹窗正文左右各 16px 内距把
+     320 档的格子压到 28.5px，这里让选择器向两侧各借 8px、格间距收到 2px，
+     格子回到 (272−14)/8 ≈ 32.25px；按钮高度降到 34px，仍高于 32px 下限。
+     0.7.6：取消分页后 5 行上限约 178px，页脚三个按钮仍在首屏可见。 */
+  .tag-editor__emoji-picker { margin-inline: calc(var(--sp-2) * -1); }
+  .tag-editor__emoji-group { min-height: 44px; }
+  .tag-editor__emoji-grid { --emoji-row-h: 34px; --emoji-gap: 2px; }
+  .tag-editor__emoji { min-height: 34px; }
+}
+/* 0.7.0（用户）：事件/任务编辑器标题行的标签按钮——32×32，与标题同一基线。
+   有标签时显示 emoji（无 emoji 的标签退到名称首字），没有时显示「+」。 */
+/* 0.7.0：布局表里 .modal--editor .field--title{display:block} 的优先级更高，
+   这里用同等选择器压过去，标签按钮才会落在标题左侧。 */
+.modal--editor .field.editor__title-field { position: relative; display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 8px; }
+.editor__title-field .input--title { flex: 1 1 auto; min-width: 0; }
+.editor__tag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.editor__tag:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.editor__tag--set { color: var(--text); border-color: var(--accent); }
+.editor__tag-list {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 200px;
+  max-width: min(320px, 100%);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, .18));
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.editor__tag-list[hidden] { display: none; }
+/* 0.7.1（用户）：条目多时靠滚动，不靠压缩。容器是 flex column + max-height，
+   子项默认 flex-shrink:1 会被压到内容高度以下，文字互相叠住；这里固定不缩，
+   并给 8px 上下内距 + 一行 12px 文字算出的 34px 下限。 */
+.editor__tag-list > * { flex: 0 0 auto; }
+/* 0.7.4（用户）：编辑器下拉按分组分段；标题不可选、不聚焦，条目缩进 8px。 */
+.tag-select__group {
+  flex: 0 0 auto;
+  padding: 6px 10px 2px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.tag-select__item--grouped { padding-left: 18px; }
+/* 0.7.4（用户「下拉菜单的UI要符合整体设计」）：标签编辑器的「分组」下拉改用
+   与 .tag-select / .search__tag-menu 同一套令牌的自定义 listbox，不再用原生 select。 */
+/* 0.7.4：标签编辑器在矮视口（320×568）时，.modal__body 是 flex 列，子项默认
+   flex-shrink:1 被压扁，「分组」标签压住名称输入框、说明文字被页脚遮住。
+   子项固定为内容高度，由 body 自己滚动。 */
+.tag-editor .modal__body > * { flex: 0 0 auto; }
+.tag-editor__group { position: relative; width: 100%; }
+.tag-editor__group-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.tag-editor__group-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tag-editor__group-value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-editor__group-chevron { display: inline-flex; flex: 0 0 auto; color: var(--text-3); }
+.tag-editor__group-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+.tag-editor__group-menu[hidden] { display: none; }
+.tag-editor__group-option {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+/* 0.7.4（mobile-layout 断言）：悬停态只给鼠标设备；键盘高亮 .is-active 不分设备。 */
+@media (hover: hover) and (pointer: fine) {
+  .tag-editor__group-option:hover { background: var(--surface-2); }
+}
+.tag-editor__group-option.is-active { background: var(--surface-2); }
+.tag-editor__group-option[aria-selected='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+@media (max-width: 520px) {
+  .tag-editor__group-trigger { min-height: 44px; }
+}
+.tag-select__item {
+  display: block;
+  flex: 0 0 auto;
+  min-height: 34px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: calc(var(--r-md) - 2px);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.tag-select__item[aria-selected='true'] { background: var(--surface-2); font-weight: 600; }
+.tag-select__item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* 月格事件条：0.7.1（用户，最终口径）只显示「emoji 名称」，标签名不进 DOM。
+   单日、跨天连条、任务格统一单行：emoji 固定 0 0 auto，名称吃剩余宽度走省略号；
+   窄档按四级梯子（applyTagDisplayTiers 实测）从「时间 + emoji」收到只留 emoji。
+   跨天条不切档（几何依赖标题段），窄档连条由网格级标签层画 emoji + 名称。 */
+/* 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符（`.tag-gap` 节点），
+   不再用 margin/em 控制间距。`white-space: pre` 保住这个空格，换行折叠不会吃掉；
+   收档（T2/T3/T4）时与名称一起 display:none，测宽不会多算一格。 */
+.tag-gap { flex: 0 0 auto; white-space: pre; }
+.chip--tagged { flex-wrap: nowrap; row-gap: 0; column-gap: 0; }
+.chip--tagged .chip__tag { order: 1; flex: 0 0 auto; }
+.chip--tagged .tag-gap { order: 1; }
+.chip--tagged .chip__title { order: 1; flex: 1 1 auto; min-width: 0; }
+/* 0.7.4（用户「名称没了」）：全天/跨天条曾按内容宽度排版（views.css 的
+   `[data-bar-label='1']` 规则给 flex:0 0 auto），短名天然宽 < 3 字就被误判成
+   放不下、只剩 emoji。承担标题的段必须伸展，clientWidth 才是可用宽。 */
+.chip--tagged[data-bar-label='1'] .chip__title { flex: 1 1 auto; width: auto; min-width: 0; }
+.chip--tagged .chip__time { order: 0; flex: 0 0 auto; }
+.chip--tagged .chip__time { padding-inline-end: var(--sp-1); }
+.chip--tagged .chip__check { order: 0; flex: 0 0 auto; margin-inline-end: var(--sp-1); }
+.chip--tagged .chip__dot,
+.chip--tagged .chip__ooo-icon { margin-inline-end: var(--sp-1); }
+.chip__tag { display: inline-flex; align-items: baseline; font-size: 1em; line-height: 1; }
+/* 0.7.1（G）：四级梯子只改类与时间文本，chip 始终单行、高度不变。
+   T2/T3 收掉名称（display:none，不用 visibility）；T4 再收掉时间。 */
+.chip--tag-time .chip__title,
+.chip--tag-hour .chip__title,
+.chip--tag-only .chip__title { display: none; }
+.chip--tag-time .tag-gap,
+.chip--tag-hour .tag-gap,
+.chip--tag-only .tag-gap { display: none; }
+.chip--tag-only .chip__time { display: none; }
+
+/* 周/四日/日事件条：标签 emoji 固定在标题前，名称拿剩余宽度走省略号。 */
+.tevent__title--tagged { display: flex; align-items: baseline; min-width: 0; }
+.tevent__tag-emoji { flex: 0 0 auto; font-size: 1em; }
+.tevent__title-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tevent--tag-only .tevent__title-text,
+.tevent--tag-only .tag-gap { display: none; }
+
+/* 日程列表行：标签 emoji 在标题前（标签名不进 DOM）。 */
+.agenda__event-tag { display: inline-flex; align-items: baseline; font-size: var(--fs-sm); min-width: 0; }
+/* 0.7.0：.agenda__event-main 是两列网格（标题 + 时段），标签没有自己的格子
+   会被自动排到下一行。带标签的行改成三列：标签 / 标题 / 时段。 */
+/* 0.7.2（用户，Bug B）：emoji 与名称的间距统一由 emoji 节点的 0.25em 决定，
+   所以这三列之间不再留网格列距（时段仍与标题隔开一个 sp-2）。 */
+.agenda__event-main--tagged { grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto; column-gap: 0; }
+.agenda__event-main--tagged > .agenda__event-tag { grid-column: 1; grid-row: 1; align-self: baseline; }
+/* 名称占 1fr（可收缩），但给一个最小可读宽，别被标签 emoji 挤没。 */
+.agenda__event-main--tagged > .agenda__event-title { grid-column: 2; min-width: 3em; }
+.agenda__event-main--tagged > .agenda__event-daypart { grid-column: 3; padding-left: var(--sp-2); }
+.agenda__event-main--tagged > .agenda__event-location { grid-column: 1 / -1; }
+.agenda__event-tag-emoji { flex: 0 0 auto; font-size: 1em; }
+
+/* 详情卡：标签独立一行（emoji + 标签名），左内距对齐色块右侧的名称文字；
+   色块只和标题行首行对齐（layout.css 的 margin-top:5px 不动）。 */
+.view__tag-row { padding-left: calc(14px + var(--sp-3)); margin-bottom: 2px; }
+.view__tag { font-size: var(--fs-sm); color: var(--text-2); }
+/* 0.7.2（用户，Bug B）：详情卡标题里的 emoji 与名称之间同样只放一个真实空格字符
+   （`.tag-gap` 节点），不写 margin。 */
+
+/* 筛选面板：标签多选下拉。0.7.4（用户）：整行拉满，右侧不再留空。 */
+.search__tag-filter { position: relative; display: block; width: 100%; }
+/* 0.7.1（用户）：收起态先显示 emoji，放不下才省略成「N 个标签」。
+   宽度由 JS 实测（测量层与可用宽比较）；这里只保证单行不折、不横向溢出。 */
+.search__tag-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  position: relative;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.search__tag-trigger-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search__tag-trigger.is-compact .search__tag-trigger-text { overflow: visible; }
+.search__tag-trigger-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  left: 0;
+  top: 0;
+}
+.search__tag-trigger.has-filter { border-color: var(--accent); }
+.search__tag-menu {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, .18));
+}
+.search__tag-menu[hidden] { display: none; }
+.search__tag-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: calc(var(--r-md) - 2px);
+  background: none;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.search__tag-option[aria-selected='true'] { background: var(--surface-2); }
+.search__tag-check { display: inline-flex; width: 16px; color: var(--accent); }
+.search__tag-option-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search__tag-group {
+  padding: 6px 10px 2px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.search__tag-empty { margin: 0; padding: 10px; color: var(--text-3); font-size: var(--fs-sm); }
+.search__tag-menu-foot { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+/* 0.7.5（用户「筛选标签下拉多一个选择无标签」）：顶部「无标签」项，
+   与分组之间一条分隔线；与具体标签互斥。 */
+.search__tag-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+.search__tag-option--notag .search__tag-option-name { color: var(--text-2); }
+.search__tag-clear { width: 100%; justify-content: flex-start; }
+
+@media (max-width: 520px) {
+  .editor__tag-list { min-width: 180px; }
+}
+
+/* 0.7.0：悬停只给鼠标设备（触屏点一下应当直接生效，不留悬停态）。 */
+@media (hover: hover) and (pointer: fine) {
+  .editor__tag:hover { background: var(--surface-3, var(--surface-2)); }
+  .tag-select__item:hover { background: var(--surface-2); }
+  .search__tag-option:hover { background: var(--surface-2); }
+}
+
+/* 0.7.5（用户「下拉菜单的分组也可以折叠」）：两处下拉的分组标题整行是按钮，
+   右侧 ▸/▾ 指示；折叠只隐藏条目，标题与「分组名 + N 个标签」仍在。 */
+.tag-select__group,
+.search__tag-group {
+  padding: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.tag-select__group-toggle,
+.search__tag-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  /* 0.7.5：分组标题整行可点，按 44×44 触碰目标给高度。 */
+  min-height: 44px;
+  padding: 6px 10px 2px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+/* 0.7.6（用户「折叠用的三角太小了」）：三角 10px → 16px，仍在 44px 行内居中。 */
+.tag-select__group-caret,
+.search__tag-group-caret {
+  flex: 0 0 auto;
+  width: 16px;
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+}
+.tag-select__group-body[hidden],
+.search__tag-group-body[hidden] { display: none; }
+.tag-select__group-toggle:focus-visible,
+.search__tag-group-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* 0.7.6（用户「鼠标移上去的时候，不要有选中状态，也就是这片白色」）：
+   两处下拉的分组标题悬停也不加底色，只把标题从 --text-3 加深到 --text-2。 */
+@media (hover: hover) and (pointer: fine) {
+  .tag-select__group-toggle:hover,
+  .search__tag-group-toggle:hover { color: var(--text-2); }
+}
+
+/* 0.7.5：原生 `<select>` 的自绘替代（select-listbox.js）。
+   与 `.tag-editor__group-*`（0.7.4 分组下拉）、`.tag-select`、`.search__tag-menu`
+   共用同一套令牌：44px 触发器、--r-md 圆角、--shadow-md 弹层、--accent-soft 选中。
+   原生 select 仍留在包装层里（display:none）负责取值与 change 事件。 */
+.select-listbox { position: relative; display: block; width: 100%; min-width: 0; }
+.select-listbox__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.select-listbox__trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.select-listbox__trigger:disabled,
+.select-listbox.is-disabled .select-listbox__trigger { opacity: 0.6; cursor: default; }
+.select-listbox__value { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-listbox__chevron { flex: 0 0 auto; color: var(--text-3); }
+.select-listbox__menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+}
+.select-listbox__menu[hidden] { display: none; }
+.select-listbox__option {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.select-listbox__option[aria-selected='true'] { background: var(--accent-soft); color: var(--accent); }
+.select-listbox__option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 0.7.5（mobile-layout 断言）：悬停态只给鼠标设备。 */
+@media (hover: hover) and (pointer: fine) {
+  .select-listbox__option:hover { background: var(--surface-2); }
+}
+/* 0.7.5（44×44 触碰目标）：外观与布局不变，用一层透明覆盖把可点区域扩到 44×44。
+   覆盖层只在有交互的元素上；`.tag-table__cell--emoji` 是编辑器里的 emoji 选择格。
+   0.7.6（用户「白色圆点没有居中」）：覆盖层专用 `::before`，**勿与视觉伪元素共用**——
+   色块的白点是 `.swatch[aria-checked='true']::after`（布局靠 inset:0 + margin:auto），
+   两条规则若同落在 `::after` 上，覆盖层的 `transform: translate(-50%,-50%)` 会残留，
+   把白点整体左上偏移 4.5px。 */
+.tag-table__collapse,
+.tag-table__grip,
+.tag-table__cell--emoji,
+.swatch { position: relative; }
+.tag-table__collapse::before,
+.tag-table__grip::before,
+.tag-table__cell--emoji::before,
+.swatch::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: var(--r-sm);
 }

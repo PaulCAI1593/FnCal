@@ -13,6 +13,9 @@ import { segmentEnds } from '../lib/segment.js';
 // 0.2.12（C11-2）：周/四天/天视图日期头的农历副标题（三者共用这个表头）。
 import { dayLunarText, lunarEnabled } from '../lib/lunar-view.js';
 import { colorHex, colorFg, DEFAULT_COLOR } from '../colors.js';
+// 0.7.0（用户）：事件条显示标签「emoji 名称」。
+import { tagForRecord } from '../store.js';
+import { applyTagDisplayTier, splitTagTitle } from '../tag-display.js';
 import { t } from '../../i18n/index.js';
 import { buildEmptyState } from './empty-state.js';
 // 0.5.11（S1，用户）：「手机上月视图『国庆』『中秋』都显示两个字就好，不要显示
@@ -59,6 +62,21 @@ export const TEVENT_METRICS_FALLBACK = {
 /* 各字段的行数上限：名称 3、时间 1、地点 2（0.6.3 实测取整，见记录 §B）。 */
 const TEVENT_MAX_LINES = { title: 3, time: 1, loc: 2 };
 let teventMetricsCache = null;
+
+/**
+ * 0.7.1（用户，最终口径）：事件条只显示 `emoji + 名称`，标签名不进 DOM。
+ * 名称可用宽 < 3 个字宽 → 只留 emoji（tevent--tag-only），不出省略号。
+ * 阈值按标题字号换算；拿不到布局（clientWidth 0）时保持默认档。
+ */
+function applyTagTitlePriority(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  const nodes = [...root.querySelectorAll('.tevent__title--tagged')];
+  if (!nodes.length) return;
+  for (const node of nodes) node.classList.remove('tevent--tag-only');
+  for (const node of nodes) {
+    applyTagDisplayTier(node, node.querySelector('.tevent__title-text'), 'tevent--tag-only');
+  }
+}
 
 /** 读一次 `.tevent` 的盒模型常量；读不到（无布局）就回退。 */
 export function readTeventMetrics() {
@@ -258,7 +276,7 @@ export function renderTimeGrid(days, ctx) {
     // on the hour grid at their due time (below), like events.
     const railTasks = dayTasks.filter((t) => t.allDay);
     const timedTasks = dayTasks.filter((t) => !t.allDay);
-    const split = splitDayEvents(dayEvents, dayStart, dayEnd);
+    const split = splitDayEvents(dayEvents, dayStart, dayEnd, { clipMultiDay: true });
     // 0.2.9（用户 15 / §19.3）：全天行同样「长事件置顶」，与月/年共用一个
     // 比较器；同一跨天条在每一列都落在同一行，跨列连条才不错位。
     return {
@@ -479,9 +497,13 @@ export function renderTimeGrid(days, ctx) {
   root.append(scroll);
 
   function afterMount() {
+    // 0.7.1（用户）：事件条标签降档——宽度落定后量一次，每次重渲染再跑。
+    applyTagTitlePriority(root);
     // 0.5.11（S1）：≤520 节日全天行恢复旗子后名字只剩 ~25px，按实测宽度裁成完整
     // 汉字（不画省略号）。必须在宽度落定后跑，且每次重渲染都会再跑一次。
     fitCompactHolidayChips(root);
+    // 0.7.9 E：全天行按「run」画一次名称（跨列才换层，单格条不动）。
+    applyAllDayRailLabels(root);
     // The date header and the all-day / tasks rails are siblings of the hour
     // scroller, not children of it, so the scroller's vertical scrollbar eats
     // width from the body's columns and from nothing else. Both bands are
@@ -686,19 +708,36 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
 
   // 没有行数就不生成节点（不靠 CSS 隐藏）。
   if (alloc.title > 0) {
-    node.append(el('span', { class: 'tevent__title', text: source.title || t('agenda.event.untitled') }));
+    const titleText = source.title || t('agenda.event.untitled');
+    // 0.7.1（用户）：事件条只显示「emoji 名称」，标签名不进 DOM；窄列整块收掉
+    // emoji，名称走原生省略号。
+    const tag = tagForRecord(source);
+    // 0.7.1（K.4）：标题首字素已是该 emoji 时拆到 emoji 节点，名称只放剩余部分。
+    const parts = splitTagTitle(tag, titleText);
+    if (parts.emoji) {
+      node.append(el('span', { class: 'tevent__title tevent__title--tagged' }, [
+        el('span', { class: 'tevent__tag-emoji', text: parts.emoji, 'aria-hidden': 'true' }),
+        // 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符，不用 CSS margin。
+        el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' }),
+        el('span', { class: 'tevent__title-text', text: parts.label }),
+      ]));
+    } else {
+      node.append(el('span', { class: 'tevent__title', text: titleText }));
+    }
   }
   if (alloc.time > 0) {
-    node.append(
-      el('span', {
-        class: 'tevent__time',
-        text: isShort
-          ? formatTime(new Date(source.start), { hour12: ctx.settings.hour12 })
-          : formatTimeRange(new Date(source.start), new Date(source.end), {
-              hour12: ctx.settings.hour12,
-            }),
-      }),
-    );
+    // 0.7.9 D：跨天定时事件裁进时间轴后，标签用**这一段**的起止（event 是当天副本）：
+    // 第一天裁到 24:00 显示 `24:00`（否则跳回 `00:00`，像当天结束）；后续天从 `00:00` 起。
+    // 未跨天的块两值相同，文案不变。
+    const startText = formatTime(new Date(event.start), { hour12: ctx.settings.hour12 });
+    const timeText = isShort
+      ? startText
+      : event.clippedEnd
+        ? `${startText} – 24:00`
+        : formatTimeRange(new Date(event.start), new Date(event.end), {
+            hour12: ctx.settings.hour12,
+          });
+    node.append(el('span', { class: 'tevent__time', text: timeText }));
   }
   // 窄列（<108px）时地点让位给名称+时间：由 CSS 容器查询隐藏（display:none 不占行，
   // 名称与时间的行数不受影响），JS 不做二次测量。见文件上方 0.6.3（B）备注。
@@ -1034,13 +1073,26 @@ function buildAllDayChip(event, ctx, day, bounds, slot = null) {
     'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${t('agenda.event.allDaySuffix')}`,
   });
   if (event.ooo && showLabel) node.append(el('span', { class: 'allday-chip__icon', html: icon('plane', { size: 'sm' }) }));
+  // 0.7.1（用户）：全天/多日条同样 `emoji + 名称`；延续段（showTitle=false）
+  // 不画，避免条中间出现孤立 emoji。
+  const alldayTag = tagForRecord(event);
+  // 0.7.1（K.4）：标题首字素已是该 emoji 时拆到 emoji 节点，名称只放剩余部分。
+  const alldayParts = showTitle ? splitTagTitle(alldayTag, event.title) : { emoji: '', label: '' };
+  if (alldayParts.emoji) {
+    node.classList.add('allday-chip--tagged');
+    node.append(el('span', { class: 'allday-chip__tag', text: alldayParts.emoji, 'aria-hidden': 'true' }));
+    // 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符，不用 CSS margin。
+    node.append(el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' }));
+  }
   // 后续段不重复标题，但用零宽空格保住行高，连条在列与列之间不会变矮；
   // 读屏仍拿到 chip 上完整的 aria-label。0.2.43：被视图左缘截断的行首段例外
   // （那里有「<」），补标题（见上面的 showTitle）。
   node.append(
     el('span', {
       class: 'allday-chip__title',
-      text: showTitle ? event.title || t('agenda.event.untitled') : '\u200b',
+      text: showTitle
+        ? (alldayParts.label || t('agenda.event.untitled'))
+        : '\u200b',
       'aria-hidden': showTitle ? null : 'true',
     }),
   );
@@ -1080,6 +1132,83 @@ function buildAllDayChip(event, ctx, day, bounds, slot = null) {
  * 375/390/430 至少 2 个，320 至少 1 个；名字先去掉尾部「节」（春节/元旦保留），
  * chip 的 title 与 aria-label 仍是全名。>520 不跑，桌面文案不变。
  */
+/**
+ * 0.7.9 E（用户：平板上两格 / 三格宽的多日条，名称仍在第一格内省略）。
+ *
+ * 全天行每列一个 `.allday-chip`，只有首段带标题，标题宽度被那一列夹住——即使后
+ * 面几列还有空间，名称也只在第一格里排。这里在 `.timegrid__allday-cols`（相对定位）
+ * 上叠一层绝对定位标签：宽度 = 首段标题左缘 → 该条最后一段右缘（行末有「›」时再
+ * 留 12px），名称在整条里排，放不下才省略。原标题保留占位但隐藏，避免重复；
+ * 单格条（提不出更宽的空间）不动，320 档行为不变。
+ */
+export function applyAllDayRailLabels(root) {
+  const rail = root && root.querySelector ? root.querySelector('.timegrid__allday-cols') : null;
+  if (!rail) return;
+  rail.querySelectorAll('.allday-rail-label').forEach((node) => node.remove());
+  // 幂等：先恢复上一次隐藏的标题（重渲染 / 宽度变化都会重跑）。
+  for (const title of rail.querySelectorAll('.allday-chip__title')) {
+    if (title.dataset.railHidden === '1') {
+      title.style.visibility = '';
+      delete title.dataset.railHidden;
+    }
+  }
+  if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return;
+  const railRect = rail.getBoundingClientRect();
+  if (!railRect.width) return;
+  const runs = new Map();
+  for (const chip of rail.querySelectorAll('.allday-chip')) {
+    const key = chip.dataset ? chip.dataset.focusKey : null;
+    if (!key) continue;
+    const list = runs.get(key);
+    if (list) list.push(chip);
+    else runs.set(key, [chip]);
+  }
+  for (const chips of runs.values()) {
+    // 单格条没有可扩展空间，行为与之前完全一致。
+    if (chips.length < 2) continue;
+    const head = chips.find((chip) => chip.classList.contains('allday-chip--tagged'));
+    if (!head) continue;
+    const title = head.querySelector('.allday-chip__title');
+    if (!title || !title.textContent.trim()) continue;
+    const titleRect = title.getBoundingClientRect();
+    if (!titleRect.width) continue;
+    const lastChip = chips[chips.length - 1];
+    const lastRect = lastChip.getBoundingClientRect();
+    // 0.7.10（第 9 条）：行末「>」的让位已在 CSS 的 `padding-right: 16px` 里留过一次，
+    // 这里再写死 12px 就是重复计算，名称右界比真实可用宽早 12px、明明放得下也提前出
+    // 省略号。改成按最后一段的**实测** padding-right 收口（与 month.js 的 lastPadEnd 同一口径），
+    // 量不到就按 0 处理。
+    const lastStyle = window.getComputedStyle(lastChip);
+    const padEnd = parseFloat(lastStyle.paddingRight) || 0;
+    const tail = lastChip.classList.contains('chip--cont-after') ? padEnd : 0;
+    const right = Math.min(railRect.right, lastRect.right) - tail;
+    const width = Math.max(0, right - titleRect.left);
+    // 整条并不比首段宽（或只宽出不到 1px）就别换层，省掉一次重排。
+    if (width <= titleRect.width + 1) continue;
+    const titleStyle = window.getComputedStyle(title);
+    const emoji = head.querySelector('.allday-chip__tag');
+    const label = el('span', {
+      class: 'allday-rail-label',
+      text: `${emoji ? `${emoji.textContent} ` : ''}${title.textContent}`,
+      'aria-hidden': 'true',
+      style: {
+        left: `${titleRect.left - railRect.left}px`,
+        top: `${titleRect.top - railRect.top}px`,
+        width: `${width}px`,
+        height: `${titleRect.height}px`,
+        fontSize: titleStyle.fontSize,
+        lineHeight: titleStyle.lineHeight,
+        fontWeight: titleStyle.fontWeight,
+        letterSpacing: titleStyle.letterSpacing,
+        color: window.getComputedStyle(head).color,
+      },
+    });
+    rail.append(label);
+    title.dataset.railHidden = '1';
+    title.style.visibility = 'hidden';
+  }
+}
+
 function fitCompactHolidayChips(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;

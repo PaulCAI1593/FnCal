@@ -1,7 +1,8 @@
 /**
- * Time field — a text box with a dropdown of quarter-hour choices that opens
- * scrolled to, and highlighting, the field's own time. Adjusting a 9:30 start
- * to 10:00 is then a glance and a click, not a scroll down from midnight.
+ * Time field — a text box with a two-column dropdown of hours and minutes
+ * (5-minute rows) that opens scrolled to, and highlighting, the field's own
+ * time. Adjusting a 9:30 start to 10:05 is then a glance and two clicks, not a
+ * scroll down from midnight.
  *
  * Why not <input type="time"> + <datalist>: Chrome renders a datalist top-down
  * with no notion of the current value and offers no way to scroll or highlight
@@ -14,24 +15,30 @@
  * native time input and fires `change` when the user commits a different time,
  * so callers never need to know which one they got. Typing stays free-form —
  * "9", "930", "9:30p", "21:30" all land — and an off-grid time (an imported
- * 9:07) is shown and kept as typed, never snapped to the 15-minute list.
+ * 9:07) is shown and kept as typed, never snapped to the 5-minute rows.
  *
- * An end field can be told what it follows (`after`: the start time). Its
- * list then runs from the first slot after that time around the clock, each
- * choice labeled with the span it makes ("10:00 AM  1 hr"), so the times past
- * midnight sit at the bottom and read as the next morning (a 10 PM – 1 AM
- * party) instead of as times before the start. A slot equal to `after` is no
- * choice at all and is left out. Still choices, not constraints: any time can
- * be typed, and the caller decides what an earlier one means.
+ * 0.7.7（用户「时和分，分成两列选择」）：the list is two columns — 24 hours on
+ * the left, the twelve 5-minute rows on the right. Picking an hour only moves
+ * the hour (the minute is kept, rounded to the nearest 5 when it was off the
+ * grid) and leaves the list open; picking a minute commits and closes. The
+ * former single-column "after" rotation is gone with it (a two-column picker
+ * has no row order to rotate); the end field instead shows one footer line
+ * under the columns with the span from the start ("距开始 1 小时 30 分钟",
+ * "次日 · …"), fed by the caller's `spanFrom`. The footer turns red only when
+ * the end can never be legal: the same date and time as the start, or an end
+ * date before the start date (an earlier *time* on the same date is the next
+ * morning, the same rule the editor's `timeOrderProblem()` uses).
  */
 import { el } from './dom.js';
 import { t } from '../i18n/index.js';
 
-const DEFAULT_STEP = 15;
-const MINUTES_PER_DAY = 24 * 60;
-/** Rows of earlier times kept visible above the anchored slot when the list
- *  opens, so "a little earlier" is on screen as well as "a little later". */
-const CONTEXT_ROWS = 2;
+// 0.7.7（用户「时间选择每5分钟间隔，时和分，分成两列选择」）：
+// 步长 15 → 5；原来的单列 96 项换成「小时列 × 分钟列」两列。
+const DEFAULT_STEP = 5;
+const HOURS_PER_DAY = 24;
+const MINUTE_SLOTS = 12; // 00 05 … 55
+/** Rows of context kept above the anchored row when a column opens. */
+const CONTEXT_ROWS = 1;
 
 let seq = 0;
 
@@ -50,7 +57,11 @@ export function prefersNativeTimePicker() {
  *  which run before the field's own and so can't be stopped by it. */
 export function ownsEscape(target) {
   return Boolean(
-    target && typeof target.getAttribute === 'function' && target.getAttribute('aria-expanded') === 'true',
+    target && typeof target.getAttribute === 'function' &&
+      (target.getAttribute('aria-expanded') === 'true' ||
+        // 0.7.0：标签下拉（.editor__tag-list）里的选项自己处理 Escape，
+        // 不能让事件冒到对话框的捕获监听上把整个编辑器关掉。
+        (typeof target.closest === 'function' && target.closest('[data-esc-owned]'))),
   );
 }
 
@@ -111,6 +122,31 @@ export function formatDuration(minutes, { long = false } = {}) {
   return parts.join(' ');
 }
 
+/** A span in milliseconds as the footer words it — "1 小时 30 分钟",
+ *  "2 天 3 小时" — days first once the span reaches one. */
+function formatSpan(ms) {
+  const total = Math.max(0, Math.round(ms / 60_000));
+  const days = Math.floor(total / 1440);
+  const rest = total % 1440;
+  const parts = [];
+  if (days) parts.push(t('time.duration.days', { count: days }));
+  if (rest || !days) parts.push(formatDuration(rest));
+  return parts.join(' ');
+}
+
+/** "YYYY-MM-DD" + minutes since midnight → a local Date, or null when the
+ *  date text isn't one (an empty date field while editing). */
+function dateAt(date, minutes) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date ?? '').trim());
+  if (!m) return null;
+  if (minutes == null) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Math.floor(minutes / 60), minutes % 60, 0, 0);
+}
+
+function startOfDayMs(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
 /** "HH:MM" → minutes, or null. Only the wire format: free-form text goes
  *  through parseTimeText, the way a native input's `value` setter takes only
  *  a well-formed time and treats anything else as empty. */
@@ -139,30 +175,28 @@ class TimeField extends EventTarget {
    * @param {boolean|() => boolean} [opts.hour12]  12-hour display; a function
    *        is re-read whenever the field renders, so a settings change shows
    *        up the next time the field is opened
-   * @param {number} [opts.step]      minutes between dropdown choices
-   * @param {string|() => string} [opts.after]  "HH:MM" the choices follow (an
-   *        end field's start time): the list runs from the first slot after it
-   *        around the clock, each choice labeled with its span from it, and
-   *        the slot equal to it is left out. '' or null for a plain list. A
-   *        function is re-read whenever the list opens. Ignored by the native
-   *        input, which has no list.
+   * @param {number} [opts.step]      minutes between dropdown rows (default 5)
    * @param {string} [opts.className] extra classes for the root element
    * @param {boolean} [opts.native]   force the native <input type="time">
    *        (default: only on coarse-pointer devices)
+   * @param {() => ({ start: { date: string, time: string }, endDate: string })}
+   *        [opts.spanFrom]  the start side and this field's own date, for the
+   *        end field's footer line ("距开始 …"): `start.date` and `endDate` are
+   *        "YYYY-MM-DD", `start.time` is "HH:MM". The start field leaves it out.
    */
   constructor({
     label,
     hour12 = true,
     step = DEFAULT_STEP,
-    after = null,
     className = '',
     native = prefersNativeTimePicker(),
+    spanFrom = null,
   } = {}) {
     super();
     this._hour12 = hour12;
-    this._after = after;
     this._step = step;
     this._native = native;
+    this._spanFrom = spanFrom;
     this._minutes = null;
     this.el = el('div', { class: `time-field${className ? ` ${className}` : ''}` });
     if (native) this._buildNative(label);
@@ -233,35 +267,49 @@ class TimeField extends EventTarget {
       hidden: true,
       'aria-label': label ? t('time.choicesOf', { label }) : t('time.choices'),
     });
-    this.options = [];
-    for (let min = 0; min < MINUTES_PER_DAY; min += this._step) {
-      const i = this.options.length;
+    // 0.7.7：两列。左列 24 个小时，右列 12 个分钟档（00 05 … 55），各自滚动。
+    this.hourCol = el('div', { class: 'time-field__col time-field__col--hour' });
+    this.minuteCol = el('div', { class: 'time-field__col time-field__col--minute' });
+    this.hourOptions = [];
+    this.minuteOptions = [];
+    for (let h = 0; h < HOURS_PER_DAY; h++) {
       const opt = el('div', {
         class: 'time-field__option',
         role: 'option',
-        id: `${listId}-${i}`,
+        id: `${listId}-h${h}`,
         'aria-selected': 'false',
-        dataset: { min: String(min) },
+        dataset: { col: 'hour', hour: String(h) },
       });
-      opt.addEventListener('click', () => {
-        this._commitMinutes(min);
-        this._close();
-      });
-      opt.addEventListener('pointermove', () => {
-        const pos = this._posOf[i];
-        if (pos >= 0 && this._active !== pos) this._setActive(pos, { reveal: false });
-      });
-      this.options.push(opt);
-      this.list.append(opt);
+      opt.addEventListener('click', () => this._chooseHour(h));
+      opt.addEventListener('pointermove', () => this._setActive('hour', h, { reveal: false }));
+      this.hourOptions.push(opt);
+      this.hourCol.append(opt);
     }
-    // The list as shown: slot indices in display order (rotated to start after
-    // `after`, when set), and each slot's position in it (-1: left out). The
-    // highlight is a position in this order, not a slot.
-    this._order = this.options.map((_, i) => i);
-    this._posOf = this._order.slice();
-    this._afterMinutes = null;
-    this._layoutKey = null; // hour12 + after the options were last laid out for
-    this._active = -1;
+    for (let i = 0; i < MINUTE_SLOTS; i++) {
+      const minute = i * this._step;
+      const opt = el('div', {
+        class: 'time-field__option',
+        role: 'option',
+        id: `${listId}-m${minute}`,
+        'aria-selected': 'false',
+        dataset: { col: 'minute', minute: String(minute) },
+        text: pad2(minute),
+      });
+      opt.addEventListener('click', () => this._chooseMinute(minute));
+      opt.addEventListener('pointermove', () => this._setActive('minute', i, { reveal: false }));
+      this.minuteOptions.push(opt);
+      this.minuteCol.append(opt);
+    }
+    this.list.append(this.hourCol, this.minuteCol);
+    // 0.7.7（总监口径「时长提示保留，改成面板底部一行」）：结束时间才有这一行，
+    // 随高亮实时更新；同一天里早于开始是「次日」，日期早于开始或完全相同时
+    // 才是错误（红字）。
+    this.cols = el('div', { class: 'time-field__cols' });
+    this.cols.append(...this.list.childNodes);
+    this.foot = el('div', { class: 'time-field__foot', hidden: true });
+    this.list.append(this.cols, this.foot);
+    this._active = null; // { col: 'hour' | 'minute', index }
+    this._layoutKey = null;
 
     // The list floats in the top layer where the browser has one: a dialog
     // body that scrolls (both editors' do) would otherwise clip a list hanging
@@ -295,8 +343,8 @@ class TimeField extends EventTarget {
     });
     // A click on an already-focused field (say after Escape) reopens the list.
     this.input.addEventListener('click', () => this._open());
-    // The list follows what is being typed: an exact quarter-hour highlights,
-    // anything else just scrolls the list to the nearest earlier slot.
+    // The list follows what is being typed: an exact time highlights both
+    // columns, anything else just scrolls them to the nearest rows.
     this.input.addEventListener('input', () => {
       this._open();
       this._showMinutes(parseTimeText(this.input.value));
@@ -322,65 +370,20 @@ class TimeField extends EventTarget {
       this.input.value = this._minutes == null ? '' : formatTimeText(this._minutes, this._resolveHour12());
     }
     this.el.dataset.value = this.value;
+    this._updateFoot();
   }
 
-  _resolveAfter() {
-    return minutesFromValue(typeof this._after === 'function' ? this._after() : this._after);
-  }
-
-  /** Where a time sits in list order: minutes since midnight for a plain list;
-   *  with `after`, minutes forward from it around the clock, so 01:00 is 180
-   *  after 22:00 and comes after 23:45, not before 22:15. */
-  _offset(minutes) {
-    if (this._afterMinutes == null) return minutes;
-    return (minutes - this._afterMinutes + MINUTES_PER_DAY) % MINUTES_PER_DAY;
-  }
-
-  /** Position of the last choice at or before `minutes` in list order, or -1
-   *  when every choice comes after it. */
-  _positionAtOrBefore(minutes) {
-    const target = this._offset(minutes);
-    let pos = -1;
-    for (let i = 0; i < this._order.length && this._offset(this._order[i] * this._step) <= target; i++) pos = i;
-    return pos;
-  }
-
-  /** Lay the options out for the current hour12 and `after`: their order,
-   *  labels and which are shown. A no-op while neither has changed. */
+  /** Lay the hour labels out for the current hour12. A no-op while it has not
+   *  changed. The minute column reads the same in both modes ("05"). */
   _layout() {
     const hour12 = this._resolveHour12();
-    const after = this._resolveAfter();
-    const key = `${hour12}|${after}`;
+    const key = String(hour12);
     if (key === this._layoutKey) return;
-    this._setActive(-1);
     this._layoutKey = key;
-    this._afterMinutes = after;
-    const slots = this.options.map((_, i) => i);
-    if (after == null) {
-      this._order = slots;
-    } else {
-      // From the first slot after `after` around the clock. The slot equal to
-      // it would make an empty span, so it is not offered at all.
-      this._order = slots
-        .filter((i) => i * this._step !== after)
-        .sort((a, b) => this._offset(a * this._step) - this._offset(b * this._step));
+    for (let h = 0; h < HOURS_PER_DAY; h++) {
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      this.hourOptions[h].textContent = hour12 ? `${t(h < 12 ? 'time.ampm.am' : 'time.ampm.pm')}${h12}` : pad2(h);
     }
-    this._posOf = slots.map(() => -1);
-    this._order.forEach((slot, pos) => (this._posOf[slot] = pos));
-    for (const slot of this._order) {
-      const opt = this.options[slot];
-      const min = slot * this._step;
-      const time = formatTimeText(min, hour12);
-      opt.textContent = time;
-      if (after == null) {
-        opt.removeAttribute('aria-label');
-      } else {
-        const span = this._offset(min);
-        opt.append(el('span', { class: 'time-field__duration', text: formatDuration(span) }));
-        opt.setAttribute('aria-label', `${time}，${formatDuration(span, { long: true })}`);
-      }
-    }
-    this.list.replaceChildren(...this._order.map((slot) => this.options[slot]));
   }
 
   _open() {
@@ -395,6 +398,7 @@ class TimeField extends EventTarget {
     }
     this.input.setAttribute('aria-expanded', 'true');
     this._showMinutes(this._minutes);
+    this._updateFoot();
   }
 
   _close() {
@@ -406,20 +410,16 @@ class TimeField extends EventTarget {
       window.removeEventListener('resize', this._reposition);
     }
     this.input.setAttribute('aria-expanded', 'false');
-    this._setActive(-1);
+    this._setActive(null);
   }
 
   /** Place the floating list under the input — or above it when the viewport
-   *  has more room there — at least as wide as the input, and wider when the
-   *  choices' span labels need it, kept inside the viewport. */
+   *  has more room there — kept inside the viewport. 0.7.7: the two columns
+   *  are narrow (about 126px), so the panel keeps its own width instead of
+   *  stretching to the input's width. */
   _position() {
     const r = this.input.getBoundingClientRect();
     const gap = 4;
-    this.list.style.minWidth = `${r.width}px`;
-    // Room for the widest choice beside the vertical scrollbar, which sits
-    // inside the box and would otherwise cover the end of the label.
-    const need = this.list.scrollWidth + (this.list.offsetWidth - this.list.clientWidth);
-    if (need > this.list.offsetWidth) this.list.style.minWidth = `${need}px`;
     const width = this.list.offsetWidth;
     const height = this.list.offsetHeight;
     const roomBelow = window.innerHeight - r.bottom - gap;
@@ -428,55 +428,184 @@ class TimeField extends EventTarget {
     this.list.style.top = `${flip ? r.top - gap - height : r.bottom + gap}px`;
   }
 
-  /** Point the open list at a time: its slot highlighted when it is one of the
-   *  choices, and the list scrolled so the nearest earlier slot sits a couple
-   *  of rows down. With no time at all, the list opens around right now. */
+  /** Point the open list at a time: the hour and the nearest minute row are
+   *  highlighted, and both columns scroll so those rows sit a row down. With
+   *  no time at all, the list opens around right now. */
   _showMinutes(minutes) {
     const anchor = minutes == null ? nowMinutes() : minutes;
-    const anchorOpt = this.options[this._order[Math.max(0, this._positionAtOrBefore(anchor))]];
-    this.list.scrollTop = Math.max(0, anchorOpt.offsetTop - CONTEXT_ROWS * anchorOpt.offsetHeight);
-    const exact = minutes != null && minutes % this._step === 0 ? this._posOf[minutes / this._step] : -1;
-    this._setActive(exact, { reveal: false });
+    const hour = Math.floor(anchor / 60);
+    const minuteIndex = this._minuteIndex(anchor % 60);
+    this._sel = { hour, minute: minuteIndex };
+    this.hourCol.scrollTop = Math.max(0, this.hourOptions[hour].offsetTop - CONTEXT_ROWS * this.hourOptions[hour].offsetHeight);
+    this.minuteCol.scrollTop = Math.max(0, this.minuteOptions[minuteIndex].offsetTop - CONTEXT_ROWS * this.minuteOptions[minuteIndex].offsetHeight);
+    this._active = { col: 'hour', index: hour };
+    this._paint();
   }
 
-  /** Highlight the choice at position `i` in list order (-1: none). */
-  _setActive(i, { reveal = true } = {}) {
-    if (this._active >= 0) this.options[this._order[this._active]].setAttribute('aria-selected', 'false');
-    this._active = i;
-    if (i < 0) {
-      this.input.removeAttribute('aria-activedescendant');
+  /** The minute row at or before `minute` (the "5" of a typed 9:07 lights 05,
+   *  while the text itself keeps 07). */
+  _minuteIndex(minute) {
+    return Math.max(0, Math.min(MINUTE_SLOTS - 1, Math.floor(minute / this._step)));
+  }
+
+  /** Highlight the hour or minute row the keyboard is on. The other column
+   *  keeps its own highlight (a time has an hour and a minute), and
+   *  `aria-activedescendant` points at the row the keyboard is on. */
+  _setActive(active, { reveal = true } = {}) {
+    this._active = active;
+    if (!active) {
+      this._sel = null;
+      this._paint();
       return;
     }
-    const opt = this.options[this._order[i]];
-    opt.setAttribute('aria-selected', 'true');
-    this.input.setAttribute('aria-activedescendant', opt.id);
-    if (reveal) this._reveal(opt);
+    if (!this._sel) this._sel = { hour: 0, minute: 0 };
+    if (active.col === 'hour') this._sel.hour = active.index;
+    else this._sel.minute = active.index;
+    this._paint();
+    if (reveal) {
+      const opt = this._activeOption();
+      if (opt) this._reveal(opt, active.col === 'hour' ? this.hourCol : this.minuteCol);
+    }
   }
 
-  /** Scroll the list just enough to bring an option fully into view. */
-  _reveal(opt) {
+  /** Write the current selection into the DOM. */
+  _paint() {
+    const sel = this._sel;
+    this.hourOptions.forEach((opt, i) => opt.setAttribute('aria-selected', String(Boolean(sel) && sel.hour === i)));
+    this.minuteOptions.forEach((opt, i) => opt.setAttribute('aria-selected', String(Boolean(sel) && sel.minute === i)));
+    const opt = this._activeOption();
+    if (opt) this.input.setAttribute('aria-activedescendant', opt.id);
+    else this.input.removeAttribute('aria-activedescendant');
+    this._updateFoot();
+  }
+
+  /** The time the list is offering as the end: the highlighted rows when the
+   *  list is open, else the field's own time. */
+  _candidateMinutes() {
+    if (this._sel) return this._sel.hour * 60 + this._sel.minute * this._step;
+    return this._baseMinutes();
+  }
+
+  /** The span from the start to the candidate, for the end field's footer —
+   *  `null` for the start field or while either side is incomplete. An earlier
+   *  *time* on the same date reads as the next morning (the editor's
+   *  `timeOrderProblem()` treats it the same way); only the same date *and*
+   *  time, or an earlier end date, is an error. */
+  _spanInfo() {
+    if (!this._spanFrom) return null;
+    const side = this._spanFrom();
+    const start = side && side.start;
+    if (!start || !start.date || !start.time) return null;
+    const startMinutes = minutesFromValue(start.time) ?? parseTimeText(start.time);
+    if (startMinutes == null) return null;
+    const startAt = dateAt(start.date, startMinutes);
+    const endAt = dateAt(side.endDate || start.date, this._candidateMinutes());
+    if (!startAt || !endAt) return null;
+    if (endAt.getTime() === startAt.getTime()) {
+      return { tone: 'invalid', text: t('editor.error.endTimeBeforeStart') };
+    }
+    const startDay = startOfDayMs(startAt);
+    const endDay = startOfDayMs(endAt);
+    if (endDay < startDay) return { tone: 'invalid', text: t('editor.error.endBeforeStart') };
+    const nextDay = endAt < startAt;
+    const span = nextDay ? endAt.getTime() - startAt.getTime() + 86_400_000 : endAt.getTime() - startAt.getTime();
+    const duration = formatSpan(span);
+    return {
+      tone: 'ok',
+      text: nextDay ? t('time.spanNextDay', { duration }) : t('time.span', { duration }),
+    };
+  }
+
+  /** Show (end field) or hide (start field) the footer line and mirror the
+   *  invalid state onto the input, so a picked end that can never be right is
+   *  visible at once instead of only at Save. Save still checks the same rule. */
+  _updateFoot() {
+    if (!this.foot) return;
+    const info = this._spanInfo();
+    this.foot.hidden = !info;
+    if (!info) {
+      this.foot.textContent = '';
+      this.foot.classList.remove('time-field__foot--invalid');
+      this.input.removeAttribute('aria-invalid');
+      return;
+    }
+    this.foot.textContent = info.text;
+    this.foot.classList.toggle('time-field__foot--invalid', info.tone === 'invalid');
+    if (info.tone === 'invalid') this.input.setAttribute('aria-invalid', 'true');
+    else this.input.removeAttribute('aria-invalid');
+  }
+
+  /** Re-read the start side and the field's own date (the modal calls this
+   *  when either date changes, and when the start time moves). */
+  refreshSpan() {
+    this._updateFoot();
+  }
+
+  _activeOption() {
+    if (!this._active) return null;
+    return (this._active.col === 'hour' ? this.hourOptions : this.minuteOptions)[this._active.index] || null;
+  }
+
+  /** Scroll one column just enough to bring an option fully into view. */
+  _reveal(opt, col) {
     const top = opt.offsetTop;
     const bottom = top + opt.offsetHeight;
-    if (top < this.list.scrollTop) this.list.scrollTop = top;
-    else if (bottom > this.list.scrollTop + this.list.clientHeight) this.list.scrollTop = bottom - this.list.clientHeight;
+    if (top < col.scrollTop) col.scrollTop = top;
+    else if (bottom > col.scrollTop + col.clientHeight) col.scrollTop = bottom - col.clientHeight;
   }
 
-  /** Move the highlight one slot; from an off-grid time (or none), Down goes to
-   *  the next slot after it and Up to the one before, so 9:07 steps to 9:15 or
-   *  9:00 rather than skipping a quarter hour. */
+  /** The time the list is working from: what was committed, else what typed,
+   *  else right now. */
+  _baseMinutes() {
+    return this._minutes ?? parseTimeText(this.input.value) ?? nowMinutes();
+  }
+
+  /** 0.7.7（用户「时分两列」）：picking an hour keeps the minute — rounded to
+   *  the nearest 5 when it was off the grid — and leaves the panel open with
+   *  the input still focused, so the minute is one click away. */
+  _chooseHour(hour) {
+    const base = this._baseMinutes();
+    let minute = Math.round((base % 60) / this._step) * this._step;
+    let h = hour;
+    if (minute >= 60) {
+      minute -= 60;
+      h = (h + 1) % HOURS_PER_DAY;
+    }
+    this._commitMinutes(h * 60 + minute);
+    this._sel = { hour, minute: this._minuteIndex(minute) };
+    this._setActive({ col: 'hour', index: hour });
+    this.input.focus();
+  }
+
+  /** Picking a minute is the commit: it writes the time and closes the list. */
+  _chooseMinute(minute) {
+    const hour = Math.floor(this._baseMinutes() / 60);
+    this._commitMinutes(hour * 60 + minute);
+    this._close();
+  }
+
+  _switchColumn(dir) {
+    const cur = this._active && this._active.col === 'hour' ? 'hour' : 'minute';
+    const next = dir > 0 ? 'minute' : 'hour';
+    if (next === cur) return;
+    const base = this._baseMinutes();
+    this._setActive({
+      col: next,
+      index: next === 'hour' ? Math.floor(base / 60) : this._minuteIndex(base % 60),
+    });
+  }
+
+  /** Move the keyboard one row in its own column, opening the list first. */
   _move(dir) {
     this._open();
-    let next;
-    if (this._active >= 0) {
-      next = this._active + dir;
-    } else {
-      const typed = parseTimeText(this.input.value);
-      const from = typed ?? this._minutes ?? nowMinutes();
-      const at = this._positionAtOrBefore(from);
-      const exact = at >= 0 && this._offset(this._order[at] * this._step) === this._offset(from);
-      next = dir > 0 && !exact ? at + 1 : at;
-    }
-    this._setActive(Math.max(0, Math.min(this._order.length - 1, next)));
+    const base = this._baseMinutes();
+    const cur = this._active || {
+      col: 'hour',
+      index: dir > 0 ? Math.floor(base / 60) : Math.floor(base / 60),
+    };
+    const group = cur.col === 'hour' ? this.hourOptions : this.minuteOptions;
+    const next = Math.max(0, Math.min(group.length - 1, cur.index + dir));
+    this._setActive({ col: cur.col, index: next });
   }
 
   _onKeydown(e) {
@@ -487,6 +616,15 @@ class TimeField extends EventTarget {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       this._move(e.key === 'ArrowDown' ? 1 : -1);
+    } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && open) {
+      // 0.7.7：左右换列，不再在单列里翻。
+      e.preventDefault();
+      this._switchColumn(e.key === 'ArrowRight' ? 1 : -1);
+    } else if ((e.key === 'Home' || e.key === 'End') && open) {
+      e.preventDefault();
+      const cur = this._active || { col: 'hour', index: 0 };
+      const group = cur.col === 'hour' ? this.hourOptions : this.minuteOptions;
+      this._setActive({ col: cur.col, index: e.key === 'Home' ? 0 : group.length - 1 });
     } else if (e.key === 'Enter') {
       if (!open) {
         // Closed list: commit what was typed and let the form's own Enter
@@ -496,9 +634,10 @@ class TimeField extends EventTarget {
       }
       // Open list: Enter picks — it must not also submit the form.
       e.preventDefault();
-      if (this._active >= 0) this._commitMinutes(this._order[this._active] * this._step);
-      else this._commitText();
-      this._close();
+      if (!this._active) this._commitText();
+      else if (this._active.col === 'hour') this._chooseHour(this._active.index);
+      else this._chooseMinute(this._active.index * this._step);
+      if (this._active && this._active.col === 'minute') this._close();
     } else if (e.key === 'Escape' && open) {
       // Ours, not the dialog's: drop any half-typed text and close the list
       // only. (The dialogs' document-level Escape handlers defer to an

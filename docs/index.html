@@ -315,7 +315,7 @@
   .asset .btn { min-height: 40px; padding: 0 18px; font-size: var(--t-md); }
   /* 下载按钮下面一行小字：同一个包的 Gitee 镜像 */
   .asset__act { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-  .asset__mirror { font-size: var(--t-xs); color: var(--ink-3); text-decoration: none; }
+  .asset__mirror { font-size: var(--t-xs); color: var(--ink-3); text-decoration: none; display: inline-flex; align-items: center; min-height: 24px; }
   .asset__mirror:hover { color: var(--accent); text-decoration: underline; }
 
   /* FAQ */
@@ -375,6 +375,7 @@
     table.perm td:first-child { font-family: var(--mono); font-size: var(--t-xs); letter-spacing: .04em; color: var(--ink-3); white-space: normal; }
     table.perm td:nth-child(2) { color: var(--ink); font-weight: 600; margin-top: 2px; }
     table.perm td:nth-child(3) { margin-top: 4px; color: var(--ink-2); }
+    code { white-space: normal; overflow-wrap: anywhere; }
   }
 
   /* 特色卡片 */
@@ -440,22 +441,22 @@
 </header>
 <main>
   <section class="hero wrap">
-    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.6.15</p>
+    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.7.10</p>
     <h1>日历留在自己的 NAS 上</h1>
     <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
-      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.15/FnCal-0.6.15.fpk">下载安装包 0.6.15</a>
+      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.10/FnCal-0.7.10.fpk">下载安装包 0.7.10</a>
       <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.7/FnCal-Android-0.3.7.apk">下载安卓 APK 0.3.7</a>
-      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/skill-v0.6.14/FnCal-MCP-Skill-0.6.14.zip">下载 AI 技能包</a>
-      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.15/SHA256SUMS.txt">下载校验文件</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/skill-v0.7.10/FnCal-MCP-Skill-0.7.10.zip">下载 AI 技能包</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.10/SHA256SUMS.txt">下载校验文件</a>
     </div>
     <p style="margin-top:12px;font-size:var(--t-sm);color:var(--ink-3)">国内访问慢时可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>，内容与 GitHub 相同。</p>
-    <p style="margin-top:16px;font-size:var(--t-md);color:var(--ink-3)">安装包 749,375 B · 安卓 APK 980,649 B · 技能包 26,420 B · 校验文件 83 B。先看 <a href="#ai-abilities">两条 AI 能力</a>、<a href="#ai">提案与审批</a> 与 <a href="#features">六条特色</a>。</p>
+    <p style="margin-top:16px;font-size:var(--t-md);color:var(--ink-3)">安装包 787,519 B · 安卓 APK 980,649 B · 技能包 28,362 B · 校验文件 83 B。先看 <a href="#ai-abilities">两条 AI 能力</a>、<a href="#ai">提案与审批</a> 与 <a href="#features">六条特色</a>。</p>
     <dl class="spec">
       <div><dt>协议</dt><dd>CalDAV · RFC 4791</dd></div>
       <div><dt>数据</dt><dd>本机 <code>/vol1/<wbr>@appdata/<wbr>FnCal/</code></dd></div>
       <div><dt>许可</dt><dd>MIT</dd></div>
-      <div><dt>体积</dt><dd>749,375 B</dd></div>
+      <div><dt>体积</dt><dd>787,519 B</dd></div>
     </dl>
     <figure class="shot">
       <div class="shot__frame">
@@ -694,9 +695,9 @@
         </article>
         <article class="card">
           <p class="card__n">06</p>
-          <h3>安卓端与桌面卡片</h3>
-          <p>安卓外壳直接连自己的 NAS，登录后即用。</p>
-          <p>桌面可放五款只读卡片：迷你月历、当日日程、月视图、四日视图、日程列表，跟随登录态自动刷新。</p>
+          <h3>多标签系统</h3>
+          <p>给日程和任务挂一个 emoji 标签，分组管理、拖动排序，一个日程只挂一个。</p>
+          <p>月视图、周 / 四日 / 日、日程列表与搜索都显示「emoji + 名称」，可按标签筛选，导出写进 <code>CATEGORIES</code>。</p>
         </article>
       </div>
       <div class="views" aria-label="视图">
@@ -748,7 +749,7 @@
           <p>飞牛 OS 用户走应用中心；其他环境用 Docker。装之前先核对包的 SHA-256。</p>
         </div>
         <ol class="steps">
-          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.15/FnCal-0.6.15.fpk">Release 下载 <code>FnCal-0.6.15.fpk</code></a>（国内慢可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>），核对哈希后再装。</div></li>
+          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.10/FnCal-0.7.10.fpk">Release 下载 <code>FnCal-0.7.10.fpk</code></a>（国内慢可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>），核对哈希后再装。</div></li>
           <li><div><strong>安装向导</strong><br>填一个空闲端口（1024 以上，避开 5232）与管理员用户名、密码；两步都必填。</div></li>
           <li><div><strong>打开并登录</strong><br>装完点桌面图标，浏览器新标签打开 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用刚设的账号登录。</div></li>
         </ol>
@@ -762,13 +763,13 @@
       </div>
       <div>
         <pre class="code"><span># 先核对哈希（Linux / macOS）</span>
-sha256sum FnCal-0.6.15.fpk
+sha256sum FnCal-0.7.10.fpk
 
 <span># Windows PowerShell</span>
-Get-FileHash .\FnCal-0.6.15.fpk -Algorithm SHA256
+Get-FileHash .\FnCal-0.7.10.fpk -Algorithm SHA256
 
 <span># 期望值</span>
-FE2FC65094842A29BA99AC954D40A3778D12C0ED320F50E5F80A933DCB83975B</pre>
+8EC749B334FE5703DAB0A804FDEEF0584758188F9B0C34B4770920D8F787FB38</pre>
         <div class="callout">
           <strong>对公网开放时请套 HTTPS 反向代理。</strong>FnCal 不做来源 IP 白名单：谁能访问这个端口，谁就能看到登录页。限流、CSRF 与会话安全始终开启。
         </div>
@@ -799,7 +800,7 @@ FE2FC65094842A29BA99AC954D40A3778D12C0ED320F50E5F80A933DCB83975B</pre>
           <pre class="code code--wrap">读这份文件，当作我的 FnCal 日历使用说明，读完记住：
 https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
 拉完告诉我版本号，后面的操作按这份说明来。</pre>
-          这个地址打不开，就让它换 <a href="https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md">GitHub 源</a>。客户端不能联网，就用 Release 里的 <code>FnCal-MCP-Skill-0.6.14.zip</code> 解压给它。
+          这个地址打不开，就让它换 <a href="https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md">GitHub 源</a>。客户端不能联网，就用 Release 里的 <code>FnCal-MCP-Skill-0.7.10.zip</code> 解压给它。
         </div></li>
         <li><div>
           <strong>填地址与令牌</strong><br>
@@ -839,7 +840,7 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
         </div>
         <div class="feat__row">
           <dt>403 · UA</dt>
-          <dd>正文含 <code>browser_signature_banned</code>：前面的 Cloudflare 拦了客户端默认 User-Agent。给客户端设一个普通 UA，例如 <code>FnCal-MCP/0.6.15</code>，再重试。</dd>
+          <dd>正文含 <code>browser_signature_banned</code>：前面的 Cloudflare 拦了客户端默认 User-Agent。给客户端设一个普通 UA，例如 <code>FnCal-MCP/0.7.10</code>，再重试。</dd>
         </div>
         <div class="feat__row">
           <dt>429</dt>
@@ -955,16 +956,16 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
       <div class="sec__head">
         <p class="kicker">Releases</p>
         <h2>版本与下载</h2>
-        <p>当前版本 0.6.15（2026-11-09）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
+        <p>当前版本 0.7.10（2026-11-10）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
       </div>
       <div class="assets">
         <div class="asset">
-          <div class="asset__name">安装包 <code>FnCal-0.6.15.fpk</code></div>
+          <div class="asset__name">安装包 <code>FnCal-0.7.10.fpk</code></div>
           <div class="asset__act">
-            <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.6.15.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.15/FnCal-0.6.15.fpk">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安装包 FnCal-0.6.15.fpk" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.6.15/FnCal-0.6.15.fpk">Gitee 镜像</a>
+            <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.7.10.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.10/FnCal-0.7.10.fpk">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安装包 FnCal-0.7.10.fpk" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.7.10/FnCal-0.7.10.fpk">Gitee 镜像</a>
           </div>
-          <div class="asset__meta">737,865 B · SHA-256 FE2FC65094842A29BA99AC954D40A3778D12C0ED320F50E5F80A933DCB83975B</div>
+          <div class="asset__meta">787,519 B · SHA-256 8EC749B334FE5703DAB0A804FDEEF0584758188F9B0C34B4770920D8F787FB38</div>
         </div>
         <div class="asset">
           <div class="asset__name">安卓 APK <code>FnCal-Android-0.3.7.apk</code></div>
@@ -975,37 +976,34 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
           <div class="asset__meta">980,649 B · SHA-256 efb5379ac7f7519edcb490a8aac7ed074cf6c6117a42043172ef9783371ba529 · release 构建，约为上一版四分之一，直接覆盖 0.3.6</div>
         </div>
         <div class="asset">
-          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.6.14.zip</code></div>
+          <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.7.10.zip</code></div>
           <div class="asset__act">
-            <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.6.14.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/skill-v0.6.14/FnCal-MCP-Skill-0.6.14.zip">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载 AI 技能包 FnCal-MCP-Skill-0.6.14.zip" href="https://gitee.com/Paul1593/FnCal/releases/download/skill-v0.6.14/FnCal-MCP-Skill-0.6.14.zip">Gitee 镜像</a>
+            <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.7.10.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/skill-v0.7.10/FnCal-MCP-Skill-0.7.10.zip">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载 AI 技能包 FnCal-MCP-Skill-0.7.10.zip" href="https://gitee.com/Paul1593/FnCal/releases/download/skill-v0.7.10/FnCal-MCP-Skill-0.7.10.zip">Gitee 镜像</a>
           </div>
-          <div class="asset__meta">26,490 B · SHA-256 AA1DBDD71432D69FEC49EDA878991B91304C66CA8B9264DDC8AD8B9E08A210FD</div>
+          <div class="asset__meta">28,362 B · SHA-256 F3E8E0E9C75D22C893803FEFE6FFEEF1E2773FE3962D1701DA10F8383D55BF6B</div>
         </div>
         <div class="asset">
           <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
           <div class="asset__act">
-            <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.6.15/SHA256SUMS.txt">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载校验文件 SHA256SUMS.txt" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.6.15/SHA256SUMS.txt">Gitee 镜像</a>
+            <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.10/SHA256SUMS.txt">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载校验文件 SHA256SUMS.txt" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.7.10/SHA256SUMS.txt">Gitee 镜像</a>
           </div>
           <div class="asset__meta">83 B · 只含网页安装包一行的哈希</div>
         </div>
       </div>
-      <h3 class="sub">0.6.15 改了什么</h3>
+      <h3 class="sub">0.7.10 改了什么</h3>
       <ul class="rules">
-        <li><strong>审批页可以一键关闭。</strong>待确认条目为 0 时页面底部出现「关闭页面」；浏览器拒绝脚本关标签页时，按钮原位改成「请手动关闭此标签页」。还有待确认条目的页面不出现这个按钮。</li>
-        <li><strong>快捷键搬进头像菜单。</strong>设置回到三个页签；头像菜单在「我的安全」与「立即同步」之间新增「快捷键」，点开是 13 条按键说明，Esc、点遮罩、点「关闭」都能关。</li>
-        <li><strong>日程列表的节日与节气也带图标了。</strong>节日是旗子配主题色，节气是太阳配主题色的互补色；图标只用继承色，所以图标与文字必然同色。</li>
-        <li><strong>六处界面的节日、节气配色统一。</strong>月视图日号行、周 / 四日 / 日全天条、日程列表日期列、日程列表事件行、事件详情卡都对同一套规则；详情卡的节日图标此前是灰色。</li>
-        <li><strong>日程列表日期列不再折行。</strong>「周日 · 11月」保持单行，窄屏只降一档字号并收字距，不把「月」折到下一行。</li>
-        <li><strong>手机月视图的节日、节气名不再只剩一个字。</strong>承载盒改按缩放前的自然宽计算，与农历共用同一条截断链路（0.6.10）。</li>
-        <li><strong>迷你月历只留日号与事件点。</strong>去掉了农历、节日、节气那行小字（0.6.9）。</li>
-        <li><strong>设置页的遮挡修完。</strong>AI 凭据编辑器的保存条不再被「全部设为」压住，滚到底就是最后一行内容；「读写」不折行（0.6.9）。</li>
-        <li><strong>新增二十四节气。</strong>本地按太阳黄经算，不联网；同一格只显示一个，节日优先；设置里在「农历」下面有开关（0.6.6）。</li>
-        <li><strong>检查更新收成两个源。</strong>Gitee 镜像在前、GitHub 在后，删掉第三方代理与 jsDelivr（0.6.8）。</li>
-        <li><strong>其它。</strong>桌面搜索打开时有模糊遮罩；年月弹窗连点不再叠加；侧栏收起再展开后跨天条不再错位；关于页脚「项目仓库」改为「项目介绍」（0.6.5–0.6.9）。</li>
+        <li><strong>标签系统。</strong>设置里管理标签：emoji、名称、分组，可拖动排序、折叠分组；一个日程或任务只挂一个标签。月视图、周 / 四日 / 日、日程列表与搜索都显示「emoji + 名称」，窄到放不下名称时只留 emoji。筛选可按标签多选，也能只看「无标签」。导出写进 <code>CATEGORIES</code>，标准客户端也能看到 emoji。</li>
+        <li><strong>月格名称按实际宽度显示。</strong>门槛从「3 个字宽」改为按本格可用宽：放得下就显示、放不下才出省略号；单日全天在条内直接画 emoji，不再交给跨天条标签层。</li>
+        <li><strong>折叠按每格实测高度算。</strong>「还有 N 个」也占一行，每格单独计算；按钮视觉高压到 18px、点按区仍是 44×44。390 宽的一格从「3 条 + 还有 2 个」变成「4 条 + 还有 1 个」。完整文案放不下时显示「+N」，读屏与悬停仍有全文。</li>
+        <li><strong>日号行与「今天」胶囊。</strong>胶囊贴格内右缘、不被裁；农历与节日名保持完整，逐格缩放，11/22 的「小雪」不再只剩一个字。</li>
+        <li><strong>周 / 四日 / 日。</strong>跨天定时事件按开始结束时间裁进当天时间轴（如 23:30 → 次日 00:30 显示成两块），只有全天事件留在全天行；多日连条整条画一次名称；行末收口按实测内距。</li>
+        <li><strong>时间与输入。</strong>时间选择每 5 分钟一档、时与分两列；结束面板显示距开始时长，跨天写「次日 · …」；名称与地点输入时给出历史候选。</li>
+        <li><strong>触控。</strong>有触控能力的设备都能手指左右切视图，平板不再受窗口宽度限制；鼠标不触发，日程列表与弹层内不触发。</li>
+        <li><strong>界面细节。</strong>标签下拉改为自绘，点外部关闭、每次打开全展开；emoji 面板取消分页，每组一屏内滚动；色块选中的白点居中。</li>
       </ul>
-      <p style="margin-top:8px;font-size:var(--t-sm);color:var(--ink-3)">0.5.13 至 0.6.14 是测试包，未对外发布，内容已并入本版。</p>
+      <p style="margin-top:8px;font-size:var(--t-sm);color:var(--ink-3)">0.7.0 至 0.7.9 是测试包，未对外发布，内容已并入本版；0.6.11 与 0.6.15 已对外发布。</p>
     </div>
   </section>
 </main>

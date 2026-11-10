@@ -17,6 +17,7 @@
  * 所有可见文案走 i18n；按钮 ≤4 汉字。
  */
 import { el, clear } from './dom.js';
+import { enhanceSelect } from './select-listbox.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
 import { mountDialog } from './recurrence-dialog.js';
@@ -180,7 +181,7 @@ export function openAdminUsersDialog({ currentUser, onSelfUpdated } = {}) {
         el('div', { class: 'field' }, [el('label', { class: 'field__label', text: t('admin.create.username') }), usernameInput]),
         el('div', { class: 'field' }, [el('label', { class: 'field__label', text: t('admin.create.displayName') }), displayInput]),
         el('div', { class: 'field' }, [el('label', { class: 'field__label', text: t('admin.create.password') }), passwordInput]),
-        el('div', { class: 'field' }, [el('label', { class: 'field__label', text: t('admin.create.role') }), roleSelect]),
+        el('div', { class: 'field' }, [el('label', { class: 'field__label', text: t('admin.create.role') }), enhanceSelect(roleSelect)?.wrapper || roleSelect]),
       ]),
       createError,
       el('div', { class: 'admin-reset__actions' }, [

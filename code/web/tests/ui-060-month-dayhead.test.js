@@ -230,7 +230,8 @@ describe('0.5.10 S1：≤520 农历与日号同一行；节日只留名字', () 
     expect(block).toMatch(/\.month__dayhead \{[\s\S]*?flex-wrap: nowrap/);
     expect(block).toMatch(/\.month__dayhead \{[\s\S]*?width: 100%/);
     expect(block).toMatch(/\.month__holiday-icon \{[\s\S]*?display: none/);
-    // 0.5.11（用户）：「节日名一律不显示省略号」——手机档节日名改为 clip，不再画「…」。
+    // 0.7.8（最终口径 m04435，用户「不用省略，当中还空着，调整一下位置就可以了」）：
+    // 节日名保持完整（clip 兜底，不省略）；空间由「今天」胶囊内收 + month.js 负外边距吸收。
     expect(block).toMatch(/\.month__holiday-name \{[\s\S]*?text-overflow: clip/);
     expect(block).toMatch(/\.month__holiday-name \{[\s\S]*?white-space: nowrap/);
     // 0.5.18（W3）口径变更：旧的两套变量（农历 12px×--lunar-scale 0.8、节日 10px×--holiday-scale 1）
@@ -244,9 +245,9 @@ describe('0.5.10 S1：≤520 农历与日号同一行；节日只留名字', () 
     );
     expect(block).not.toMatch(/--holiday-scale/);
     expect(block).not.toMatch(/--lunar-scale/);
-    // 0.5.18（W3）：承载盒宽度由 JS 写成「自然宽 × scale」（布局宽 = 视觉宽）。
-    // 若承载盒仍可被 flex 压窄（旧 flex: 0 1 auto / 1 1 auto），布局宽会小于视觉宽 → 末字被裁，
-    // 所以两处都必须是 0 0 auto（不放大、不收缩）。
+    // 0.5.18（W3）：承载盒宽度由 JS 写成「自然宽 × scale」。
+    // 0.7.8（最终口径 m04435）：农历/节日名不省略也不收缩，日号胶囊 flex: none 不压缩；
+    // 两个承载盒保持 0 0 auto（不收缩、不放大），间距由「今天」胶囊内收与负外边距吸收。
     expect(block).toMatch(/\.month__holiday \{[\s\S]*?flex: 0 0 auto/);
     expect(block).toMatch(/\.month__lunar--inline \{[\s\S]*?flex: 0 0 auto/);
     expect(block).toMatch(/\.month__lunar-text \{[\s\S]*?white-space: nowrap/);
@@ -306,12 +307,15 @@ describe('0.5.10 S1 细则：窄格优先缩字号（不折行、不省略）', 
       afterMount();
       // 0.5.18（W3）口径变更：scale 写在日号行容器上（一格一个值，农历与节日名共用），
       // 不再写在文字节点上、也不再分 --lunar-scale / --holiday-scale 两套。
-      expect(head.style.getPropertyValue('--dayhead-scale')).toBe('0.598');
+      // 0.7.10（用户：「小雪」被裁、「立冬」完整）：逐格算比例时向下取 3 位小数，
+      // 28.7 / 48 = 0.59792 → 0.597（不再 toFixed 上舍入成 0.598，否则下一轮会被
+      // 重新判成放不下而改走截断）。写进容器的值因此从 0.598 变 0.597。
+      expect(head.style.getPropertyValue('--dayhead-scale')).toBe('0.597');
       expect(label.style.getPropertyValue('--dayhead-scale')).toBe('');
       // 0.6.10 起（真机 393 DPR 2.75 裁掉末字）：承载盒按**缩放前**的自然宽给宽，
-      // 上限 = 可用宽 ÷ scale；48 自然宽 → min(49, 49) = 49，缩放后 29.3，仍 ≤ 可用 29.7。
+      // 上限 = 可用宽 ÷ scale；48 自然宽 → min(49, 48+1) = 49，缩放后 29.3，仍 ≤ 可用 29.7。
       expect(host.style.width).toBe('49px');
-      expect(Math.abs(parseFloat(host.style.width) * 0.598 - 48 * 0.598)).toBeLessThanOrEqual(2);
+      expect(Math.abs(parseFloat(host.style.width) * 0.597 - 48 * 0.597)).toBeLessThanOrEqual(2);
       // 更窄的一格必然更小：可用 28.7 / 自然 60 = 0.478 → 触底 0.5，并切到省略模式
       stubHeadGeometry(head, daynum, label, { headW: 45.7, numW: 14, naturalW: 60 });
       afterMount();
@@ -412,9 +416,10 @@ describe('0.5.10 S1 细则：窄格优先缩字号（不折行、不省略）', 
       expect(lunarHead.style.getPropertyValue('--dayhead-scale')).toBe('');
       // 源码层：fitCompactDayheads 只在 compact 里跑；下限 0.5 硬编码；宽度写「自然宽 × scale」
       expect(monthJs).toMatch(/function fitCompactDayheads\(root\)/);
-      // 0.5.21（W1）：先算整页统一值，再统一写入；不再逐格各用各的 scale。
-      expect(monthJs).toMatch(/const uniform = Math\.min\(/);
-      expect(monthJs).toMatch(/const scale = Math\.max\(0\.5, Math\.min\(1, uniform\)\);/);
+      // 0.7.10（用户：11/22「小雪」被裁、11/7「立冬」完整）：缩放改成逐格按本格
+      // 可用宽算比例，不再取整页统一最小值——宽格不会跟着最紧的一格一起缩。
+      expect(monthJs).not.toMatch(/const uniform = Math\.min\(/);
+      expect(monthJs).toMatch(/const scale = Math\.max\(0\.5, Math\.min\(1, Math\.floor\(entry\.ratio \* 1000\) \/ 1000\)\);/);
       // 0.6.7 起了 1px 保护边；0.6.10 起承载盒按缩放前的自然宽给宽，上限 = usable ÷ scale。
       expect(monthJs).toMatch(/Math\.ceil\(entry\.natural\) \+ DAYHEAD_SLACK/);
       expect(monthJs).toMatch(/Math\.floor\(entry\.usable \/ scale\) \+ DAYHEAD_SLACK/);
@@ -457,9 +462,11 @@ describe('0.5.21 W1：整页日号行取同一个缩放值', () => {
         naturalW: 40,
       });
       afterMount();
-      expect(narrow.head.style.getPropertyValue('--dayhead-scale')).toBe('0.598');
-      expect(wide.head.style.getPropertyValue('--dayhead-scale')).toBe('0.598');
-      // 0.6.10 起：承载盒按缩放前的自然宽给宽 = 40 + 1 = 41（视觉宽 41 × 0.598 = 24.5）
+      // 0.7.10：逐格算——窄格 0.597；宽格可用 59 / 自然 40 = 1.475（> 1），本格不需要
+      // 缩放，所以不写变量（容器取默认 1），不再被窄格拖到 0.598。
+      expect(narrow.head.style.getPropertyValue('--dayhead-scale')).toBe('0.597');
+      expect(wide.head.style.getPropertyValue('--dayhead-scale')).toBe('');
+      // 0.6.10 起：承载盒按缩放前的自然宽给宽 = 40 + 1 = 41（视觉宽 41 × 1 = 41 ≤ 可用 59）
       expect(wide.host.style.width).toBe('41px');
       expect(wide.label.classList.contains('is-truncated')).toBe(false);
     } finally {
@@ -483,10 +490,11 @@ describe('0.5.21 W1：整页日号行取同一个缩放值', () => {
         naturalW: 40,
       });
       afterMount();
-      // 整页统一 0.500；只有放不下的那一格进入省略模式。
+      // 0.7.10：逐格算——放不下的那格触底 0.500 并进入省略模式；宽格本格放得下、
+      // 比例 ≥ 1，不再被统一值压到 0.5（变量为空 = 用默认 1）。
       expect(tooNarrow.head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
       expect(tooNarrow.label.classList.contains('is-truncated')).toBe(true);
-      expect(normal.head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
+      expect(normal.head.style.getPropertyValue('--dayhead-scale')).toBe('');
       expect(normal.label.classList.contains('is-truncated')).toBe(false);
       // 0.6.10 起：放得下就按缩放前自然宽给盒（40 + 1），不再写 40 × 0.5 + 1。
       expect(normal.host.style.width).toBe('41px');

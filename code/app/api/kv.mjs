@@ -28,6 +28,7 @@
 import { createHash } from 'node:crypto';
 
 import { eventFromIcs, eventToIcs, taskFromIcs, taskToIcs } from '../lib/ical.mjs';
+import { applyTagToSummary, categoryTagName, firstGrapheme, tagCategoryLabel } from '../lib/tags.mjs';
 import { normalizeSettings } from '../lib/settings.mjs';
 import { currentContext } from '../lib/request-context.mjs';
 import { sendJsonEtag } from '../lib/etag.mjs';
@@ -89,7 +90,7 @@ function readBody(req, limit = 1024 * 1024) {
 
 const typeOfMeta = (meta) => (meta && meta.type === 'vtodo' ? 'vtodo' : 'vevent');
 
-export function createKvApi({ store }) {
+export function createKvApi({ store, tags = null }) {
   /**
    * Resolve any accepted key shape to `{calendarId, kind, id, legacy}`.
    * kind: 'evt' | 'task'. Returns null for keys this module does not own.
@@ -159,9 +160,11 @@ export function createKvApi({ store }) {
     const isTodo = /BEGIN:VTODO/.test(object.content);
     if ((target.kind === 'task') !== isTodo) return null;
     if (target.kind === 'task') {
-      return { value: legacyValue({ ...taskFromIcs(object.content), id: target.id }, calendarId), etag: object.etag };
+      const value = legacyValue({ ...taskFromIcs(object.content), id: target.id }, calendarId);
+      return { value: await tagFromCategories(value), etag: object.etag };
     }
-    return { value: legacyValue({ ...(await eventFromIcs(object.content)), id: target.id }, calendarId), etag: object.etag };
+    const value = legacyValue({ ...(await eventFromIcs(object.content)), id: target.id }, calendarId);
+    return { value: await tagFromCategories(value), etag: object.etag };
   }
 
   /**
@@ -195,6 +198,9 @@ export function createKvApi({ store }) {
     if (value.categories === undefined && Array.isArray(previous.categories) && previous.categories.length) {
       out.categories = previous.categories;
     }
+    // 0.7.0 标签：老客户端保存时不知道 `tagId`，不能因此把标签丢掉。
+    // 显式传 `tagId: ''`（清空标签）时不继承，写出端就不再写 `X-FNCAL-TAG`。
+    if (value.tagId === undefined && previous.tagId) out.tagId = previous.tagId;
     // 0.2.0 预留（0.2.1 共享日历显示创建者）：创建者一旦写入就不再被编辑覆盖。
     if (value.createdBy === undefined && previous.createdBy) {
       out.createdBy = previous.createdBy;
@@ -206,6 +212,107 @@ export function createKvApi({ store }) {
       }
     }
     return out;
+  }
+
+  /**
+   * 0.7.1（K）：保存时把标签名写进 `CATEGORIES`，emoji 写进标题开头（K.1/K.2）。
+   *
+   * - 有 `tagId`：按 id 找标签，命中的那一条分类改成**标签名**（其余分类顺序不动）；
+   *   找不到就原样保留，交给旧数据按名称匹配。
+   * - 没有 `tagId` 但有 `categories[0]`：按「`emoji 名称` → `emoji名称` → 只比名称」
+   *   宽松匹配（I 项保留）；都对不上就补一个标签（开头能解析出 emoji 就带上）。
+   *   这样导入/外部写入的事件能自动进入标签注册表，而不是只有 id 绑定才算数。
+   * - 没有标签模块或没有分类：原样返回。
+   *
+   * 标题的 emoji 前缀不在本函数里拼，由 `applyTagToSummary` 在写路径统一处理。
+   */
+  async function applyTagFields(value, prevTag = null) {
+    if (!tags || !value || typeof value !== 'object') return value;
+    const tagId = typeof value.tagId === 'string' ? value.tagId.trim() : '';
+    const categories = Array.isArray(value.categories) ? value.categories.map(String) : [];
+    // 显式传 `tagId: ''` = 取消标签：只删原标签那一条分类，其余分类原样保留。
+    const explicitClear = Object.prototype.hasOwnProperty.call(value, 'tagId') && !tagId;
+    if (explicitClear) {
+      const prevName = prevTag ? prevTag.name : '';
+      return {
+        ...value,
+        tagId: '',
+        categories: prevName
+          ? categories.filter((item) => categoryTagName(item) !== prevName)
+          : categories,
+      };
+    }
+    if (tagId) {
+      const tag = await tags.resolve(tagId);
+      if (!tag) return value;
+      const label = tagCategoryLabel(tag);
+      const targets = new Set([tag.name]);
+      if (prevTag && prevTag.name) targets.add(prevTag.name);
+      // 换标签：命中「新标签名」或「原标签名」的那一条在原位换掉，其余分类与顺序不动。
+      const next = [];
+      let replaced = false;
+      for (const item of categories) {
+        if (targets.has(categoryTagName(item))) {
+          if (!replaced) {
+            next.push(label);
+            replaced = true;
+          }
+          continue;
+        }
+        next.push(item);
+      }
+      if (!replaced) next.unshift(label);
+      return { ...value, tagId: tag.id, categories: next };
+    }
+    const first = categories[0];
+    if (!first) return value;
+    // 保存路径不凭任意分类值新建标签：导入补标签放在回读路径，
+    // 否则手工分类（如「部门活动」）会被误当成标签。
+    const tag = await tags.resolve(first);
+    if (!tag) return value;
+    return { ...value, tagId: tag.id, categories: [tagCategoryLabel(tag), ...categories.slice(1)] };
+  }
+
+  /**
+   * 0.7.1 H/I：回读时按 `CATEGORIES` 认标签。
+   *
+   * 外部客户端（CalDAV 直写、导入）只写 `CATEGORIES`，没有 `X-FNCAL-TAG`。
+   * 这里按「`emoji 名称` / 只写名称」匹配已有标签；匹配不到就补一个
+   * （开头能解析出 emoji 就带上），下次保存即按新规则写出。
+   * 只认第一条分类，其余分类原样留在记录里。
+   */
+  async function tagFromCategories(value) {
+    if (!tags || !value || typeof value !== 'object') return value;
+    if (typeof value.tagId === 'string' && value.tagId.trim()) return value;
+    const categories = Array.isArray(value.categories) ? value.categories.map(String) : [];
+    const first = categories[0];
+    if (first) {
+      const tag = await tags.ensureForCategory(first);
+      if (tag) return { ...value, tagId: tag.id };
+    }
+    // K.6：分类匹配不到时，再看标题首字素的 emoji 是否等于某个标签的 emoji。
+    // 只挂标签，标题保持原样。
+    const emoji = firstGrapheme(value.title);
+    if (!emoji) return value;
+    const byEmoji = await tags.findByEmoji(emoji);
+    return byEmoji ? { ...value, tagId: byEmoji.id } : value;
+  }
+
+  /**
+   * 0.7.1 K.2：保存前取「这条记录原来挂的标签」，用来判换标签/取消标签。
+   * 事件与任务共用；读不到就按没有旧标签处理。
+   */
+  async function previousTagOf(calendarId, id, isTask) {
+    if (!tags) return null;
+    try {
+      const current = await store.getEvent(calendarId, `${id}.ics`);
+      if (!current) return null;
+      const record = isTask ? taskFromIcs(current.content) : await eventFromIcs(current.content);
+      const tagId = typeof record.tagId === 'string' ? record.tagId.trim() : '';
+      return tagId ? tags.resolve(tagId) : null;
+    } catch {
+      return null;
+    }
   }
 
   async function writeOne(key, value) {
@@ -248,7 +355,14 @@ export function createKvApi({ store }) {
         || (ctx && ctx.userId
           ? { uid: ctx.userId, username: ctx.username || '', displayName: ctx.displayName || ctx.username || '' }
           : null);
-      const ics = eventToIcs({ ...extras, ...value, calendarId: undefined, createdBy, id: target.id, uid: undefined });
+      // 0.7.1 K：分类只写标签名；标题由 applyTagToSummary 同步 emoji 前缀。
+      const prevTag = await previousTagOf(target.calendarId, target.id, false);
+      const tagged = await applyTagFields({ ...extras, ...value }, prevTag);
+      const nextTag = tagged.tagId ? await tags.resolve(tagged.tagId) : null;
+      if (typeof tagged.title === 'string') {
+        tagged.title = applyTagToSummary(tagged.title, nextTag, prevTag);
+      }
+      const ics = eventToIcs({ ...tagged, calendarId: undefined, createdBy, id: target.id, uid: undefined });
       const result = await store.putEvent(target.calendarId, `${target.id}.ics`, ics);
       return { etag: result.etag, created: result.created, calendarId: target.calendarId };
     }
@@ -262,7 +376,14 @@ export function createKvApi({ store }) {
       || (ctx && ctx.userId
         ? { uid: ctx.userId, username: ctx.username || '', displayName: ctx.displayName || ctx.username || '' }
         : null);
-    const ics = taskToIcs({ ...value, calendarId: undefined, createdBy, id: target.id, uid: undefined });
+    // 0.7.1 K：任务同事件——分类只写标签名，标题补/换/删 emoji 前缀。
+    const prevTag = await previousTagOf(target.calendarId, target.id, true);
+    const tagged = await applyTagFields(value, prevTag);
+    const nextTag = tagged.tagId ? await tags.resolve(tagged.tagId) : null;
+    if (typeof tagged.title === 'string') {
+      tagged.title = applyTagToSummary(tagged.title, nextTag, prevTag);
+    }
+    const ics = taskToIcs({ ...tagged, calendarId: undefined, createdBy, id: target.id, uid: undefined });
     const result = await store.putEvent(target.calendarId, `${target.id}.ics`, ics);
     return { etag: result.etag, created: result.created, calendarId: target.calendarId };
   }

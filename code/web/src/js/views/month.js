@@ -8,6 +8,9 @@ import { icon } from '../icons.js';
 import { draggable } from '../drag.js';
 import { createEdgePan } from '../edge-autopan.js';
 import { colorHex, colorFg } from '../colors.js';
+// 0.7.0（用户）：月格事件条显示标签「emoji 名称」；窄档只留 emoji。
+import { tagForRecord } from '../store.js';
+import { applyTagDisplayLadder, splitTagTitle, tagHourText } from '../tag-display.js';
 import { t } from '../../i18n/index.js';
 import {
   spanSegment,
@@ -625,7 +628,9 @@ export function renderMonth(ctx) {
       barRuns.push(...rowRuns);
     }
     // 0.6.2：≤520 每行段各挂一次名称（不再全局只挑一段）。
-    if (compact) applyRowBarLabels(gridEl, gridRect, barRuns);
+    // 0.7.8（用户「还有 5 个被条压住」）：标签层必须等折叠完成后**再**画——
+    // 在折叠前画，被收进「还有 N 个」或被压掉的段仍会按旧坐标留下标签，浮在别的
+    // chip 与「还有 N 个」行上。调用点因此移到本函数末尾（见 applyTagDisplayTiers 之前）。
     // 0.2.19（D9）：可用高度改用 getBoundingClientRect 的**小数**值。原来
     // clientHeight / offsetTop / paddingBottom 三个取整值相加，在「刚好够 3 行」的
     // 格子上会少 1–2px，于是 3 行只判成 2 行（用户看到 1 条 +「还有 2 个」，
@@ -686,6 +691,23 @@ export function renderMonth(ctx) {
       const unit = measured > 0 ? measured : rowH - gap;
       return Math.max(1, Math.floor((room + useGap + 0.5) / (unit + useGap)));
     };
+    /**
+     * 0.7.10（用户：11/22 那格显示「还有 2 个」，下面其实还够放两行）：折叠按钮
+     * 在窄档是 `min-height: 26px`，比 chip（实测约 22px）高。原来的容量只按 chip
+     * 高算，真渲染时按钮那行更高、越界兜底就把整行让掉，于是少排一行甚至两行。
+     * 现在按「k 行内容 + 1 行按钮」的实测高算能放几行内容。
+     */
+    const contentRowsFit = (roomNow, gapNow, unit, buttonH, total) => {
+      let k = 0;
+      while (k < 64) {
+        const next = k + 1;
+        const needsButton = next < total;
+        const h = next * unit + (next - 1) * gapNow + (needsButton ? buttonH + gapNow : 0);
+        if (h > roomNow + 0.5) break;
+        k = next;
+      }
+      return k;
+    };
     cellData.forEach(({ eventsWrap, day }, idx) => {
       const room = idx < rooms.length ? rooms[idx].room : 0;
       const contentBottom = idx < rooms.length ? rooms[idx].bottom : 0;
@@ -712,23 +734,42 @@ export function renderMonth(ctx) {
       const totalRows = laneNodes.length + otherNodes.length;
       const baseGap = gap > 0 ? gap : 2;
       let useGap = baseGap;
-      let capacity = rowsFitAt(children, room, useGap);
+      let rowUnit = 0;
+      for (const child of children) {
+        if (child.classList.contains('month__more')) continue;
+        const h = child.offsetHeight || 0;
+        if (h > rowUnit) rowUnit = h;
+      }
+      if (!rowUnit) rowUnit = Math.max(1, rowH - gap);
+      // 按钮实测高（它比 chip 高时容量必须按它算）；量不到（jsdom/隐藏）就退回行高。
+      const moreHeight = (() => {
+        const probe = buildMoreButton(day, [], actions, ctx);
+        // 0.7.10：用 opacity 而不是 visibility 藏探针（布局要照常参与，jsdom/探针也贴 source 断言）
+        probe.style.opacity = '0';
+        probe.style.position = 'absolute';
+        eventsWrap.append(probe);
+        const h = probe.offsetHeight || 0;
+        probe.remove();
+        return h > 0 ? h : rowUnit;
+      })();
+      // 0.7.10（第 10 条）：`contentRowsFit` 返回「能放几行内容（含按钮那一行）」。
+      // 内容全都放得下时不需要按钮，容量就是内容行数，不能再 +1（否则 planCellRows
+      // 认为「容量 ≥ 内容行数」全部显示，5 条 26px 会超出 room 5px 被格底裁掉）。
+      const fitsWithGap = contentRowsFit(room, useGap, rowUnit, moreHeight, totalRows);
+      let capacity = fitsWithGap >= totalRows ? totalRows : fitsWithGap + 1;
       // 放不下再压行距：只降不升，且不写 0（0 会让相邻 chip 粘成一条）。
-      if (totalRows > capacity && useGap > MIN_ROW_GAP) {
-        const tight = rowsFitAt(children, room, MIN_ROW_GAP);
-        if (tight > capacity) {
+      if (totalRows > capacity - 1 && useGap > MIN_ROW_GAP) {
+        const tight = contentRowsFit(room, MIN_ROW_GAP, rowUnit, moreHeight, totalRows);
+        const tightCapacity = tight >= totalRows ? totalRows : tight + 1;
+        if (tightCapacity > capacity) {
           useGap = MIN_ROW_GAP;
-          capacity = tight;
+          capacity = tightCapacity;
         }
       }
       if (useGap !== baseGap) eventsWrap.style.rowGap = `${useGap}px`;
-      // 0.5.9（S1/S2）：手机档先套「每格 2 条单日文字 chip」上限，再让实测容量决定
-      // 还要不要继续收——上限是口径（0.2.17 B1），不是容量估计。
-      const compactOthersCap = compact ? Math.min(2, otherNodes.length) : otherNodes.length;
-      const compactHiddenOthers = compact ? otherNodes.length - compactOthersCap : 0;
-      const effectiveRows = laneNodes.length + compactOthersCap + (compactHiddenOthers > 0 ? 1 : 0);
-      // 放满 R 行 → 全部显示、不出按钮（提前少放或硬塞按钮都算错）。
-      if (effectiveRows <= capacity && !compactHiddenOthers) return;
+      // 0.7.8（用户「这几处应该折叠成还有 X 个的地方也没折叠」）：取消 0.5.9 的
+      // 「手机档每格最多 2 条单日」上限——可见条数统一由本格实测容量决定，
+      // 「还有 N 个」行也要占一行（planCellRows 的 budget = capacity - 1）。
       // 0.2.33（M1）：泳道节点（条 or 占位）与其余条目分开——空间不够时条也要折叠，
       // 并且要为「还有 N 个」留出最后一行，不能再让按钮被格底裁掉。
       // 0.2.35：名额按「泳道行数 + 单日/任务数」算（laneIndexOfBar），泳道占位不再白吃名额。
@@ -744,11 +785,9 @@ export function renderMonth(ctx) {
       let visibleLaneNodes = visibleBars > 0 ? laneIndexOfBar[visibleBars - 1] + 1 : 0;
       // 0.5.9（S1/A5，手机档）：长条在窄屏同样**永不折叠**（0.2.21 F1 口径不变），
       // 单日/任务按 2 条上限先收；容量再不够就只收单日，把最后一行留给「还有 N 个」。
-      if (compact) {
-        visibleBars = barNodes.length;
-        visibleLaneNodes = laneNodes.length;
-        visibleOthers = compactOthersCap;
-      }
+      // 0.7.8（用户「这几处应该折叠成还有 X 个的地方也没折叠」）：这条豁免取消——
+      // 窄档容量不足时，跨天条与单日/任务一起折叠，否则条会把「还有 N 个」压出格底
+      // （9 月截图里「还有 5 个」被条盖住）。折叠顺序仍先收单日/任务，再收最底下的条。
       // 渲染后校验「按钮完整在内容区里」：越界就再让一行出去重排（最多 12 轮收敛）。
       // jsdom/隐藏容器里按钮 offsetTop 恒为 0，量不到就保持算术结果。
       for (let guard = 0; guard < 12; guard++) {
@@ -765,18 +804,38 @@ export function renderMonth(ctx) {
           .filter(Boolean);
         // 有真条目被藏就一定要有提示（F7）：这里不会再出现「藏了却不出按钮」。
         if (!hiddenEvents.length) {
-          for (const node of children) node.hidden = false;
-          return;
+          // 0.7.10（第 10 条）：容量按「行数」算，但 chip（26px）比折叠按钮（18px）高，
+          // 「全部显示」时按行数够不等于按高度够（5 条 chip 会超出 room 5px 被格底裁掉）。
+          // 这里补一次实测兜底：全部可见但内容实际高过 room，就让一条出去重排。
+          // 用事件区的 scrollHeight（内容实高）而不是逐条矩形底边：jsdom 的假几何把
+          // 每个节点的 bottom 都写同一个值，按底边判会误折；scrollHeight 在无布局时
+          // 为 0，正好跳过（保持纯算术结果）。
+          const wrapScroll = eventsWrap.scrollHeight || 0;
+          if (!wrapScroll || wrapScroll <= room + 0.5) {
+            for (const node of children) node.hidden = false;
+            return;
+          }
+          if (visibleOthers > 0) {
+            visibleOthers -= 1;
+          } else if (visibleBars > 0) {
+            visibleBars -= 1;
+            visibleLaneNodes = visibleBars > 0 ? laneIndexOfBar[visibleBars - 1] + 1 : 0;
+          } else {
+            for (const node of children) node.hidden = false;
+            return;
+          }
+          continue;
         }
         eventsWrap.append(buildMoreButton(day, hiddenEvents, actions, ctx));
         const button = eventsWrap.querySelector('.month__more');
+        fitMoreButtonText(button);
         if (!button || !(button.offsetTop > 0)) return;
         if (button.getBoundingClientRect().bottom <= contentBottom + 0.5) return;
         // 按钮仍然越界：先让单日/任务出去，再让最底下的条出去；都没得让就收手（避免死循环）。
-        // 0.5.9：手机档**不让条**——条必须可见，收完单日就收手。
+        // 0.7.8：窄档同样可以让条出去（否则条压住「还有 N 个」，见上）。
         if (visibleOthers > 0) {
           visibleOthers -= 1;
-        } else if (!compact && visibleBars > 0) {
+        } else if (visibleBars > 0) {
           visibleBars -= 1;
           visibleLaneNodes = visibleBars > 0 ? laneIndexOfBar[visibleBars - 1] + 1 : 0;
         } else {
@@ -784,7 +843,39 @@ export function renderMonth(ctx) {
         }
       }
     });
+    // 0.7.8（用户「还有 5 个被条压住」「江…／15 被上行裁掉」）：折叠、隐藏、「还有
+    // N 个」都排好之后，几何才算稳定，这时才画网格级标签，并且只为仍然可见的
+    // 行段画（隐藏段不产生标签，标签宽度也夹在本段内）。
+    if (compact) applyRowBarLabels(gridEl, gridRect, barRuns);
+    // 0.7.0（用户）：月格窄档——标签 emoji + 名称放不下时只留 emoji，绝不出现
+    // 「……」。这里按真实排版量一次：标题被裁（scrollWidth 超过可用宽）就切到
+    // tag-only 形态；没有 emoji 的标签保持现有省略号规则。
+    applyTagDisplayTiers();
     return layoutDirty;
+  }
+
+  /**
+   * 0.7.1（用户，最终口径）：事件条只显示 `emoji + 名称`，不显示标签名。
+   * 窄档按真实可用宽走四级梯子（G 项）：
+   *  T0/T1 默认（时间 + emoji + 名称，名称走省略号）→ T2（时间 + emoji）→
+   *  T3（小时 + emoji）→ T4（只 emoji）。全天条没有时间，只有默认与 T4。
+   * 阈值用标题自己的字号换算（3 个字宽）；jsdom 等拿不到布局的环境里
+   * clientWidth 为 0，保持默认档，避免把未测量当成「放不下」。
+   */
+  function applyTagDisplayTiers() {
+    // 0.7.1（用户）：跨天条不切档——延续段之间的负外边距与箭头依赖标题段的
+    // 几何；窄档连条由网格级标签层画 `emoji + 名称`（见 applyRowBarLabels），
+    // 段内不再单独收窄。
+    const chips = [...gridEl.querySelectorAll('.chip--tagged')]
+      .filter((chip) => !chip.classList.contains('chip--span-start')
+        && !chip.classList.contains('chip--span-mid')
+        && !chip.classList.contains('chip--span-end'));
+    for (const chip of chips) {
+      applyTagDisplayLadder(chip, {
+        title: chip.querySelector('.chip__title'),
+        time: chip.querySelector('.chip__time'),
+      });
+    }
   }
 
   function scheduleLayout(round = 0) {
@@ -871,16 +962,35 @@ export function renderMonth(ctx) {
  * 最多留 120ms 收尾；:focus-visible 同样 2 秒后出（键盘）；点击仍进日视图；
  * 触屏不做悬停（只有点击）。
  */
+/**
+ * 0.7.10（用户：「还有 2 个」在窄格里被截成「还有 2…」）：折叠按钮按**实测宽度**
+ * 决定文案，不按断点。完整文案放得下就用它；放不下换成「+N」，完整文案仍留在
+ * aria-label 与 title 里（读屏与悬停不掉信息）。
+ * 判定幂等：先把完整文案写回去量一次 scrollWidth，宽度由格子决定、不随文案变化。
+ */
+function fitMoreButtonText(button) {
+  const full = button.dataset.fullText || '';
+  const count = Number(button.dataset.count || 0);
+  if (!full) return;
+  button.textContent = full;
+  if (button.scrollWidth <= button.clientWidth + 0.5) return;
+  button.textContent = `+${count}`;
+}
+
 function buildMoreButton(day, hiddenEvents, actions, ctx) {
   const onEnter = (e) => {
     // 触屏没有悬停语义，pointerenter 也会在点按时触发 → 直接不弹。
     if (e.pointerType && e.pointerType !== 'mouse') return;
     scheduleMorePopover(btn, hiddenEvents, ctx, { x: e.clientX, y: e.clientY });
   };
+  const fullText = t('month.more', { count: hiddenEvents.length });
   const btn = el('button', {
     class: 'month__more',
     type: 'button',
-    text: t('month.more', { count: hiddenEvents.length }),
+    text: fullText,
+    title: fullText,
+    'aria-label': fullText,
+    dataset: { fullText, count: String(hiddenEvents.length) },
     on: {
       pointerenter: onEnter,
       pointerleave: () => scheduleMorePopoverHide(),
@@ -1045,6 +1155,10 @@ function buildChip(event, day, ctx, cellData, bounds) {
   // 0.2.9（用户 12）：只有「填色条」（全天 / 跨天多日）才分段连成整条；单日与非
   // 全天 chip 保持原来的内缩圆角块。position 见 event-layout.js 的 spanSegment。
   const span = filled && bounds ? spanSegment(event, day, bounds) : null;
+  // 0.7.10（用户：手机上单日的全天事件没有 emoji）：只有**真正跨多段**的条
+  // （start/mid/end）才把 `emoji + 名称` 推迟给网格级标签层——标签层只收集这三类段，
+  // 单日全天是 `chip--span-single`，推进去也没人画。单日全天改在 chip 内渲染，与桌面同路径。
+  const multiSeg = Boolean(span) && span.position !== 'single';
   const showLabel = !span || span.showLabel;
   // 0.2.11（C2）：延续箭头只画在**本行首/末格**被行边界截断的那一端；行内相邻
   // 两格之间本来就连着，再画箭头反而像断成两条（判定走共享纯函数）。
@@ -1078,7 +1192,16 @@ function buildChip(event, day, ctx, cellData, bounds) {
     ? ''
     : formatTime(shownStartDate, { hour12: ctx.settings.hour12 });
   const timeText = compactChip && !event.allDay ? formatTimeShort24(shownStartDate) : timeTextFull;
+  // 0.7.1（G，用户）：窄档梯子第三档只显示小时（12 小时制 `3PM`）。两种文案都由
+  // JS 写进 `data-time-*`，CSS 不改文本——切档时只换 `.chip__time` 的 textContent。
+  const timeHour = event.allDay ? '' : tagHourText(shownStartDate, ctx.settings.hour12);
   const chipTitle = event.title || t('agenda.event.untitled');
+  // 0.7.1（K.4，用户）：标题首字素若是这个标签的 emoji，拆成独立 emoji 节点，
+  // 名称节点只放剩下的部分；否则 emoji 节点用标签 emoji 兜底。数据不改。
+  const chipTag = tagForRecord(event);
+  const chipParts = splitTagTitle(chipTag, chipTitle);
+  const chipEmoji = chipParts.emoji;
+  const chipLabel = chipParts.label;
   // 0.2.15（D1）：把「本行内的段范围」带在 DOM 上（spanDay/spanA/spanB），
   // afterMount 量到格子宽度后用 lib/segment.js 的 monthBarBoxes 算每格一段的
   // left/width——首尾端点的唯一实现，月视图不再各写一套负外边距常量。
@@ -1110,8 +1233,10 @@ function buildChip(event, day, ctx, cellData, bounds) {
       ...spanData,
       // 0.5.18（W2）：桌面档仍用「本行首段挂标题 + 内联 max-width」。
       // 0.5.21（W2）：≤520 改由网格级标签层统一挂一次，段上只带全名给标签层读取。
-      ...(span && showTitle && !compactChip ? { barLabel: '1' } : {}),
-      ...(span && compactChip ? { barSeg: '1', barTitle: chipTitle } : {}),
+      // 0.7.10：只有真多段条才推迟给标签层；单日全天在 chip 内渲染。
+      ...(multiSeg && showTitle && !compactChip ? { barLabel: '1' } : {}),
+      // 0.7.2（用户）：紧凑档标签层同样是「emoji + 一个真实空格 + 名称」，不用 CSS 间距。
+      ...(multiSeg && compactChip ? { barSeg: '1', barTitle: `${chipEmoji ? `${chipEmoji} ` : ''}${chipLabel}` } : {}),
     },
     title: compactChip && !event.allDay ? `${chipTitle}，${timeTextFull}` : chipTitle,
     'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}${event.allDay ? t('agenda.event.allDaySuffix') : '，' + formatTime(shownStartDate, { hour12: ctx.settings.hour12 })}`,
@@ -1126,6 +1251,7 @@ function buildChip(event, day, ctx, cellData, bounds) {
       el('span', {
         class: 'chip__time',
         text: timeText,
+        dataset: { timeFull: timeText, timeShort: timeHour },
       }),
     );
   }
@@ -1136,10 +1262,29 @@ function buildChip(event, day, ctx, cellData, bounds) {
   chip.append(
     el('span', {
       class: 'chip__title',
-      text: showTitle ? event.title || t('agenda.event.untitled') : '\u200b',
+      text: showTitle ? chipLabel : '\u200b',
       'aria-hidden': showTitle ? null : 'true',
     }),
   );
+
+  // 0.7.1（用户）：事件条只显示 `emoji + 名称`，标签名不进 DOM——窄档 CSS
+  // 直接整块收掉 emoji，原生省略号规则留给名称。
+  // 窄档跨天条的标题由网格级标签层统一画（barTitle 已带 emoji），段内不再插，
+  // 否则同一个 emoji 会画两次。0.7.10：单日全天不在标签层里，emoji 必须插在 chip 内。
+  if (chipEmoji && showTitle && !(multiSeg && compactChip)) {
+    chip.classList.add('chip--tagged');
+    const titleNode = chip.querySelector('.chip__title');
+    chip.insertBefore(
+      el('span', { class: 'chip__tag', text: chipEmoji, 'aria-hidden': 'true' }),
+      titleNode,
+    );
+    // 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符（独立节点，换行不折叠），
+    // 不用 CSS margin；T2/T3/T4 收档时连同空格一起 display:none。
+    chip.insertBefore(
+      el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' }),
+      titleNode,
+    );
+  }
 
   // 0.2.10（用户 1-15 / 美工 §21）：跨周换行时的「延续」指示——条内 10×10 chevron，
   // 绝对定位在条内，不溢出格子被裁；真正结束的一端不给图标、保留普通圆角。
@@ -1312,6 +1457,7 @@ function fitCompactDayheads(root) {
     // 幂等：清掉上一次的内联几何。
     head.style.removeProperty('--dayhead-scale');
     host.style.removeProperty('width');
+    host.style.removeProperty('margin-inline-end');
     text.classList.remove('is-truncated');
     text.style.removeProperty('width');
     const headW = head.clientWidth;
@@ -1340,10 +1486,12 @@ function fitCompactDayheads(root) {
     });
   }
   if (!entries.length) return;
-  const uniform = Math.min(...entries.map((entry) => entry.ratio));
-  const scale = Math.max(0.5, Math.min(1, uniform));
+  // 0.7.10（用户：11/22 的「小雪」被裁成「小…」，11/7 的「立冬」完整；「小雪也是放得下的」）：
+  // 0.5.21 起缩放取全页最小值（统一字号），于是最紧的一格把宽格也一起缩了。
+  // 现在**逐格**按本格可用宽算比例；向下取 3 位小数，保证写进 CSS 的 scale 永不大于
+  // 本格 ratio（0.6005 若 toFixed 成 0.601，下一轮会被重新判成「放不下」而裁字）。
   for (const entry of entries) {
-    // 统一值到 1：整页按自然字号排，不写缩放变量（承载盒仍要留保护边）。
+    const scale = Math.max(0.5, Math.min(1, Math.floor(entry.ratio * 1000) / 1000));
     if (scale < 1) entry.head.style.setProperty('--dayhead-scale', scale.toFixed(3));
     // 该格在统一值下放得下：承载盒按**缩放前**的自然宽给宽。
     // 0.6.10（真机 393×852 DPR 2.75，用户：「和农历日期同样的方式应该就可以了」）：
@@ -1351,12 +1499,19 @@ function fitCompactDayheads(root) {
     // 的元素坐标里——盒宽 20×0.55 = 12px 会先把 20px 的文字裁到 12px，再整体缩到 6.6px，
     // 于是只剩「立」的一个笔画。现在盒宽取自然宽（上限 = 可用宽 ÷ scale，即缩放后的
     // 可用宽），文字在盒内完整，视觉宽仍 ≤ 可用宽。
+    // 0.7.8（用户「不用省略，当中还空着，调整一下位置就可以了」）：承载盒是**缩放前**
+    // 的坐标（可能比视觉宽一倍），它照样占布局宽度，会把右侧的「今天」胶囊顶出格子。
+    // 这里用负的 `margin-inline-end` 把多出来的那截收回去：布局推进量 = 视觉宽，
+    // 内层仍是完整自然宽（不出省略号），胶囊右缘因而留在格子内容盒内。
+    const visual = Math.min(entry.natural * scale, entry.usable);
     if (entry.ratio >= scale) {
       const box = Math.min(
         Math.ceil(entry.natural) + DAYHEAD_SLACK,
         Math.floor(entry.usable / scale) + DAYHEAD_SLACK,
       );
       entry.host.style.width = `${box}px`;
+      const trim = box - Math.ceil(visual);
+      if (trim > 0) entry.host.style.marginInlineEnd = `${-trim}px`;
       continue;
     }
     // 0.6.10（用户：「和农历日期同样的方式应该就可以了」）：节日/节气名与农历共用
@@ -1368,6 +1523,10 @@ function fitCompactDayheads(root) {
     // 省略号还没轮到画就被切掉了。
     entry.host.style.width = `${Math.max(1, Math.floor(entry.usable / 0.5) + DAYHEAD_SLACK)}px`;
     entry.text.style.width = `${(entry.usable / 0.5).toFixed(1)}px`;
+    // 同上的可视化宽度补偿（这一支的盒宽 = 视觉宽 ÷ 0.5）。
+    const trimTruncated =
+      Math.max(1, Math.floor(entry.usable / 0.5) + DAYHEAD_SLACK) - Math.ceil(entry.usable);
+    if (trimTruncated > 0) entry.host.style.marginInlineEnd = `${-trimTruncated}px`;
   }
 }
 
@@ -1388,19 +1547,37 @@ function applyRowBarLabels(gridEl, gridRect, runs) {
   const layer = el('div', { class: 'month__bar-labels', 'aria-hidden': 'true' });
   gridEl.append(layer);
   for (const run of runs) {
-    const firstBar = run.bars[0];
-    const lastBar = run.bars[run.bars.length - 1];
+    // 0.7.8（用户「还有 5 个被条压住」）：折叠之后才画，所以这里只看仍然可见的段。
+    // 被收进「还有 N 个」或被压掉的段既不出标签，也不再把右边界撑到整条末端——
+    // 标签宽度因此夹在可见段里，不会压到相邻格或「还有 N 个」行。
+    const bars = run.bars.filter((bar) => !bar.hidden);
+    if (!bars.length) continue;
+    const firstBar = bars[0];
+    const lastBar = bars[bars.length - 1];
     const title = firstBar.querySelector('.chip__title');
     const text = firstBar.dataset.barTitle || '';
     if (!title || !text) continue;
     const titleRect = title.getBoundingClientRect();
+    // 隐藏/零宽节点量不出几何（jsdom 里也恒为 0）：不画，下次布局重量时会重来。
+    if (!(titleRect.width >= 0) || !(titleRect.height > 0)) continue;
     const style = getComputedStyle(title);
-    // 行首续段：名称让开「<」箭头，紧贴它右侧开始。
-    const lead = firstBar.classList.contains('chip--cont-before') ? 11 : 0;
-    // 行末续段：给「>」箭头留 12px，名称在箭头左边收口。
-    const tail = lastBar.classList.contains('chip--cont-after') ? 12 : 0;
+    // 0.7.10（用户：「三角（<）后的空挡太大」）：`chip--cont-before` 的 16px 左内距
+    // 已经把箭头让开了（箭头盒 left:3px、宽 13px → 右缘正好落在 16px 处），
+    // titleRect.left 本身就在箭头右侧。这里再 +11 是重复让位，文字被推远 11px。
+    const lead = 0;
+    // 行末续段同理：`chip--cont-after` 的 16px 右内距已经把「>」让开，标签右界要
+    // 收到**内容右缘**（段右缘减该段自己的 padding-right），而不是再额外减 12px。
+    // 0.7.10（用户：同一处还有截断）：「还有 2 个」在窄格里被省略号截掉；
+    // 折叠按钮按实测宽决定用完整文案还是「+N」，见 fitMoreButtonText()。
+    const lastPadEnd = parseFloat(getComputedStyle(lastBar).paddingRight) || 0;
     const left = titleRect.left + lead;
-    const avail = Math.max(0, run.right - tail - left);
+    // 右边界取「最后一个**可见**段的右缘」与整条右缘的较小者：折叠掉后面的段时，
+    // 文字就收在当前可见段里，而不是继续画到已经不在的段上。
+    const lastRect = lastBar.getBoundingClientRect();
+    const right = Math.min(run.right, lastRect.right > 0 ? lastRect.right : run.right) - lastPadEnd;
+    const avail = Math.max(0, right - left);
+    // 一个字都放不下时不画（段内标题本就有省略号，画一条 0 宽的标签没有意义）。
+    if (avail < 4) continue;
     const label = el('span', { class: 'month__bar-label', text });
     label.style.left = `${(left - gridRect.left).toFixed(1)}px`;
     label.style.top = `${(titleRect.top - gridRect.top).toFixed(1)}px`;
@@ -1478,7 +1655,32 @@ function buildTaskChip(task, day, ctx, cellData) {  const chip = el('div', {
       },
     },
   });
-  chip.append(check, el('span', { class: 'chip__title', text: task.title || t('agenda.task.untitled') }));
+  chip.append(check);
+  // 0.7.1（用户）：任务与日程同口径——定时任务 `勾选框 · 时间 · emoji · 任务名`；
+  // 全天任务不带时间。时间复用事件 chip 的 `.chip__time` 与同一套格式化。
+  const taskTag = tagForRecord(task);
+  if (task.allDay === false) {
+    const dueDate = new Date(task.due);
+    const fullTime = isCompactScreen()
+      ? formatTimeShort24(dueDate)
+      : formatTime(dueDate, { hour12: ctx.settings.hour12 });
+    chip.append(el('span', {
+      class: 'chip__time',
+      text: fullTime,
+      // 0.7.1（G）：与事件 chip 同一套梯子，小时档由 JS 换文本。
+      dataset: { timeFull: fullTime, timeShort: tagHourText(dueDate, ctx.settings.hour12) },
+    }));
+  }
+  // 窄档标题放不下时由 applyTagDisplayTiers 按四级梯子收窄（G 项）。
+  // 0.7.1（K.4）：标题首字素已是该标签 emoji 时拆到 emoji 节点，名称只放剩余部分。
+  const taskParts = splitTagTitle(taskTag, task.title || t('agenda.task.untitled'));
+  if (taskParts.emoji) {
+    chip.classList.add('chip--tagged');
+    chip.append(el('span', { class: 'chip__tag', text: taskParts.emoji, 'aria-hidden': 'true' }));
+    // 0.7.2（用户）：emoji 与名称之间只放一个真实空格字符，不用 CSS margin。
+    chip.append(el('span', { class: 'tag-gap', text: ' ', 'aria-hidden': 'true' }));
+  }
+  chip.append(el('span', { class: 'chip__title', text: taskParts.label }));
   chip.addEventListener('click', (e) => {
     e.stopPropagation();
     ctx.actions.openTask(task);

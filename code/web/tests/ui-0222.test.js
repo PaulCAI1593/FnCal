@@ -336,11 +336,12 @@ describe('0.2.22 G3 / 0.2.23 H3 折叠容量 = 逐格实测 R（含按钮行、�
 
   it('容量算式写进代码：按实测 R，n>R 才让出最后一行；不再有 max(3, …) 硬下界', () => {
     expect(monthJs).not.toMatch(/Math\.max\(3/);
-    // 0.5.9（S1）口径变更：全显判定从 `totalRows <= capacity` 改成「真实要占的行数
-    // effectiveRows（条占泳道行 + 手机档单日上限 2 + 折叠按钮行）<= capacity」，
-    // 否则手机档把 3 条单日当成 3 行、实际只放 2 行 + 1 行按钮，会判成「放不下」而误出按钮。
-    expect(monthJs).toMatch(/if\s*\(effectiveRows\s*<=\s*capacity[^)]*\)\s*return;/);
-    expect(monthJs).toMatch(/const effectiveRows = laneNodes\.length \+ compactOthersCap/);
+    // 0.5.9（S1）是全显判定用「effectiveRows <= capacity」；0.7.8 改了折叠口径
+    // （用户截图「还有 5 个」被条压住）：取消「手机档单日上限 2 + 折叠按钮行」这条
+    // 预判，全部交给 planCellRows 按实测 capacity 与泳道行数分配（budget = capacity − 1，
+    // 最后一行留给「还有 N 个」）。这里锁新事实，不再要求 effectiveRows / compactOthersCap。
+    expect(monthJs).not.toMatch(/const effectiveRows = laneNodes\.length \+ compactOthersCap/);
+    expect(monthJs).not.toMatch(/compactOthersCap/);
     // 0.2.33（M1）：真实条目名额 = R − 1（由 planCellRows 统一分配：先保条、再保
     // 单日/任务，最后一行留给「还有 N 个」；条放不下时也要折叠）。
     expect(monthJs).toMatch(/export function planCellRows\(/);

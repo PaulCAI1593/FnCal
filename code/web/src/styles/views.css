@@ -320,6 +320,8 @@
   pointer-events: auto;
   cursor: pointer;
   display: flex;
+  /* 0.7.1：浮层是 flex column + max-height + 滚动，行固定高度不被压缩。 */
+  flex: 0 0 auto;
   /* 0.2.20（E10）：行首是与格子 chip 同款的 8px 实心圆点，不再是 3px 竖条；圆点与文字
      垂直居中，「圆点 → 时间 → 标题」与普通 chip 一致。 */
   align-items: center;
@@ -363,7 +365,8 @@
   flex: none;
   align-items: center;
   gap: 6px;
-  padding: 2px var(--sp-2);
+  /* 0.7.8：左侧 3px 日历色条由 ::after 画，文字让开它（见下方统一样式说明）。 */
+  padding: 2px var(--sp-2) 2px 9px;
   border-radius: var(--r-xs);
   font-size: var(--fs-sm);
   line-height: 1.4;
@@ -377,6 +380,34 @@
   transition: filter var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
     opacity var(--dur-fast) var(--ease);
   color: var(--text);
+  /* 0.7.8（用户：「所有当天的日程和手机显示一致，用左侧竖条和底色透明填色框」）：
+     单日日程 / 全天单日 / 任务在**所有宽度**统一为「3px 左侧日历色条 + 16% 同色底」，
+     不再是桌面圆点 + 无底色。多日/跨天整条仍用 .chip--filled 的整块填充（见下）。 */
+  position: relative;
+  background: color-mix(in srgb, var(--chip-color, var(--accent)) 16%, transparent);
+}
+/* 日历色映射：左侧 3px 色条（原 4/7px 圆点的颜色语义）。
+   它是日历色的识别线索，不是给卡片加装饰性侧边条。 */
+/* impeccable-disable-next-line side-tab: 日历色识别线索，非装饰性卡片侧边条 */
+.chip::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--chip-color, var(--accent));
+}
+/* 多日/跨天整条、以及**全天单日**都是整块填色：不叠左侧色条（色条与底色同色也看不见），
+   也不走单日定时 chip 的 16% 半透明底（0.7.8 用户：「宏、木两处是全天日程，
+   也没有正确的渲染出深色填色底框」）。 */
+.chip--filled::after {
+  display: none;
+}
+/* 桌面档不再画圆点：色条已经承担同一语义（0.7.8）。 */
+.chip__dot {
+  display: none;
 }
 .chip--drag-source {
   opacity: 0.4;
@@ -394,11 +425,15 @@
   outline-color: var(--ev-fg, #101216);
 }
 @media (hover: hover) {
+  /* 0.7.8：单日 chip 有 16% 同色底后，悬停改成同色加深一档，
+     不再换成中性 --surface-3（那会把日历色语义洗掉）。 */
   .chip:hover {
-    background: var(--surface-3);
+    background: color-mix(in srgb, var(--chip-color, var(--accent)) 26%, transparent);
   }
 }
 .chip__dot {
+  /* 0.7.8 起圆点不再渲染，语义由左侧 3px 色条承担（保留选择器兼容旧 DOM）。 */
+  display: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -413,6 +448,10 @@
 .chip__title {
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 0.7.1（G）：窄格放不下时走省略号，而不是把文字硬切一刀。
+     任务 chip 带勾选框 + 时间 + emoji 后更容易触发（320 档实测被切 14px）。 */
+  white-space: nowrap;
+  min-width: 0;
   font-weight: 500;
 }
 /* 0.6.2（W2，用户：「和桌面端一致啊」）：桌面跨天条的标题可以伸到本段之后，
@@ -573,6 +612,20 @@
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
+  /* 0.7.9 E：名称标签层按整条（run）绝对定位，挂在这一层上。 */
+  position: relative;
+}
+/* 0.7.9 E（用户：平板多日条名称只在一格里省略）：全天行的名称不再被首段所在的
+   那一列裁住——按「首段标题左缘 → 最后一段右缘」铺一条标签，名称在整条里排。
+   标签只画文字，点击仍落到底下的 chip；超出整条时省略。 */
+.allday-rail-label {
+  position: absolute;
+  z-index: 2;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  display: block;
 }
 .timegrid__allday-col {
   border-right: 1px solid var(--grid-line);
@@ -904,6 +957,9 @@ body.is-dragging .tevent--resizing * {
   display: block;
   -webkit-line-clamp: unset;
 }
+/* 0.7.1（用户）：短块同一行固定 `时间 → emoji → 名称`。DOM 里标题先、时间后，
+   这里把时间提到最前；标题内的 emoji 本来就在名称前。 */
+.tevent.is-short .tevent__time { order: -1; }
 /* 0.3.5（M10 §2）：定时事件块第三行——地点。墨色继承 .tevent 的 --ev-fg，只靠
    opacity 退一档，形成标题/时间/地点的三级层次。
    0.6.3（B）：行数由 `--tevent-lines-loc` 决定（默认 1，够高才 2），允许折行。 */
@@ -971,6 +1027,16 @@ body.is-dragging .tevent--resizing * {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 0.7.1（用户）：全天/多日条 `emoji + 名称`，emoji 不参与收缩。
+   0.7.2（用户）：emoji 与名称之间只放一个真实空格字符（`.tag-gap`），这条不再写 margin。 */
+.allday-chip--tagged { gap: 0; }
+.allday-chip__tag {
+  flex: 0 0 auto;
+  font-size: 1em;
+  line-height: 1;
+}
+.allday-chip--tagged .allday-chip__icon { margin-inline-end: var(--sp-1); }
+.allday-chip--tagged .allday-chip__title { flex: 1 1 auto; min-width: 0; }
 /* Compact due-time suffix that trails the task title inside the same ellipsized
    run (see buildTaskChip): the ", " separator lives here so the drag ghost can
    overwrite just the time text and keep it. */
@@ -1734,7 +1800,20 @@ body.is-dragging .tevent--resizing * {
   flex-direction: column;
 }
 .search__title {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  min-width: 0;
   font-weight: 550;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* 0.7.5（用户「搜索里的任务没带emoji」）：emoji 不被压缩、不换行，
+   名称占剩余宽度走省略号；文字节点放进 .search__title-text 才有省略号。 */
+.search__title-emoji { flex: 0 0 auto; }
+.search__title-text {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2302,13 +2381,28 @@ button.year__day {
     max-width: 100%;
     gap: 0 2px;
   }
+  /* 0.7.8（用户截图红框圈「10」）：今天的日号胶囊是两位数字时（min-width 24 +
+     padding 12 + margin 4 ≈ 40px），在 390/320 会把胶囊右缘顶出格子被裁掉。
+     「今天」胶囊不得被裁、也不参与压缩；空间不够先让左侧农历/节日名收成省略号。 */
+  .month__dayhead > .month__daynum {
+    flex: none;
+  }
+  /* 0.7.9 A（用户：胶囊离右边界空了很多）：上一版把 `margin-inline-start: auto`
+     覆盖成 1px，auto 一没，胶囊就不再贴右，剩余空间全堆在右边。保留 auto（贴右），
+     右侧仍 0；内边距继续 `0 2px`，两位数视觉宽 ≥ 20px。 */
+  .month__cell.is-today .month__daynum {
+    padding: 0 2px;
+    margin-inline: auto 0;
+  }
   /* 节日名：只有文字、没有旗子；位置与农历相同（左），日号靠右。 */
   .month__holiday-icon {
     display: none;
   }
   .month__holiday {
-    /* 0.5.18（W3）：不许 flex 再压窄承载盒——宽度由 month.js 写「自然宽 × scale」，
-       压窄就会把末字裁掉（用户「廿八和 8 之间有空隙但廿八的八依然被遮挡」）。 */
+    /* 0.5.18（W3）：宽度由 month.js 写「自然宽 × scale」，压窄就会把末字裁掉。
+       0.7.8（最终口径 m04435，用户「不用省略，当中还空着，调整一下位置就可以了」）：
+       农历/节日名保持完整、不省略也不收缩；「今天」胶囊靠自身收边距 + month.js 的
+       可视化宽度补偿（负外边距）往内移，右缘留在格内。 */
     flex: 0 0 auto;
     width: auto;
     min-width: 0;
@@ -2321,10 +2415,8 @@ button.year__day {
     display: block;
     min-width: 0;
     overflow: hidden;
-    /* 0.5.11（用户）：「手机上月视图『国庆』『中秋』都显示两个字就好，不要显示
-       『……』」。正常情况按缩字号把两个字完整放下；只有缩到下限仍放不下时
-       （month.js 加 `is-truncated`）才画省略号——见下面的 .is-truncated 规则。
-       桌面仍保留上面的省略号规则。 */
+    /* 0.7.8（最终口径 m04435）：农历/节日名不省略也不换行——视觉宽由 month.js 的
+       缩放保证，收不进的部分由「今天」胶囊内收 + 负外边距吸收。 */
     text-overflow: clip;
     white-space: nowrap;
     /* 0.5.18（W3，用户：「农历和节日的字体不统一」）：农历与节日名共用 10px 基准 +
@@ -2355,7 +2447,9 @@ button.year__day {
     line-height: 1;
   }
   .month__lunar--inline {
-    /* 0.5.18（W3）：同上，宽度由 month.js 定，flex 不许再收缩。 */
+    /* 0.5.18（W3）：宽度由 month.js 定。
+       0.7.8（最终口径 m04435）：与节日名同口径——保持完整、不省略；日号靠内收边距
+       与负外边距留在格内。 */
     flex: 0 0 auto;
     min-width: 0;
     /* 0.6.7（用户）：与节日名同一条规则，上下各留 1px 保护边。 */
@@ -2400,29 +2494,30 @@ button.year__day {
     }
   }
   .chip {
-    position: relative;
+    /* 0.7.8：底色、3px 色条、圆点隐藏已提升为全局规则；紧凑档只留尺寸类差异。 */
     gap: 0 4px;
     min-height: 26px;
     padding: 1px 4px 1px 7px;
     border-radius: var(--r-xs);
-    background: color-mix(in srgb, var(--chip-color, var(--accent)) 16%, transparent);
     font-size: var(--fs-xs);
     line-height: 12px;
     overflow: hidden;
   }
-  /* 日历色映射：左侧 3px 色条（原 7px 点的颜色语义，白底上仍能一眼分辨日历）。
-     紧凑月视图 chip 高仅 26px，色条是日历色的唯一识别线索（等同桌面的 4px 圆点），
-     不是给卡片加装饰性侧边条；0.5.x 起的既有设计，0.6.6 未改。 */
-  /* impeccable-disable-next-line side-tab: 日历色识别线索，非装饰性卡片侧边条 */
-  .chip::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 3px;
-    bottom: 3px;
-    width: 3px;
-    border-radius: 2px;
-    background: var(--chip-color, var(--accent));
+  /* 0.7.9 B（用户：「手机单日全天任务没有 emoji」）：一格内容宽 320 档只有 36.7px、
+     390 档 46.7px，任务 chip 的前导几何（左内距 7 + 勾选框 19 + 间距 4 = 30）把 11px
+     的 emoji（实测 15.1px 宽）挤到 chip 右缘外——320 实测溢出 8.41px，emoji 只剩一条
+     边缘，视觉上就是「没有 emoji」。紧凑档只压前导几何，不动 emoji 字号、不动名称梯子：
+     左内距 7→2、勾选框 19→13（可视环；触屏命中区仍由 `::before` 撑开）、间距 4→0。
+     修后 320 前导 + emoji = 30.1px，留 6.6px；390 留 16.6px。 */
+  .chip--task {
+    padding-left: 2px;
+  }
+  .chip--task .chip__check {
+    width: 13px;
+    height: 13px;
+  }
+  .chip--task.chip--tagged .chip__check {
+    margin-inline-end: 0;
   }
   /* B1.4：chip 把纵向命中区上下各撑 6px，不再出现「点事件却跳进日视图」。 */
   .chip::before {
@@ -2472,16 +2567,18 @@ button.year__day {
      其余全是时间），等于把事件名删掉；两行后标题与时间都在，且条高与单日 chip
      同为 26px（--month-chip-h 由 month.js 实测，长条自动同高）。跨天条与任务
      chip 保持单行：条只有标题，任务 chip 是勾选 + 标题。 */
-  .chip:not(.chip--span-start):not(.chip--span-mid):not(.chip--span-end):not(.chip--task) {
+  /* 0.7.1（用户）：带标签的 chip（含跨天条与任务）改成单行 `emoji + 名称`，
+     不再走「标题占满一行」的两行规则；规则见 calendar.css 的 .chip--tagged 块。 */
+  .chip:not(.chip--span-start):not(.chip--span-mid):not(.chip--span-end):not(.chip--task):not(.chip--tagged) {
     flex-wrap: wrap;
     align-content: center;
   }
-  .chip:not(.chip--span-start):not(.chip--span-mid):not(.chip--span-end):not(.chip--task)
+  .chip:not(.chip--span-start):not(.chip--span-mid):not(.chip--span-end):not(.chip--task):not(.chip--tagged)
     .chip__title {
     order: 1;
     flex: 1 1 100%;
   }
-  .chip:not(.chip--span-start):not(.chip--span-mid):not(.chip--span-end):not(.chip--task)
+  .chip:not(.chip--span-start):not(.chip--span-mid):not(.chip--span-end):not(.chip--task):not(.chip--tagged)
     .chip__time {
     order: 2;
     flex: 1 1 100%;
@@ -2501,9 +2598,9 @@ button.year__day {
   .chip.chip--holiday::after {
     background: var(--text-3);
   }
-  .chip--filled {
-    background: color-mix(in srgb, var(--chip-color, var(--accent)) 16%, transparent);
-  }
+  /* 0.7.8（用户：「宏、木两处是全天日程，也没有正确的渲染出深色填色底框」）：
+     紧凑档不得再把 .chip--filled 盖成 16% 半透明——全天（单日与多日）在所有宽度
+     都是整块深色填色，只有定时日程/任务走「左竖条 + 16% 底」。 */
   .chip.is-ooo {
     background: color-mix(in srgb, var(--chip-color, var(--accent)) 16%, transparent);
   }
@@ -2511,11 +2608,27 @@ button.year__day {
      数字看不见等于信息丢失。负数外边距吃掉格子的左右 padding，让这行用满整格宽。 */
   .month__more {
     align-self: stretch;
-    min-height: 26px;
+    /* 0.7.10（第 10 条，用户「还有 2 个」下面留着白）：折叠按钮只是一行短文字，
+       却按 chip 一样高（26px）占满一行，导致「3 条 + 按钮」下方空出 19px。
+       视觉高压到 18px，命中区用 ::before 扩到 44×44（与 0.7.6 覆盖层同一做法，
+       不用 ::after，避免和视觉伪元素冲突）。 */
+    position: relative;
+    min-height: 18px;
+    line-height: 18px;
+    overflow: visible;
     margin: 0 -4px;
     padding: 0;
     font-size: var(--fs-xs);
     text-align: center;
+  }
+  .month__more::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 44px;
+    transform: translateY(-50%);
   }
   /* 320 宽一格只有 45.7px，「还有 3 个」在 11px 下差 1–2px 会把尾字截掉。
      只把这一行计数降到 10px（辅助信息）；标题、时间、日号字号不变。 */

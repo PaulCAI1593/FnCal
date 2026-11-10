@@ -32,6 +32,8 @@ import { createKvApi } from './api/kv.mjs';
 import { createAdminApi } from './api/admin.mjs';
 import { createDataApi } from './api/data.mjs';
 import { createCalendarsApi } from './api/calendars.mjs';
+import { createTagsApi } from './api/tags.mjs';
+import { createTagStore } from './lib/tags.mjs';
 import { createAiApi } from './api/ai.mjs';
 import { createAiRest } from './api/ai-rest.mjs';
 import { createWidgetRest } from './api/widget-rest.mjs';
@@ -83,7 +85,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 0.6.7：手机月视图日号行的节日名 / 节气名在真机上被裁掉一点（用户：「手机端的
 // 节气又被挡掉了一点，节日也是」）——承载盒补 1px 保护边、上下各留 1px、字体就绪后
 // 重新量宽。纯前端，无接口与数据变化。
-export const VERSION = '0.6.15';
+// 0.7.9：月格「今天」胶囊贴右、全天任务 emoji 被前导挤掉、平板周视图名称只显示
+// emoji、跨天定时事件进时间轴、平板多日条名称跨格——纯前端，无接口与数据变化。
+export const VERSION = '0.7.10';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -435,7 +439,11 @@ export async function createApp(
   const securityApi = createSecurityApi({ accounts, auth, security, audit, logger, proxy });
 
   const davHandler = createDavHandler({ store, config, logger, auth });
-  const kvApi = createKvApi({ store });
+  // 0.7.0：标签注册表（通用 KV 键 cal:default:tags）；REST、MCP 共用同一实现。
+  const tagStore = createTagStore({ store, logger });
+  // 0.7.1（K）：KV 保存事件/任务时把标签名写进 CATEGORIES、emoji 写进标题，需要注册表。
+  const kvApi = createKvApi({ store, tags: tagStore });
+  const tagsApi = createTagsApi({ tags: tagStore });
   const calendarsApi = createCalendarsApi({
     store,
     logger,
@@ -476,7 +484,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   };
   // 0.3.0 P3：AI 服务层与限流桶由 REST 与 MCP **共用**——「同一凭据的 REST + MCP
   // 合起来算 60/60s」，且授权/掩码/窗界只有 `lib/ai-service.mjs` 一处实现。
-  const aiService = createAiService({ aiStore, health: healthState, trash: aiTrash });
+  const aiService = createAiService({ aiStore, health: healthState, trash: aiTrash, tags: tagStore });
   const aiRateLimiter = createAiRateLimiter();
   const aiRest = createAiRest({ aiStore, aiService, audit, logger, health: healthState, limiter: aiRateLimiter });
   // 0.6.2（M5 §F）：桌面卡片只读摘要认会话 Cookie（跟着 App 的登录态走），不再单独发令牌；
@@ -519,6 +527,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     approvalReceipts,
   });
   const mcpApi = createMcp({
+    tags: tagStore,
     aiStore,
     aiService,
     audit,
@@ -536,6 +545,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     admin: adminApi,
     data: dataApi,
     calendars: calendarsApi,
+    tags: tagsApi,
     ai: aiApi,
     aiRest,
     widgetRest,

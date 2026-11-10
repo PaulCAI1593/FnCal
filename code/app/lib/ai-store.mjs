@@ -837,6 +837,8 @@ export function createAiStore({
   }
 
   return {
+    // 请求上下文（0.7.0：标签注册表在用户级 KV 里，服务层要按凭据 userId 读）
+    withUser,
     // 设置
     readSettings,
     writeSettings,

@@ -13,6 +13,12 @@ import { el, clear } from './dom.js';
 import { closeOnBackdrop } from './scrim.js';
 import { icon } from './icons.js';
 import { EVENT_COLORS, colorHex, colorFg, colorKeyOfHex, isValidColor } from './colors.js';
+// 0.7.0：标签筛选按记录解析出的标签（tagId 优先，其次 categories 名称）。
+import { DEFAULT_TAG_GROUP_ID, tagForRecord, tagDisplayName } from './store.js';
+// 0.7.5（用户「下拉菜单的分组也可以折叠」）：与编辑器标签下拉共用折叠状态。
+import { expandAllGroups, isGroupCollapsed, toggleGroupCollapsed } from './tag-dropdown-collapse.js';
+// 0.7.5（用户「搜索里的任务没带emoji」）：结果标题与详情卡共用同一套拆分。
+import { splitTagTitle } from './tag-display.js';
 import { describeRecurrence, occurrenceNear } from './recurrence.js';
 import {
   formatFullDate,
@@ -94,6 +100,8 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
   let debounceTimer = null;
   let outsideHandler = null;
   let repositionHandler = null;
+  // 0.7.1（用户）：标签筛选收起态的宽度测量——观察 trigger，面板重建/关闭时断开。
+  let tagTriggerObserver = null;
 
   function isOpen() {
     return Boolean(scrim) || docked;
@@ -110,6 +118,11 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     return {
       calendars: new Set(visible),
       colors: null, // null = 全部颜色
+      // 0.7.0（用户）：标签多选，多值取并集，与其它条件取交集；空集 = 全部。
+      tags: new Set(),
+      // 0.7.5（用户「筛选标签下拉多一个选择无标签」）：只筛没挂任何标签的项，
+      // 与具体标签互斥。
+      noTag: false,
       from: '',
       to: '',
     };
@@ -122,6 +135,9 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
       typeof store.isCalendarVisible === 'function' ? store.isCalendarVisible(cal.id) : cal.visible !== false,
     );
     if (filters.colors) return true;
+    if (filters.tags && filters.tags.size) return true;
+    // 0.7.5：单独选「无标签」也是一条生效的筛选。
+    if (filters.noTag) return true;
     if (filters.from || filters.to) return true;
     return filters.calendars.size !== visible.length;
   }
@@ -162,6 +178,14 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     // 0.2.10（1-10）：任务不再有独立开关，只有「我的任务」日历被勾选才出现
     // （任务的 itemCalendar() 就是 tasks，走下面的日历多选判断）。
     if (filters.calendars.size && !filters.calendars.has(itemCalendar(item))) return false;
+    // 0.7.0：标签多选取并集——命中任一已选标签即可；与其它条件仍是 AND。
+    if (filters.tags && filters.tags.size) {
+      const tag = tagForRecord(item);
+      if (!tag || !filters.tags.has(tag.id)) return false;
+    }
+    // 0.7.5（用户「筛选标签下拉多一个选择无标签」）：解析不到标签（含旧分类
+    // 名称能对上标签的情况）才算「无标签」，带标签的旧事件不会被误算进来。
+    if (filters.noTag && tagForRecord(item)) return false;
     if (filters.colors && !effectiveColorKeys(item).some((key) => filters.colors.has(key))) return false;
     if (filters.from) {
       if (startOfDay(new Date(entry.rep.start)).getTime() < startOfDay(new Date(`${filters.from}T00:00:00`)).getTime()) {
@@ -293,6 +317,10 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
 
   function close() {
     if (!scrim) return;
+    if (tagTriggerObserver) {
+      tagTriggerObserver.disconnect();
+      tagTriggerObserver = null;
+    }
     document.removeEventListener('keydown', onKeydown, true);
     scrim.remove();
     scrim = null;
@@ -643,6 +671,10 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
   /** 渲染筛选区：日历 chip 多选、颜色 swatch 多选、时间范围、含任务开关。 */
   function renderFilterPanel() {
     if (!filterPanel) return;
+    if (tagTriggerObserver) {
+      tagTriggerObserver.disconnect();
+      tagTriggerObserver = null;
+    }
     clear(filterPanel);
     filterBtn.classList.toggle('has-filter', filtersActive());
     const calendars = typeof store.getCalendars === 'function' ? store.getCalendars() : [];
@@ -733,8 +765,339 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
       },
     });
 
+    /**
+     * 0.7.1（用户）：收起态**先显示 emoji**，宽度放不下才省略成「N 个标签」。
+     * 判据是实测宽度（测量层 scrollWidth 与 trigger 可用宽），不是条数。
+     */
+    function tagGroupsForFilter() {
+      // 0.7.4（用户「未分组0个的时候隐藏」）：下拉只列至少有一个标签的分组；
+      // 空分组只在标签管理页保留（新分组要能改名/删除/拖入）。
+      if (store && typeof store.getTagsForDisplay === 'function') {
+        return store.getTagsForDisplay()
+          .filter((section) => section.tags.length)
+          .map((section, index) => ({ ...section.group, order: index }));
+      }
+      const tags = typeof store?.getTags === 'function' ? store.getTags() : [];
+      const known = new Set(tags.map((tag) => tag.groupId || DEFAULT_TAG_GROUP_ID));
+      let list = typeof store?.getTagGroups === 'function' ? store.getTagGroups().slice() : [];
+      list = list.filter((group) => known.has(group.id));
+      if (!list.length && known.has(DEFAULT_TAG_GROUP_ID)) {
+        list = [{ id: DEFAULT_TAG_GROUP_ID, name: t('settings.tags.groupDefault'), order: 0 }];
+      }
+      if (known.has(DEFAULT_TAG_GROUP_ID) && !list.some((group) => group.id === DEFAULT_TAG_GROUP_ID)) {
+        list.unshift({ id: DEFAULT_TAG_GROUP_ID, name: t('settings.tags.groupDefault'), order: -1 });
+      }
+      return list
+        .map((group, index) => ({ ...group, order: Number.isFinite(group.order) ? group.order : index }))
+        .sort((a, b) => {
+          if (a.id === DEFAULT_TAG_GROUP_ID) return -1;
+          if (b.id === DEFAULT_TAG_GROUP_ID) return 1;
+          return a.order - b.order;
+        });
+    }
+
+    function tagTriggerParts() {
+      // 0.7.4（N）：收起/展开的 emoji 串也用显示顺序，与下拉一致。
+      const tags = store && typeof store.getTagsForDisplay === 'function'
+        ? store.getTagsForDisplay().flatMap((section) => section.tags)
+        : (typeof store.getTags === 'function' ? store.getTags() : []);
+      const selected = tags.filter((tag) => filters.tags.has(tag.id));
+      const emojis = selected
+        .map((tag) => tag.emoji || [...(tag.name || '')][0] || '')
+        .filter(Boolean)
+        .join(' ');
+      return { selected, emojis, count: selected.length };
+    }
+
+    /** 完整列表给 aria-label / title，收起成数量时也不丢名字。 */
+    function applyTagTriggerFit(trigger, measure, labelEl) {
+      // 0.7.5：选中「无标签」时直接显示这四个字（不带 emoji），不过宽度判定。
+      if (filters && filters.noTag) {
+        labelEl.textContent = t('tags.none');
+        trigger.classList.remove('is-compact');
+        trigger.title = t('tags.none');
+        trigger.setAttribute('aria-label', `${t('tags.filterAria')}：${t('tags.none')}`);
+        return;
+      }
+      const { selected, emojis, count } = tagTriggerParts();
+      if (!count) {
+        labelEl.textContent = t('tags.filter');
+        trigger.classList.remove('is-compact');
+        trigger.setAttribute('aria-label', t('search.filter.tags'));
+        trigger.removeAttribute('title');
+        return;
+      }
+      const aria = t('tags.filterSelected', { names: selected.map((tag) => tag.name).join('、') });
+      trigger.setAttribute('aria-label', aria);
+      trigger.setAttribute('title', aria);
+      measure.textContent = emojis;
+      let padding = 0;
+      try {
+        const computed = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(trigger) : null;
+        if (computed) padding = (parseFloat(computed.paddingLeft) || 0) + (parseFloat(computed.paddingRight) || 0);
+      } catch {
+        padding = 0;
+      }
+      const available = Math.max(0, (trigger.clientWidth || 0) - padding);
+      const needed = measure.scrollWidth || measure.offsetWidth || 0;
+      // 0.7.4（用户）：面板隐藏时 clientWidth 为 0，先按「放不下」收起成数量；
+      // 面板展开或框变宽后由 ResizeObserver / rAF 重算，放得下再回到 emoji。
+      const fits = available > 0 && (needed <= 0 || needed <= available);
+      if (fits) {
+        labelEl.textContent = emojis || t('tags.selectedCount', { count });
+        trigger.classList.remove('is-compact');
+      } else {
+        labelEl.textContent = t('tags.selectedCount', { count });
+        trigger.classList.add('is-compact');
+      }
+    }
+
+    function buildTagFilterRow() {
+      const tags = store && typeof store.getTagsForDisplay === 'function'
+        ? store.getTagsForDisplay().flatMap((section) => section.tags)
+        : (typeof store.getTags === 'function' ? store.getTags() : []);
+      const groups = tagGroupsForFilter();
+      const known = new Set(groups.map((group) => group.id));
+
+      // 0.7.5：所有条目（含「无标签」）的选中态与触发器文案由这里统一刷新，
+      // 避免两套代码各自改 aria-selected。
+      const syncOptions = () => {
+        for (const opt of menu.querySelectorAll('.search__tag-option')) {
+          const id = opt.dataset.tagId || '';
+          const on = id ? filters.tags.has(id) : filters.noTag;
+          opt.setAttribute('aria-selected', String(on));
+          const box = opt.querySelector('.search__tag-check');
+          if (box) box.innerHTML = icon(on ? 'check' : 'plus', { size: 'sm' });
+        }
+        trigger.classList.toggle('has-filter', filters.tags.size > 0 || filters.noTag);
+        trigger.classList.remove('is-compact');
+        filterBtn.classList.toggle('has-filter', filtersActive());
+        applyTagTriggerFit(trigger, measure, labelEl);
+        runQuery(input.value);
+      };
+
+      const optionFor = (tag) => {
+        const on = filters.tags.has(tag.id);
+        const option = el('button', {
+          class: 'search__tag-option',
+          type: 'button',
+          role: 'option',
+          'aria-selected': String(on),
+          dataset: { tagId: tag.id },
+          on: {
+            click: () => {
+              // 0.7.5：点具体标签时自动取消「无标签」，两者互斥。
+              filters.noTag = false;
+              if (filters.tags.has(tag.id)) filters.tags.delete(tag.id);
+              else filters.tags.add(tag.id);
+              syncOptions();
+            },
+          },
+        }, [
+          el('span', { class: 'search__tag-check', html: icon(on ? 'check' : 'plus', { size: 'sm' }) }),
+          el('span', { class: 'search__tag-option-name', text: tagDisplayName(tag) }),
+        ]);
+        return option;
+      };
+
+      const menuChildren = [];
+      // 0.7.5（用户「筛选标签下拉多一个选择无标签」）：最上面一项，位于所有
+      // 分组标题之前，与分组之间一条分隔线；点它清空已选标签，反之亦然。
+      const noTagOn = Boolean(filters.noTag);
+      const noTagOption = el('button', {
+        class: 'search__tag-option search__tag-option--notag',
+        type: 'button',
+        role: 'option',
+        'aria-selected': String(noTagOn),
+        dataset: { tagId: '' },
+        on: {
+          click: () => {
+            filters.noTag = !filters.noTag;
+            if (filters.noTag) filters.tags.clear();
+            syncOptions();
+          },
+        },
+      }, [
+        el('span', { class: 'search__tag-check', html: icon(noTagOn ? 'check' : 'plus', { size: 'sm' }) }),
+        el('span', { class: 'search__tag-option-name', text: t('tags.none') }),
+      ]);
+      menuChildren.push(noTagOption);
+      if (tags.length) menuChildren.push(el('div', { class: 'search__tag-sep', role: 'presentation' }));
+      if (tags.length) {
+        // 0.7.1：标签下拉按分组分段，组名是小标题、不可点选（并集语义不变）。
+        // 0.7.5（用户「下拉菜单的分组也可以折叠」）：标题整行是 button，共用
+        // tag-dropdown-collapse 的会话内折叠状态；折叠只藏条目，已选状态不受影响。
+        for (const group of groups) {
+          const rows = tags.filter((tag) => (known.has(tag.groupId) ? tag.groupId : DEFAULT_TAG_GROUP_ID) === group.id);
+          if (!rows.length) continue;
+          const groupId = group.id;
+          const bodyId = `search-tag-group-${groupId}`;
+          const body = el('div', {
+            class: 'search__tag-group-body',
+            role: 'presentation',
+            id: bodyId,
+          });
+          for (const tag of rows) body.append(optionFor(tag));
+          const isCollapsed = isGroupCollapsed(groupId);
+          const caret = el('span', {
+            class: 'search__tag-group-caret',
+            'aria-hidden': 'true',
+            text: isCollapsed ? '▸' : '▾',
+          });
+          const label = el('span', {
+            class: 'search__tag-group-name',
+            text: `${group.name} ${t('settings.tags.groupCount', { count: rows.length })}`,
+          });
+          const toggle = el('button', {
+            class: 'search__tag-group-toggle',
+            type: 'button',
+            'aria-expanded': String(!isCollapsed),
+            'aria-controls': bodyId,
+            on: {
+              click: () => {
+                const next = toggleGroupCollapsed(groupId);
+                body.hidden = next;
+                toggle.setAttribute('aria-expanded', String(!next));
+                caret.textContent = next ? '▸' : '▾';
+              },
+            },
+          }, [caret, label]);
+          body.hidden = isCollapsed;
+          menuChildren.push(el('div', { class: 'search__tag-group', role: 'presentation' }, [toggle]), body);
+        }
+      } else {
+        menuChildren.push(el('p', { class: 'search__tag-empty', text: t('settings.tags.empty') }));
+      }
+
+      const menu = el('div', {
+        class: 'search__tag-menu',
+        role: 'listbox',
+        'aria-multiselectable': 'true',
+        'aria-label': t('search.filter.tags'),
+        hidden: true,
+      }, menuChildren);
+
+      const labelEl = el('span', { class: 'search__tag-trigger-text' });
+      const measure = el('span', {
+        class: 'search__tag-trigger-measure',
+        'aria-hidden': 'true',
+      });
+      const trigger = el('button', {
+        class: 'btn btn--ghost search__tag-trigger',
+        type: 'button',
+        'aria-haspopup': 'listbox',
+        'aria-expanded': 'false',
+        'aria-label': t('search.filter.tags'),
+      }, [labelEl, measure]);
+      trigger.classList.toggle('has-filter', filters.tags.size > 0);
+      applyTagTriggerFit(trigger, measure, labelEl);
+      // 面板展开或布局刚落地时 clientWidth 才有值；下一帧再量一次，避免首帧误判。
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          if (trigger.isConnected) applyTagTriggerFit(trigger, measure, labelEl);
+        });
+      }
+
+      // 窗口/容器变宽变窄时重新判定；面板重建或关闭时断开旧观察。
+      if (typeof ResizeObserver === 'function') {
+        tagTriggerObserver = new ResizeObserver(() => applyTagTriggerFit(trigger, measure, labelEl));
+        tagTriggerObserver.observe(trigger);
+      }
+
+      /* 0.7.6（用户「下拉菜单默认都是全展开，不用记忆折叠与否」）：每次打开都重置为全展开，
+         本次打开期间仍可折叠；关闭即丢弃（不写 localStorage、不同步服务端）。
+         菜单只在面板构建时生成一次，所以这里同时把 DOM 的折叠态复位。 */
+      const resetGroupCollapse = () => {
+        expandAllGroups();
+        for (const toggle of menu.querySelectorAll('.search__tag-group-toggle')) {
+          toggle.setAttribute('aria-expanded', 'true');
+          const caret = toggle.querySelector('.search__tag-group-caret');
+          if (caret) caret.textContent = '▾';
+        }
+        for (const body of menu.querySelectorAll('.search__tag-group-body')) body.hidden = false;
+      };
+
+      /* 0.7.6（用户「下拉菜单点击旁边失焦的时候也关闭」）：点菜单与触发器以外的区域关闭。
+         pointerdown 捕获（鼠标与触屏都覆盖）；打开时只挂一个监听，关闭即解绑。 */
+      function onMenuOutside(event) {
+        if (event.target instanceof Node && (menu.contains(event.target) || trigger.contains(event.target))) return;
+        closeMenu();
+      }
+
+      function closeMenu() {
+        if (menu.hidden) return;
+        menu.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+        document.removeEventListener('pointerdown', onMenuOutside, true);
+      }
+
+      trigger.addEventListener('click', () => {
+        if (menu.hidden) {
+          resetGroupCollapse();
+          menu.hidden = false;
+          trigger.setAttribute('aria-expanded', 'true');
+          document.addEventListener('pointerdown', onMenuOutside, true);
+          applyTagTriggerFit(trigger, measure, labelEl);
+        } else {
+          closeMenu();
+        }
+      });
+      menu.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          closeMenu();
+          trigger.focus();
+          return;
+        }
+        // 0.7.5：↑/↓ 在可见条目间移动（含顶部「无标签」），Home/End 到首末，
+        // Enter/Space 选中；折叠组里的条目被 [hidden] 排除，不参与遍历。
+        const opts = [...menu.querySelectorAll('.search__tag-option')].filter((opt) => !opt.closest('[hidden]'));
+        const at = opts.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (!opts.length) return;
+          const step = e.key === 'ArrowDown' ? 1 : -1;
+          const from = at < 0 ? (step > 0 ? -1 : 0) : at;
+          opts[(from + step + opts.length) % opts.length].focus();
+          return;
+        }
+        if (e.key === 'Home' || e.key === 'End') {
+          e.preventDefault();
+          if (opts.length) (e.key === 'Home' ? opts[0] : opts[opts.length - 1]).focus();
+          return;
+        }
+        if (e.key === 'Enter' || e.key === ' ') {
+          if (at < 0) return;
+          e.preventDefault();
+          document.activeElement.click();
+        }
+      });
+
+      const clearBtn = el('button', {
+        class: 'btn btn--ghost search__tag-clear',
+        type: 'button',
+        text: t('tags.clear'),
+        on: {
+          click: () => {
+            filters.tags.clear();
+            // 0.7.5：清除同时清掉「无标签」。
+            filters.noTag = false;
+            renderFilterPanel();
+            runQuery(input.value);
+          },
+        },
+      });
+      if (tags.length) menu.append(el('div', { class: 'search__tag-menu-foot' }, [clearBtn]));
+
+      return el('div', { class: 'search__filter-row', role: 'group', 'aria-label': t('search.filter.tags') }, [
+        el('span', { class: 'search__filter-label', text: t('search.filter.tags') }),
+        el('div', { class: 'search__tag-filter' }, [trigger, menu]),
+      ]);
+    }
+
     filterPanel.append(
       calRow,
+      buildTagFilterRow(),
       colorRow,
       dateRow,
       el('div', { class: 'search__filter-foot' }, [clearBtn]),
@@ -844,8 +1207,21 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     if (isTask && ev.done) meta += ` ${t('search.result.done')}`;
 
     const fallbackTitle = isTask ? t('search.result.untitledTask') : t('search.result.untitled');
+    // 0.7.5（用户「搜索里的任务没带emoji」）：条目标题统一走显示层拆分，
+    // 标题自带 emoji 就用拆出的那个、没带但有标签则用标签 emoji 兜底；
+    // 无标签无 emoji 时与原来一致。事件与任务共用这一处。
+    const titleTag = tagForRecord(ev);
+    const split = splitTagTitle(titleTag, ev.title || fallbackTitle);
     const titleEl = el('span', { class: 'search__title' });
-    titleEl.append(highlight(ev.title || fallbackTitle, q));
+    if (split.emoji) {
+      titleEl.append(
+        el('span', { class: 'search__title-emoji', 'aria-hidden': 'true', text: split.emoji }),
+        el('span', { class: 'tag-gap' }, [document.createTextNode(' ')]),
+      );
+    }
+    const titleText = el('span', { class: 'search__title-text' });
+    titleText.append(highlight(split.label || fallbackTitle, q));
+    titleEl.append(titleText);
 
     // Tasks get the same ring-with-check marker the calendar chips use, so a
     // result reads as a task at a glance (and as done when it is).
@@ -918,6 +1294,9 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     // input picked a result and closed the overlay mid-word. (keyCode 229
     // covers engines that don't set isComposing on the final Enter.)
     if (e.isComposing || e.keyCode === 229) return;
+    // 0.7.5：标签下拉自己处理键盘（↑/↓/Home/End/Enter/Escape）。全局监听是
+    // 捕获阶段，不先放行的话 Enter 会被当成「选中结果」并关掉整个搜索。
+    if (e.target && typeof e.target.closest === 'function' && e.target.closest('.search__tag-menu')) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       if (docked) {

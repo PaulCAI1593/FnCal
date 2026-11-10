@@ -262,21 +262,17 @@ describe('0.2.19 D1 跨天定时事件按多日日程拼接', () => {
       now: DAYS[0],
       actions: VIEW_ACTIONS,
     });
-    const cols = [...node.querySelectorAll('.timegrid__allday-col')];
-    const barOf = (i) =>
-      [...cols[i].querySelectorAll('.allday-chip')].find(
-        (c) => !c.classList.contains('allday-chip--placeholder'),
-      );
-    const on18 = barOf(1);
-    const on19 = barOf(2);
-    expect(on18.classList.contains('chip--span-start')).toBe(true);
-    expect(on19.classList.contains('chip--span-end')).toBe(true);
-    // 行内相接不画箭头
-    expect(on18.querySelector('.chip__cont--after')).toBeNull();
-    // 定时事件已经整体挪到多日轨，时间网格里一格都没有
-    expect(node.querySelectorAll('.tevent')).toHaveLength(0);
+    // 0.7.9（D，用户：周/四日/日里跨天定时事件应当进时间轴）：定时事件不再整体挪到
+    // 多日轨——按天裁进时间网格，第一天到 24:00、第二天从 00:00 起，全天事件才进多日轨。
+    // 旧断言（18/19 日两条 `chip--span-start/end` 连条、行内相接无箭头）随之作废。
+    expect(node.querySelectorAll('.allday-chip')).toHaveLength(0);
+    expect(node.querySelectorAll('.tevent')).toHaveLength(2);
+    const dayTimes = [...node.querySelectorAll('.tevent__time')].map((el) => el.textContent);
+    expect(dayTimes).toContain('22:00 – 24:00');
+    expect(dayTimes).toContain('00:00 – 02:00');
 
     // 跨周的同一件事：本周最后一格（22 日）行末画「>」，下一周行首（23 日）画「<」
+    // 0.7.9（D）：多日轨现在只服务全天事件，箭头用例改用全天事件（定时事件已进时间轴）。
     const WEEK = [16, 17, 18, 19, 20, 21, 22].map((d) => new Date(2026, 7, d));
     const NEXT_WEEK = [23, 24, 25, 26, 27, 28, 29].map((d) => new Date(2026, 7, d));
     const gridSettings = {
@@ -286,7 +282,7 @@ describe('0.2.19 D1 跨天定时事件按多日日程拼接', () => {
       showWeekNumbers: false,
       hour12: false,
     };
-    const cross = timedEv('t7', '连轴', at(21, 23, 0), at(25, 1, 0));
+    const cross = { ...timedEv('t7', '连轴', at(21, 23, 0), at(25, 1, 0)), allDay: true };
     const barIn = (days, index) => {
       const { node: grid } = renderTimeGrid(days, {
         store: rangeStore([cross]),
@@ -804,7 +800,7 @@ describe('0.2.19 D10 + 0.2.20 E10 「还有 N 个」悬停浮层（1 秒、圆�
     expect(pop.querySelectorAll('.month__more-row')).toHaveLength(2);
   });
 
-  it('行文本是「HH:mm 标题」，左侧 8px 圆点、长标题省略', () => {
+  it('行文本是「HH:mm 标题」，圆点按 0.7.8 口径隐藏、长标题省略', () => {
     const node = renderMonthWithLayout(hiddenFixture());
     hover(moreButton(node));
     vi.advanceTimersByTime(1000);
@@ -813,12 +809,14 @@ describe('0.2.19 D10 + 0.2.20 E10 「还有 N 个」悬停浮层（1 秒、圆�
     expect(row.querySelector('.month__more-time').textContent).toBe('19:00');
     expect(row.querySelector('.month__more-title').textContent).toBe('台球');
     expect(row.textContent).toBe('19:00台球');
-    // 0.2.20（E10）：竖条改 8px 圆点（与月度 chip 的点同款），标题仍省略
+    // 0.2.20（E10）：竖条改 8px 圆点（与月度 chip 的点同款），标题仍省略。
+    // 0.7.8（用户：月格统一「左竖条 + 透明底」，全天为实色块）：圆点一律不画——
+    // 浮层行仍复用同一个节点，但 CSS `display: none`，行里只剩时间 + 标题。
     const dot = row.querySelector('.chip__dot');
     expect(dot).toBeTruthy();
     expect(row.firstElementChild).toBe(dot);
-    expect(rule(viewsCss, '.chip__dot')).toContain('width: 8px');
-    expect(rule(viewsCss, '.chip__dot')).toContain('border-radius: 50%');
+    expect(rule(viewsCss, '.chip__dot')).toContain('display: none');
+    expect(rule(viewsCss, '.chip__dot')).not.toContain('width: 8px');
     expect(rule(viewsCss, '.month__more-row')).not.toContain('box-shadow: inset 3px 0 0');
     expect(rule(viewsCss, '.month__more-title')).toContain('text-overflow: ellipsis');
     // 0.2.24（H6）：容器改可交互（持续区 = 按钮 ∪ 浮层），行不再各自接管指针事件

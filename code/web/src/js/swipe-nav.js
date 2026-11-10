@@ -30,9 +30,22 @@ export const SWIPE_TAP_SLOP = 8;
 export const SWIPE_CANCEL_MIN_DX = 60;
 export const SWIPE_CANCEL_AXIS_RATIO = 2;
 
+/**
+ * 纯函数：设备有没有「手指横滑」的能力。
+ *
+ * 0.7.8（用户：「另外平板等，应该也能支持手指左右滑动」）：启用条件从「窗口 ≤720」
+ * 改成「设备有触控」——平板（768–1280）此前因为没有横滑而只能点箭头。鼠标仍不触发
+ * （见 onPointerDown 的 pointerType 判断），所以带触屏的笔记本用鼠标拖动不会误切。
+ *
+ * @param {{ anyPointerCoarse?: boolean, maxTouchPoints?: number }} [env]
+ */
+export function canSwipe({ anyPointerCoarse = false, maxTouchPoints = 0 } = {}) {
+  if (anyPointerCoarse) return true;
+  return Number(maxTouchPoints) > 0;
+}
+
 /** 纯函数：把一次手势判成 'prev' | 'next' | null。 */
-export function swipeIntent({ dx, dy, durationMs }) {
-  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
+export function swipeIntent({ dx, dy, durationMs }) {  if (!Number.isFinite(dx) || !Number.isFinite(dy)) return null;
   if (!Number.isFinite(durationMs) || durationMs < 0 || durationMs > SWIPE_MAX_MS) return null;
   if (Math.abs(dx) < SWIPE_MIN_DX) return null;
   if (Math.abs(dx) <= Math.abs(dy) * SWIPE_AXIS_RATIO) return null;

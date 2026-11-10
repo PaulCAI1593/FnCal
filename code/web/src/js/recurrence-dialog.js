@@ -11,6 +11,7 @@
  * promise so the calling code stays synchronous and easy to follow.
  */
 import { el } from './dom.js';
+import { enhanceSelect } from './select-listbox.js';
 import { icon } from './icons.js';
 import { ownsEscape } from './time-field.js';
 import { ordinalLabel } from './recurrence.js';
@@ -211,7 +212,7 @@ export function openCustomRecurrence({ rule, startMs, anchorMs = startMs, weekSt
   if (rule && rule.monthlyMode === 'weekday') {
     monthlySelect.value = rule.monthlyNth === -1 ? 'weekday-last' : 'weekday';
   }
-  const monthlyField = el('div', { class: 'field rr-monthly' }, [monthlySelect]);
+  const monthlyField = el('div', { class: 'field rr-monthly' }, [enhanceSelect(monthlySelect)?.wrapper || monthlySelect]);
 
   // ---- Ends ----
   const defaultUntil = rule && rule.until ? new Date(rule.until) : addWeeks(start, 13);
@@ -292,7 +293,7 @@ export function openCustomRecurrence({ rule, startMs, anchorMs = startMs, weekSt
     el('div', { class: 'modal__body' }, [
       el('div', { class: 'field' }, [
         el('span', { class: 'field__label', text: t('recurrence.field.every') }),
-        el('div', { class: 'rr-every' }, [intervalInput, unitSelect]),
+        el('div', { class: 'rr-every' }, [intervalInput, enhanceSelect(unitSelect)?.wrapper || unitSelect]),
       ]),
       dayField,
       monthlyField,

@@ -16,6 +16,7 @@
  */
 
 import { el, clear } from './dom.js';
+import { enhanceSelect } from './select-listbox.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
 import { mountDialog } from './recurrence-dialog.js';
@@ -436,7 +437,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     select.value = String(trash.retentionDays);
     const retentionRow = el('div', { class: 'settings__row' }, [
       el('span', { class: 'settings__label', text: t('settings.ai.trash.retention') }),
-      el('div', { class: 'settings__control settings__control--inline' }, [select, countHint]),
+      el('div', { class: 'settings__control settings__control--inline' }, [enhanceSelect(select)?.wrapper || select, countHint]),
     ]);
     const clearBtn = el('button', {
       class: 'btn btn--danger ai-trash__clear',
