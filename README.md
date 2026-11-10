@@ -83,9 +83,9 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 **安卓端**：外壳直连你自己的 NAS，填地址就能用，不经过任何中转。桌面可加五款只读卡片：迷你月历、单日日程、月视图、四日视图、日程列表，跟随登录态自动刷新，约 30 分钟更新一次；状态栏与手势条透明，内容留在安全区内。
 
-**安卓下载**：`FnCal-Android-0.3.7.apk` <https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.7/FnCal-Android-0.3.7.apk>，980,649 B，SHA-256 `efb5379ac7f7519edcb490a8aac7ed074cf6c6117a42043172ef9783371ba529`；release 构建 + R8 压缩，包体约为上一版四分之一，可直接覆盖 0.3.6，不用卸载。
+**安卓下载**：`FnCal-Android-0.3.8.apk` <https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.8/FnCal-Android-0.3.8.apk>，988,397 B，SHA-256 `c08f88df7477557ff3c6064f63a7288893f57968494033c665adbd2d082c698c`；release 构建 + R8 压缩，可直接覆盖 0.3.7，不用卸载。
 
-*国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.7/FnCal-Android-0.3.7.apk) 下载同一个包。*
+*国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.8/FnCal-Android-0.3.8.apk) 下载同一个包。*
 
 **还有这些**
 
