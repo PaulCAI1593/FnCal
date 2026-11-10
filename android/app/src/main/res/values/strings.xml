@@ -39,9 +39,32 @@
     <string name="menu_more">更多</string>
     <string name="error_page_title">页面加载失败</string>
     <string name="error_retry">重试</string>
-    <string name="error_change_address">改地址</string>
+    <string name="error_change_address">修改地址</string>
     <string name="error_ssl">证书错误：这是你自己的服务器时，可在地址页打开「允许自签证书」后重试</string>
     <string name="error_load_failed">加载失败：%1$s</string>
+
+    <!-- 0.3.8：加载超时与诊断。标题写一句原因，正文写事实，不写代号。 -->
+    <string name="error_generic_title">页面没有打开</string>
+    <string name="error_timeout_title">加载超时</string>
+    <string name="error_timeout_body">15 秒内没有连上服务器</string>
+    <string name="error_http_title">服务器返回 %1$d</string>
+    <string name="error_http_body">服务器没有返回页面。可以重试，或检查地址。</string>
+    <string name="diag_copy">复制诊断</string>
+    <string name="diag_copied">已复制</string>
+    <string name="diag_none">没有失败的请求记录</string>
+    <string name="diag_status_none">无响应</string>
+    <string name="diag_label_request">请求</string>
+    <string name="diag_label_result">结果</string>
+    <string name="diag_label_error">错误</string>
+    <string name="diag_label_dns">域名解析</string>
+    <string name="diag_label_env">本机</string>
+    <string name="diag_dns_pending">正在解析域名</string>
+    <string name="diag_dns_ok">域名解析成功</string>
+    <string name="diag_dns_fail">域名解析失败</string>
+    <string name="diag_dns_timeout">域名解析超时</string>
+    <string name="diag_ms">毫秒</string>
+    <string name="diag_timeout_message">请求超时（15 秒）</string>
+    <string name="diag_copy_title">FnCal 诊断</string>
     <string name="choose_file">选择文件</string>
     <string name="download_started">开始下载</string>
     <string name="save_done">已保存到 下载/FnCal</string>

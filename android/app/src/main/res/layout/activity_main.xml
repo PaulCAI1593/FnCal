@@ -44,40 +44,120 @@
         android:padding="8dp"
         android:src="@drawable/ic_more_vert" />
 
-    <LinearLayout
+    <!--
+      0.3.8：错误页。标题 → 诊断块（等宽小字、可长按选中）→ 按钮行。
+      小屏可滚动，按钮 48dp 高（点按区不小于 44dp），三按钮等宽，360dp 不换行。
+    -->
+    <ScrollView
         android:id="@+id/error_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="?android:attr/colorBackground"
-        android:gravity="center"
-        android:orientation="vertical"
-        android:paddingLeft="32dp"
-        android:paddingRight="32dp"
+        android:background="@color/bg_shell_surface"
+        android:fillViewport="true"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/error_text"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center"
-            android:textColor="?android:attr/textColorPrimary"
-            android:textSize="15sp" />
+            android:gravity="center_vertical"
+            android:orientation="vertical"
+            android:paddingLeft="20dp"
+            android:paddingTop="24dp"
+            android:paddingRight="20dp"
+            android:paddingBottom="24dp">
 
-        <Button
-            android:id="@+id/btn_retry"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/error_retry" />
+            <TextView
+                android:id="@+id/error_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/error_generic_title"
+                android:textColor="@color/text"
+                android:textFontWeight="600"
+                android:textSize="20sp" />
 
-        <Button
-            android:id="@+id/btn_change_address"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="@string/error_change_address" />
+            <TextView
+                android:id="@+id/error_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:textColor="@color/text_2"
+                android:textSize="13sp" />
 
-    </LinearLayout>
+            <LinearLayout
+                android:id="@+id/diag_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:background="@drawable/bg_card"
+                android:orientation="vertical"
+                android:paddingLeft="14dp"
+                android:paddingTop="12dp"
+                android:paddingRight="14dp"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    android:id="@+id/diag_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="4dp"
+                    android:text="@string/diag_none"
+                    android:textColor="@color/text_2"
+                    android:textIsSelectable="true"
+                    android:textSize="12sp" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/error_actions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:baselineAligned="false"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_retry"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_btn_primary"
+                    android:text="@string/error_retry"
+                    android:textAllCaps="false"
+                    android:textColor="@color/accent_contrast"
+                    android:textFontWeight="600"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btn_change_address"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_btn_secondary"
+                    android:text="@string/error_change_address"
+                    android:textAllCaps="false"
+                    android:textColor="@color/text"
+                    android:textFontWeight="600"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btn_copy_diag"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_btn_secondary"
+                    android:text="@string/diag_copy"
+                    android:textAllCaps="false"
+                    android:textColor="@color/text"
+                    android:textFontWeight="600"
+                    android:textSize="13sp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </ScrollView>
 
 </FrameLayout>

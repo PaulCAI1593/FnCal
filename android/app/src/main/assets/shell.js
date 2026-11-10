@@ -9,6 +9,8 @@
  *
  * 通过 WebView.evaluateJavascript 在 onPageStarted / onPageFinished 注入，
  * 用一个 window 标记防止重复安装。
+ *
+ * 0.3.8：加 fetch 超时（15 秒）与失败诊断上报（window.FnCalDiag）。
  */
 (function () {
     'use strict';
@@ -28,6 +30,93 @@
                 /* 记录失败不影响下载 */
             }
             return url;
+        };
+    }
+
+    /*
+     * 0.3.8：请求超时与诊断。
+     *
+     * 包一层 window.fetch：15 秒没完成就 abort；失败或超时后调
+     * window.FnCalDiag.report 写一条诊断（原生侧只留最近 5 条，同一 URL 只留最新）。
+     * blob: / data: 只在本机读字节，不是网络请求，直接放行、不记录。
+     */
+    var origFetch = window.fetch;
+    if (typeof origFetch === 'function') {
+        window.fetch = function (input, init) {
+            var url = '';
+            try {
+                url = typeof input === 'string' ? input : (input && input.url) || '';
+            } catch (e) {
+                url = '';
+            }
+            if (/^(blob|data|file):/i.test(url)) {
+                return origFetch.apply(window, arguments);
+            }
+            var method = (init && init.method) || (input && input.method) || 'GET';
+            var started = Date.now();
+            var timedOut = false;
+            var cancelled = false;
+            var controller = typeof AbortController === 'function' ? new AbortController() : null;
+            var timer = setTimeout(function () {
+                timedOut = true;
+                if (controller) controller.abort();
+            }, 15000);
+            var options = {};
+            try {
+                if (init) {
+                    for (var key in init) options[key] = init[key];
+                }
+            } catch (e) {
+                /* 复制失败时用空对象，fetch 仍按默认参数发 */
+            }
+            if (controller) options.signal = controller.signal;
+            var callerSignal = init && init.signal;
+            if (callerSignal && typeof callerSignal.addEventListener === 'function') {
+                if (callerSignal.aborted) cancelled = true;
+                else {
+                    callerSignal.addEventListener('abort', function () {
+                        cancelled = true;
+                        if (controller) controller.abort();
+                    });
+                }
+            }
+            function finish() {
+                clearTimeout(timer);
+            }
+            function report(status, message) {
+                try {
+                    if (window.FnCalDiag && typeof window.FnCalDiag.report === 'function') {
+                        window.FnCalDiag.report(
+                            JSON.stringify({
+                                url: url,
+                                method: method,
+                                status: status,
+                                ms: Date.now() - started,
+                                message: message,
+                            }),
+                        );
+                    }
+                } catch (e) {
+                    /* 原生接口不可用时保持静默 */
+                }
+            }
+            return origFetch
+                .call(window, input, options)
+                .then(function (response) {
+                    finish();
+                    if (!response.ok) report(response.status, 'HTTP ' + response.status);
+                    return response;
+                })
+                .catch(function (error) {
+                    finish();
+                    if (!cancelled) {
+                        var message = timedOut
+                            ? '请求超时（15 秒）'
+                            : (error && error.message) || '网络错误';
+                        report(0, message);
+                    }
+                    throw error;
+                });
         };
     }
 

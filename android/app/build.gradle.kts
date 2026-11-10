@@ -11,11 +11,11 @@ android {
         applicationId = "com.paulcai1593.fncal.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 307
-        versionName = "0.3.7"
+        versionCode = 308
+        versionName = "0.3.8"
 
         // 外壳版本与 FnCal 服务端版本无关；UA 里带的是壳版本。
-        resValue("string", "fncal_shell_version", "0.3.7")
+        resValue("string", "fncal_shell_version", "0.3.8")
 
         // 0.3.7（包体瘦身）：只保留中英两种语言资源。AGP 8.5.2 用新的
         // resourceConfigurations；resConfigs 已弃用，别用。

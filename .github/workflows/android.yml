@@ -54,8 +54,8 @@ jobs:
           AAPT="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/aapt"
           # 0.3.0（§A5）：版本号必须真的打进包里，避免 tag 与包内容对不上。
           "$AAPT" dump badging "$APK" | tee badging.txt | head -6
-          grep -q "versionCode='307'" badging.txt
-          grep -q "versionName='0.3.7'" badging.txt
+          grep -q "versionCode='308'" badging.txt
+          grep -q "versionName='0.3.8'" badging.txt
           # 0.2.1（§S1）：打印签名证书指纹；同一签名的包才能覆盖升级。
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner"
           "$APKSIGNER" verify --print-certs "$APK" | tee apk-signature.txt
@@ -71,16 +71,18 @@ jobs:
             android/app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
 
+      # 0.3.8：只在 main 上发布 Release；分支构建只出 artifact，用户验收前不公开发。
       - name: Publish release asset
+        if: github.ref == 'refs/heads/main'
         working-directory: android
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
           APK=app/build/outputs/apk/release/app-release.apk
-          OUT=FnCal-Android-0.3.7.apk
+          OUT=FnCal-Android-0.3.8.apk
           cp "$APK" "$OUT"
-          TAG=android-v0.3.7
+          TAG=android-v0.3.8
           if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$OUT"; then
             echo "资产 $OUT 已存在，跳过覆盖（已发布的包不改字节）"
             exit 0
@@ -89,8 +91,8 @@ jobs:
             echo "release $TAG 已存在，覆盖资产"
           else
             gh release create "$TAG" \
-              --title "FnCal Android 0.3.7" \
-              --notes "安卓外壳测试包（固定测试签名，可直接覆盖升级）。本版改为 release 构建并开启 R8，包体约减半；功能与 0.3.6 相同。更新仍是两源：先试 Gitee 镜像，清单过期或不可用再试 GitHub 直通；清单里的 apkCn 与 GitHub Release 包互为备份，下载失败自动换一个再试一次。继续带 0.3.5 的服务器版本刷新与 0.3.4 的更新安装与卡片改版。到点提醒不在本版。" \
+              --title "FnCal Android 0.3.8" \
+              --notes "安卓外壳测试包（固定测试签名，可直接覆盖升级）。本版修「打不开页面一直转圈」：页面 15 秒未完成显示「加载超时」，服务器 403 / 5xx 显示带状态码的错误页；错误页给出失败请求与域名解析诊断，可长按选中或一键复制。网页请求也加 15 秒超时。更新仍是两源：先试 Gitee 镜像，清单过期或不可用再试 GitHub 直通；清单里的 apkCn 与 GitHub Release 包互为备份，下载失败自动换一个再试一次。桌面卡片与四日视图沿用 0.3.7。" \
               --latest=false
           fi
           gh release upload "$TAG" "$OUT" --clobber

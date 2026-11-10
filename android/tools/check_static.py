@@ -353,9 +353,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 307": app_gradle,
-        'versionName = "0.3.7"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.7")': app_gradle,
+        "versionCode = 308": app_gradle,
+        'versionName = "0.3.8"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.3.8")': app_gradle,
         # 0.3.7（包体瘦身）：release 变体必须真的开 R8 与资源收缩，并挂固定签名。
         "isMinifyEnabled = true": app_gradle,
         "isShrinkResources = true": app_gradle,
@@ -906,7 +906,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.7"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.8"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -1605,12 +1605,12 @@ def check_release_workflow() -> None:
         "release apk path": "app/build/outputs/apk/release/app-release.apk" in wf,
         "no debug apk path": "apk/debug/app-debug.apk" not in wf,
         "build step name": "Build release APK" in wf,
-        "badging versionCode 307": "versionCode='307'" in wf,
-        "badging versionName 0.3.7": "versionName='0.3.7'" in wf,
+        "badging versionCode 308": "versionCode='308'" in wf,
+        "badging versionName 0.3.8": "versionName='0.3.8'" in wf,
         "artifact name": "FnCal-Android-release" in wf,
         "mapping upload": "app/build/outputs/mapping/release/mapping.txt" in wf,
-        "TAG android-v0.3.7": "TAG=android-v0.3.7" in wf,
-        "OUT 0.3.7": "OUT=FnCal-Android-0.3.7.apk" in wf,
+        "TAG android-v0.3.8": "TAG=android-v0.3.8" in wf,
+        "OUT 0.3.8": "OUT=FnCal-Android-0.3.8.apk" in wf,
         "signature pin": "SHA-256 digest: 0a7889854bb2e8a82153a15d59a348676d772a8a22f7c971cf98a7f1c08c3ace" in wf,
     }
     for label, good in checks.items():
