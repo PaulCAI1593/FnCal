@@ -216,7 +216,7 @@ describe('0.7.16 · applyTeventTimeFit（0.7.17 定稿：按块高分行、时�
   });
 });
 
-describe('0.7.16 · 时间的唯一降级链（0.7.17 定稿：区间 → 开始 → 省略）', () => {
+describe('0.7.16 · 时间的唯一降级链（0.7.17 定稿：区间 → 开始；0.7.26 多行块补小时档）', () => {
   // 10px 等宽数字实测：完整区间 63px、开始时间 28px、空格 3px；emoji 与汉字按 12px。
   const M2 = (s) => ({ '10:00-10:45': 63, '10:00': 28, '10:00-': 30, ' ': 3, '📌': 12, '测': 12 })[s] ?? 8;
 
@@ -271,12 +271,22 @@ describe('0.7.16 · 时间的唯一降级链（0.7.17 定稿：区间 → 开始
     expect(block.querySelector('.tevent__time').textContent).toBe('10:00');
   });
 
-  it('连开始时间都放不下：M-hidden，时间整段省略并上报（不出现半截数字）', () => {
+  // 0.7.26（总监 2026-11-12 派单，用户「多行的时候时间至少保证一行；名称可以被省略
+  // 或隐藏，时间不能没有」）：多行块删除「整段省略时间」档，改为小时档 `M-hour`。
+  it('连开始时间都放不下：降为 M-hour，只留小时，绝不整段省略（0.7.26）', () => {
     const block = run(20);
-    expect(block.dataset.teventTier).toBe('M-hidden');
-    expect(block.querySelector('.tevent__time').textContent).toBe('');
+    expect(block.dataset.teventTier).toBe('M-hour');
+    expect(block.querySelector('.tevent__time').textContent).toBe('10');
     expect(block.querySelector('.tevent__title-text').textContent).toBe('评审会');
-    expect(takeTimeFitReports()[0]).toMatchObject({ reason: 'time-hidden' });
+    expect(takeTimeFitReports()).toHaveLength(0);
+  });
+
+  // 0.7.26：连小时都放不下（宽 6px < 小时宽 8px）时仍保留小时，只上报 `time-overflow`。
+  it('连小时都放不下：保留小时并上报 time-overflow（0.7.26）', () => {
+    const block = run(6);
+    expect(block.dataset.teventTier).toBe('M-hour');
+    expect(block.querySelector('.tevent__time').textContent).toBe('10');
+    expect(takeTimeFitReports()[0]).toMatchObject({ reason: 'time-overflow' });
   });
 
   it('任何宽度都不出现「半截数字 + 省略号」', () => {
@@ -284,8 +294,8 @@ describe('0.7.16 · 时间的唯一降级链（0.7.17 定稿：区间 → 开始
       const block = run(width);
       const text = block.querySelector('.tevent__time').textContent;
       expect(text).not.toContain('…');
-      // 文案只允许三种形态：完整区间、开始时间、空。
-      expect(['10:00-10:45', '10:00', '']).toContain(text);
+      // 文案只允许三种形态：完整区间、开始时间、小时（0.7.26 起多行块不再允许空）。
+      expect(['10:00-10:45', '10:00', '10']).toContain(text);
       takeTimeFitReports();
     }
   });
@@ -298,9 +308,10 @@ describe('0.7.16 · 时间的唯一降级链（0.7.17 定稿：区间 → 开始
     }
   });
 
-  it('单行档与省略档由 CSS 藏时间（display: none）', () => {
+  // 0.7.26（总监 2026-11-12 派单）：多行块已无「藏时间」的档，只剩单行块 `S-name`。
+  it('单行档仍藏时间，多行块已无藏时间的 CSS 档（0.7.26）', () => {
     expect(views).toMatch(/\[data-tevent-tier='S-name'\]\s+\.tevent__time/);
-    expect(views).toMatch(/\[data-tevent-tier='M-hidden'\]\s+\.tevent__time/);
+    expect(views).not.toMatch(/\[data-tevent-tier='M-hidden'\]/);
   });
 });
 

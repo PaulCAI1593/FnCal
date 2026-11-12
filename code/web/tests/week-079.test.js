@@ -199,10 +199,47 @@ describe('0.7.9 E 平板多日条名称跨格显示', () => {
 
     const label = rail.querySelector('.allday-rail-label');
     expect(label).not.toBeNull();
-    expect(label.textContent).toBe('📌 产品评审会议');
+    // 0.7.25（用户：多日条上出现两个 emoji；总监 2026-11-12 派单）：标签层只画名称，emoji 由
+    // chip 内仍然可见的 `.allday-chip__tag` 提供——两层都画 emoji 就会画两次。
+    expect(label.textContent).toBe('产品评审会议');
+    // 同一条多日条上 emoji 只有一个：chip 的 tag（1）＋ 标签层文本里的 emoji（0）。
+    const railEmoji = (label.textContent.match(/\p{Extended_Pictographic}/gu) || []).length;
+    expect(chip1.querySelectorAll('.allday-chip__tag').length + railEmoji).toBe(1);
     // 首段标题左缘 10 → 末段右缘 600（整条宽 590，远大于首段的 60）。
     expect(label.style.width).toBe('590px');
     expect(title.style.visibility).toBe('hidden');
+  });
+
+  // 0.7.25（用户：多日条上出现两个 emoji）：单格多日条没有标签层，emoji 只在 chip 里，
+  // 数量仍然只能是 1，改标签层文案不能把它带丢或带重。
+  it('单格多日条（无标签层）仍是 1 个 emoji，不回归', () => {
+    const rail = document.createElement('div');
+    rail.className = 'timegrid__allday-cols';
+    const chip = document.createElement('div');
+    chip.className = 'allday-chip allday-chip--tagged';
+    chip.dataset.focusKey = 'ev:3';
+    const emoji = document.createElement('span');
+    emoji.className = 'allday-chip__tag';
+    emoji.textContent = '📌';
+    const gap = document.createElement('span');
+    gap.className = 'tag-gap';
+    gap.textContent = ' ';
+    const title = document.createElement('span');
+    title.className = 'allday-chip__title';
+    title.textContent = '产品评审会议';
+    chip.append(emoji, gap, title);
+    rail.append(chip);
+    const root = document.createElement('div');
+    root.append(rail);
+    rail.getBoundingClientRect = () => box(0, 0, 300, 30);
+    title.getBoundingClientRect = () => box(10, 8, 200, 16);
+
+    applyAllDayRailLabels(root);
+
+    expect(rail.querySelector('.allday-rail-label')).toBeNull();
+    expect(chip.querySelectorAll('.allday-chip__tag').length).toBe(1);
+    expect(title.style.visibility).toBe('');
+    expect(title.textContent).toBe('产品评审会议');
   });
 
   it('单格条不换层（320 档行为不变）', () => {

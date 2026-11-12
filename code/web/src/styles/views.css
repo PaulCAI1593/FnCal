@@ -926,7 +926,8 @@ body.is-dragging .tevent--resizing * {
   min-width: 0;
 }
 /* 0.7.17（用户定稿，总监 m01931）：时间固定 1 行，永不折行、永不省略号。
-   放不下只降一档：完整区间 `18:30-19:00` → 开始时间 `18:30` → 整段省略并上报。
+   多行块的降档链（0.7.26）：完整区间 `18:30-19:00` → 开始时间 `18:30` → 小时 `18`，
+   时间永不为空；单行块仍可整段省略交给左侧时间轴。
    `text-overflow: clip` 是兜底，绝不出现 `18:…` 这种半截数字。 */
 .tevent__time {
   font-size: 10px;
@@ -937,6 +938,10 @@ body.is-dragging .tevent--resizing * {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;
+  /* 0.7.26（总监 2026-11-12，用户「名称可以被省略或隐藏，时间不能没有」）：
+     时间是不可收缩的第 1 行——块内溢出的账只记在名称与地点上，桌面 Chromium
+     实测会被压到 11.8px / 1.8px 的正是这条 flex 收缩路径。 */
+  flex: 0 0 auto;
   /* 0.7.15（用户：时间在第一行）：DOM 里名称在前、时间在后；三档排布都把时间
      提到第一行（A/B 竖排的第一行、C 横排的第一个）。 */
   order: -1;
@@ -975,11 +980,11 @@ body.is-dragging .tevent--resizing * {
    → S3 开始+emoji → S4 只小时+emoji（窄到 28.2px 时 S4 紧排）。
    档位由 JS 按块实测高度与宽度写在 `data-tevent-tier`：
    - `S3` / `S4` 只让名称文字（保留 emoji，用户 m01091「最短 18 ⚽」）；
-   - `S-name`（连 `18 ⚽` 都放不下）与 `M-hidden` 让时间；
-   - `M-range` / `M-start` = 时间放第 1 行，其余行给名称与地点。
+   - `S-name`（连 `18 ⚽` 都放不下，仅单行块）让时间；
+   - `M-range` / `M-start` / `M-hour` = 时间放第 1 行（0.7.26 起多行块没有「让时间」的档），
+     其余行给名称与地点。
    时间永不折行、永不省略号。 */
-.tevent[data-tevent-tier='S-name'] .tevent__time,
-.tevent[data-tevent-tier='M-hidden'] .tevent__time { display: none; }
+.tevent[data-tevent-tier='S-name'] .tevent__time { display: none; }
 .tevent[data-tevent-tier='S3'] .tevent__title-text,
 .tevent[data-tevent-tier='S3'] .tag-gap,
 .tevent[data-tevent-tier='S4'] .tevent__title-text,

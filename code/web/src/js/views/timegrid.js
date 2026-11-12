@@ -391,9 +391,10 @@ function blockContentWidth(block) {
  * 行数按块**实测高度**分配——第 1 行时间（固定 1 行），中间各行 `emoji + 名称`
  * （名称按剩余行数折行），最后 1 行地点（固定 1 行，放不下用省略号）。
  *
- * 时间的唯一降级链：完整区间 `18:30-19:00` → 开始时间 `18:30` → 省略（上报
- * `time-hidden`）。不允许 `18:3…` 这种半截数字，时间永不折行、永不省略号。
- * 只有一行高的块：先保 `emoji + 名称`，时间让给左侧时间轴。
+ * 时间的唯一降级链（0.7.26 起多行块）：完整区间 `18:30-19:00` → 开始时间 `18:30`
+ * → 小时 `18`（上报 `time-overflow` 仅在连小时都放不下时）。不允许 `18:3…` 这种
+ * 半截数字，时间永不折行、永不省略号；多行块的时间永不为空。
+ * 只有一行高的块：先保 `emoji + 名称`，时间让给左侧时间轴（`S-name` 仍允许）。
  */
 const SHORT_TIER_GAP = 5;
 /**
@@ -536,6 +537,25 @@ export function teventPriorityAudit({
   return { violations };
 }
 
+/**
+ * 0.7.26（总监 2026-11-12 派单，用户「名称可以被省略或隐藏，时间不能没有」）：
+ * 多行块的时间验收不变量。纯函数，探针页用真实渲染值调用、单测注入度量值判定。
+ * - 多行块（`maxLines ≥ 2`）时间文本不得为空；
+ * - 多行块时间节点实测高不得小于一个行高（防 CSS flex 收缩把它压扁）；
+ * - `M-hidden` 这一档必须已不存在。
+ * 单行块（`maxLines ≤ 1`）仍允许 `S-name`（时间让给左侧时间轴，0.7.17 口径）。
+ */
+export function teventTimeAudit({ maxLines = 0, tier = '', text = '', height = 0, lineH = 0 } = {}) {
+  const violations = [];
+  if (Number(maxLines) < 2) return { violations };
+  if (!String(text || '').trim()) violations.push({ rule: 'multi-time-empty', tier });
+  const h = Number(height) || 0;
+  const lh = Number(lineH) || 0;
+  if (lh > 0 && h + 0.5 < lh) violations.push({ rule: 'multi-time-collapsed', height: h, lineH: lh, tier });
+  if (tier === 'M-hidden') violations.push({ rule: 'tier-m-hidden', tier });
+  return { violations };
+}
+
 function applyTimeTierLadder(block, timeEl, avail, ctx) {
   const { rangeText, startText, measure, metrics } = ctx;
   // 0.7.19（总监 m01475 ②）：幂等——每次重排先清掉上一轮的行结构与 emoji 副本。
@@ -661,6 +681,10 @@ function applyTimeTierLadder(block, timeEl, avail, ctx) {
   // 0.7.20（总监 m02349）：地点只在 L ≥ 4 时出现，具体行数在下面按名称实际行数再定。
   let locLines = 0;
 
+  // 0.7.26（总监 2026-11-12 派单，用户「多行的时候时间至少保证一行；名称可以被省略
+  // 或隐藏，时间不能没有」）：多行块的档序补到小时，删除「整段省略时间」那一档——
+  // 完整区间 → 开始时间 → 小时，时间文本永不为空；只降档、不裁字（不出现 `18:3…`）。
+  if (block.dataset) delete block.dataset.teventTimeOverflow;
   let tier;
   let text;
   if (fits(rangeW)) {
@@ -670,17 +694,23 @@ function applyTimeTierLadder(block, timeEl, avail, ctx) {
     tier = 'M-start';
     text = startText;
   } else {
-    // 最后手段：整段省略时间（不出现 `18:3…` 半截数字），上报后由名称接管。
-    tier = 'M-hidden';
-    text = '';
-    reportTimeClipped('time-hidden', block, {
-      avail: Math.round(avail * 10) / 10,
-      needed: Math.round(startW * 10) / 10,
-    });
+    tier = 'M-hour';
+    text = startText.split(':')[0] || startText;
+    if (!fits(hourW)) {
+      // 连小时都放不下（内容宽 < 约 15px）：仍保留小时并上报，绝不退回空白。
+      if (block.dataset) block.dataset.teventTimeOverflow = '1';
+      reportTimeClipped('time-overflow', block, {
+        // 上报此刻的真实文案（小时档），不是上一轮的区间串。
+        text,
+        avail: Math.round(avail * 10) / 10,
+        needed: Math.round(hourW * 10) / 10,
+      });
+    }
   }
 
   timeEl.textContent = text;
-  const timeShown = tier !== 'M-hidden';
+  // 0.7.26：时间恒占第 1 行（CSS `.tevent__time` 同时改为不可收缩）。
+  const timeShown = true;
   block.style.setProperty('--tevent-lines-time', '1');
 
   // 0.7.23（总监 m01687 / m01712）：结构只由「块高能容几行」与「emoji 后是否还剩
@@ -861,9 +891,10 @@ function applyTimeTierLadder(block, timeEl, avail, ctx) {
       timeCost: Math.round(timeCost * 10) / 10, titleLh, gap, growth,
     });
   }
-  // 兜底断言（0.7.21 更正注释，总监 m02610）：这里只上报 `time-clip`，
-  // 降档（区间 → 开始时间 → 省略）已在前面阶梯完成，本处不再降档。
-  if (timeShown && timeOverflows(timeEl, avail)) {
+  // 兜底断言（0.7.21 更正注释，总监 m02610；0.7.26 增加小时档）：这里只上报
+  // `time-clip`，降档（区间 → 开始时间 → 小时）已在前面阶梯完成，本处不再降档。
+  // 已上报 `time-overflow` 的块（连小时都放不下）不重复计一次。
+  if (timeShown && block.dataset && block.dataset.teventTimeOverflow !== '1' && timeOverflows(timeEl, avail)) {
     reportTimeClipped('time-clip', block, {
       avail: Math.round(avail * 10) / 10,
       needed: Math.round(timeTextWidth(timeEl) * 10) / 10,
@@ -875,7 +906,8 @@ function applyTimeTierLadder(block, timeEl, avail, ctx) {
 /**
  * 挂载后跑一遍（0.7.16 起；0.7.17 定稿为「时间 1 行 + 名称折行 + 地点 1 行」）：
  * - 行数由块实测高度算（`teventLayoutLines()`），不看宽度；
- * - 时间只有三态：完整区间 / 开始时间 / 省略（上报 `time-hidden`）；
+ * - 多行块时间三档：完整区间 / 开始时间 / 小时（0.7.26 起永不为空）；单行块仍可
+ *   整段省略时间（`S-name`，上报 `time-hidden`）；
  * - 一行高的块改为横排 `emoji + 名称`，时间让给时间轴。
  * 幂等：时间文案先还原到原始区间再量。
  */
@@ -1942,10 +1974,12 @@ export function applyAllDayRailLabels(root) {
     // 整条并不比首段宽（或只宽出不到 1px）就别换层，省掉一次重排。
     if (width <= titleRect.width + 1) continue;
     const titleStyle = window.getComputedStyle(title);
-    const emoji = head.querySelector('.allday-chip__tag');
+    // 0.7.25（用户：多日条上出现两个 emoji）：chip 内的 `.allday-chip__tag` 仍然可见，
+    // 标签层只画名称即可——这里再拼一次 emoji，整条上就会画两遍。月视图同一口径见
+    // month.js 的「段内不再插，否则同一个 emoji 会画两次」。
     const label = el('span', {
       class: 'allday-rail-label',
-      text: `${emoji ? `${emoji.textContent} ` : ''}${title.textContent}`,
+      text: title.textContent,
       'aria-hidden': 'true',
       style: {
         left: `${titleRect.left - railRect.left}px`,

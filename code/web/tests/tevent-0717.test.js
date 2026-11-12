@@ -4,7 +4,8 @@
  * 口径：
  * - 行数由块实测高度算（1 / 2 / 3 行），不写死像素；
  * - 第 1 行时间固定 1 行，中间各行 `emoji + 名称`（名称可折行），最后 1 行地点；
- * - 时间只有三态：完整区间 → 开始时间 → 省略（上报 `time-hidden`），永不折行、
+ * - 多行块时间三档：完整区间 → 开始时间 → 小时（0.7.26 起永不为空）；
+ *   单行块仍可整段省略时间（`S-name`，上报 `time-hidden`）。永不折行、
  *   永不出现 `18:…` 这种半截数字；
  * - 只有一行高的块先保 `emoji + 名称`，时间让给左侧时间轴。
  */
@@ -207,7 +208,7 @@ describe('0.7.17 · 行数按实测块高算', () => {
     const block = run({ width: 20, height: 52, hasLoc: true });
     expect(block.dataset.hasLoc).toBe('0');
     expect(block.querySelector('.tevent__loc')).toBeNull();
-    // 宽度 20px < 开始时间 28px，时间整段省略（M-hidden）；L=3 时地点本来就不显示。
+    // 宽度 20px < 开始时间 28px，时间降为小时档（0.7.26 起不再整段省略）；L=3 时地点本来就不显示。
     expect(block.style.getPropertyValue('--tevent-lines-loc')).toBe('0');
     expect(Number(block.style.getPropertyValue('--tevent-lines-title'))).toBeGreaterThanOrEqual(1);
   });
@@ -283,14 +284,24 @@ describe('0.7.17 · 时间的唯一降级链', () => {
     expect(block.querySelector('.tevent__time').textContent).toBe('10:00');
   });
 
-  it('开始时间也放不下：整段省略并上报 time-hidden，名称接管', () => {
+  // 0.7.26（总监 2026-11-12 派单，用户「多行的时候时间至少保证一行」）：多行块不再
+  // 整段省略时间，档序补到小时；名称可以被挤掉，时间不能没有。
+  it('开始时间也放不下：降为小时档 M-hour，时间非空（0.7.26）', () => {
     const block = run({ width: 20, height: 52 });
-    expect(block.dataset.teventTier).toBe('M-hidden');
-    expect(block.querySelector('.tevent__time').textContent).toBe('');
+    expect(block.dataset.teventTier).toBe('M-hour');
+    expect(block.querySelector('.tevent__time').textContent).toBe('10');
     expect(block.querySelector('.tevent__title')).toBeTruthy();
-    // 0.7.20（总监 m02349）：52px 块 L=3，地点不占行；时间省略后行给名称与 emoji。
+    // 0.7.20（总监 m02349）：52px 块 L=3，地点不占行。
     expect(Number(block.style.getPropertyValue('--tevent-lines-title'))).toBeGreaterThanOrEqual(1);
-    expect(takeTimeFitReports()[0]).toMatchObject({ reason: 'time-hidden' });
+    expect(takeTimeFitReports()).toHaveLength(0);
+  });
+
+  // 0.7.26：连小时都放不下时仍保留小时并上报 `time-overflow`（不出现空白时间）。
+  it('连小时都放不下：保留小时并上报 time-overflow（0.7.26）', () => {
+    const block = run({ width: 6, height: 52 });
+    expect(block.dataset.teventTier).toBe('M-hour');
+    expect(block.querySelector('.tevent__time').textContent).toBe('10');
+    expect(takeTimeFitReports()[0]).toMatchObject({ reason: 'time-overflow' });
   });
 
   it('任何宽度下时间文案都不含省略号', () => {
@@ -321,9 +332,10 @@ describe('0.7.17 · 样式口径', () => {
     expect(rule[1]).toMatch(/text-overflow:\s*clip/);
   });
 
-  it('单行档与省略档隐藏时间节点', () => {
+  // 0.7.26（总监 2026-11-12 派单）：多行块已无「藏时间」的 CSS 档；单行 `S-name` 保留。
+  it('单行档藏时间，多行块已无藏时间的 CSS 档（0.7.26）', () => {
     expect(views).toMatch(/\[data-tevent-tier='S-name'\]\s+\.tevent__time/);
-    expect(views).toMatch(/\[data-tevent-tier='M-hidden'\]\s+\.tevent__time/);
+    expect(views).not.toMatch(/\[data-tevent-tier='M-hidden'\]/);
   });
 
   it('让名称时只藏名称文字，emoji 必须留着（用户 m01091「最短 18 ⚽」）', () => {
