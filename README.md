@@ -4,7 +4,7 @@
 
 ![FnCal 主界面：年视图、左侧日历列表与顶部工具栏](docs/screenshots/main.png)
 
-当前版本：**0.7.24**
+当前版本：**0.7.13**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -106,7 +106,7 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 下载 `FnCal-0.7.24.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
+1. 下载 `FnCal-0.7.13.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -114,14 +114,14 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.7.24.fpk
-# Windows: Get-FileHash .\FnCal-0.7.24.fpk -Algorithm SHA256
+sha256sum FnCal-0.7.13.fpk
+# Windows: Get-FileHash .\FnCal-0.7.13.fpk -Algorithm SHA256
 ```
 
-期望值也写在 `SHA256SUMS.txt` 里。0.7.24 安装包（802,026 B）的 SHA-256：
+期望值也写在 `SHA256SUMS.txt` 里。0.7.13 安装包（796,162 B）的 SHA-256：
 
 ```
-14375E0AF1B2C36D7249BCB011BDAB3D9D89D89D448C78BBB2ACEEBEF0548387
+8C302393549D8A338542DE61A9CF3B475B6A8C653AE8E4F598E1BEEC4973D062
 ```
 
 **升级**
