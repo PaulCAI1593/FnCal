@@ -94,9 +94,11 @@ describe('0.7.9 C 平板周视图有空间就显示名称', () => {
     const narrowTitle = document.createElement('span');
     narrow.append(narrowEmoji, narrowTitle);
     narrowTitle.style.flexGrow = '0';
-    setWidth(narrow, 40);
+    // 0.7.15（M6 §第 2 项）：名称门槛 3 字 → 1 字，可用宽 40−15=25px 已够 1 字（12px），
+    // 不再落入 only 分支。窄列样本收到 25−15=10px < 12px，才代表「真的放不下 1 个字」。
+    setWidth(narrow, 25);
     setOuterWidth(narrowEmoji, 15);
-    setWidth(narrowTitle, 20);
+    setWidth(narrowTitle, 10);
     expect(applyTagDisplayTier(narrow, narrowTitle, 'tevent--tag-only')).toBe('only');
     expect(narrow.classList.contains('tevent--tag-only')).toBe(true);
   });
@@ -145,7 +147,7 @@ describe('0.7.9 D 周/四日/日：跨天定时事件裁进时间轴', () => {
     expect(monthView.timed).toHaveLength(0);
   });
 
-  it('周视图渲染后第一天的时间标签是 11:30 – 24:00', () => {
+  it('周视图渲染后第一天的时间标签是 11:30-24:00', () => {
     const events = [overnight];
     const ctx = {
       store: {

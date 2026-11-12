@@ -209,7 +209,7 @@ describe('formatting', () => {
   it('renders a time range with the Chinese period marker', () => {
     expect(
       formatTimeRange(new Date(2026, 6, 12, 15, 0), new Date(2026, 6, 12, 15, 30)),
-    ).toBe('下午3:00 – 下午3:30');
+    ).toBe('下午3:00-下午3:30');
   });
 
   it('formatTime 24-hour', () => {

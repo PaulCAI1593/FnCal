@@ -212,16 +212,29 @@ describe('0.5.9 S4：大屏看得见的信息，手机也要看得见（不许�
     expect(hidden).toContain('chip__dot');
   });
 
-  it('「还有 N 个」用满整格宽，并在 320 档降 10px 让尾字不被截（数字必须看得见）', () => {
+  // 0.8.0（规格 J-2）：0.5.9 曾把 320 档计数行降到 10px 让尾字不截；A3 定了字号下限
+  // 11px，这一档例外取消。放不下时由 `fitMoreButtonText()` 按实测宽度切 `+N`。
+  it('「还有 N 个」用满整格宽；320 档不再缩字号，改为按实测宽切 +N（0.8.0 J-2）', () => {
     expect(bigBlock).toMatch(/\.month__more {[^}]*margin:\s*0 -4px[^}]*padding:\s*0;/);
-    const tiny = mediaBlock(viewsCss, '@media (max-width: 360px) {', '.month__more');
-    expect(tiny).toMatch(/\.month__more {\s*font-size:\s*10px;/);
+    // 计数行字号 = --fs-xs（tokens.css 定义 11px），≤360 档没有单独的 10px 覆盖
+    const moreRule = bigBlock.match(/\.month__more \{([^}]*)\}/);
+    expect(moreRule).not.toBeNull();
+    expect(moreRule[1]).toMatch(/font-size:\s*var\(--fs-xs\)/);
+    expect(bigBlock).not.toMatch(/\.month__more[\s\S]{0,200}?font-size:\s*10px/);
+    // 切换逻辑仍按实测宽度（不是按断点）
+    expect(monthJs).toMatch(/function fitMoreButtonText\(button\)/);
+    expect(monthJs).toMatch(/button\.scrollWidth <= button\.clientWidth \+ 0\.5/);
   });
 
-  it('日程行：≤520 标注换到标题下一行、标题最多两行；≤360 收紧日期/时间列', () => {
+  it('日程行：≤520 标注改在时间列（宽屏那份在名称行）；标题最多两行；≤360 收紧日期/时间列', () => {
     const agendaBlock = mediaBlock(viewsCss, '@media (max-width: 520px) {', '.agenda__event-main {');
     expect(agendaBlock).toMatch(/\.agenda__event-main {\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
-    expect(agendaBlock).toMatch(/\.agenda__event-daypart {[^}]*grid-column:\s*1;[^}]*grid-row:\s*2/);
+    // 0.7.21（总监 m02610）：旧的「标注放标题下面 grid-row: 2」作废；窄屏隐藏名称行那份，
+    // 时间列那份（`--time`）显示，左缘与时间文字对齐。
+    expect(agendaBlock).toMatch(/\.agenda__event-main > \.agenda__event-daypart--name {\s*display:\s*none;/);
+    expect(viewsCss).toMatch(/\.agenda__event-daypart--time {\s*display:\s*none;/);
+    expect(viewsCss).toMatch(/\.agenda__event-daypart--time {\s*display:\s*inline;[\s\S]{0,80}align-self:\s*flex-start;/);
+    expect(agendaBlock).not.toMatch(/\.agenda__event-daypart {[^}]*grid-row:\s*2/);
     expect(agendaBlock).toMatch(/\.agenda__event-title {[^}]*-webkit-line-clamp:\s*2/);
     const tiny = mediaBlock(viewsCss, '@media (max-width: 360px) {', '.agenda__event-time');
     expect(tiny).toMatch(/\.agenda__day {\s*grid-template-columns:\s*60px minmax\(0, 1fr\)/);
@@ -267,7 +280,8 @@ describe('0.5.9（F1/F2）：手机档时间显示不被切字、不在词内断
   it('日程时间列：≤520 用短格式区间，两个片段各自 nowrap、放不下整段换行', () => {
     expect(agendaJs).toContain('formatTimeShort24');
     expect(agendaJs).toMatch(/function compactRangeParts\(start, end, dayStart\)/);
-    expect(agendaJs).toMatch(/return \{ start: `\$\{startText\}–`, end: formatTimeShort24\(new Date\(end\)\) \};/);
+    // 0.7.17（总监 m01561）：区间分隔符统一为半角 `-`、两侧无空格。
+    expect(agendaJs).toMatch(/return \{ start: `\$\{startText\}-`, end: formatTimeShort24\(new Date\(end\)\) \};/);
     expect(agendaJs).toMatch(/class: 'agenda__event-time agenda__event-time--compact'/);
     expect(agendaJs).toMatch(/class: 'agenda__event-time-start', text: parts\.start/);
     expect(agendaJs).toMatch(/class: 'agenda__event-time-end', text: parts\.end/);

@@ -80,15 +80,19 @@ describe('⑬ 日程视图跨天事件「（第 n/m 天）」', () => {
       now: CURSOR,
       actions: VIEW_ACTIONS,
     });
-    const parts = [...node.querySelectorAll('.agenda__event-daypart')].map((n) => n.textContent);
+    const parts = [...node.querySelectorAll('.agenda__event-daypart--time')].map((n) => n.textContent);
     expect(parts).toEqual(['（第 1/3 天）', '（第 2/3 天）', '（第 3/3 天）']);
-    // 紧跟标题、同一行：同一行里 daypart 在 title 之后
-    // 0.2.38 起标题与 daypart 收进 .agenda__event-main（两行网格的第一行），
-    // 所以要在 main 里比较顺序，而不是直接在 row.children 上。
+    // 0.7.17（总监 m00333）：标注搬进时间列，排在时间文字之后。
+    // 0.7.21（总监 m02610）：标注渲染两份、CSS 按 520px 断点二选一——时间列那份
+    // （`--time`，窄屏显示）在时间文字之后；名称行那份（`--name`，宽屏显示）回到 main 里。
     const row = node.querySelector('.agenda__event');
     const main = row.querySelector('.agenda__event-main');
-    const kids = [...main.children].map((c) => c.className);
-    expect(kids.indexOf('agenda__event-daypart')).toBe(kids.indexOf('agenda__event-title') + 1);
+    expect(main.querySelector('.agenda__event-daypart--time')).toBeNull();
+    expect(main.querySelector('.agenda__event-daypart--name').textContent).toBe('（第 1/3 天）');
+    const time = row.querySelector('.agenda__event-time');
+    const timeKids = [...time.querySelectorAll('.agenda__event-time-text, .agenda__event-daypart')]
+      .map((c) => c.className.split(' ')[0]);
+    expect(timeKids).toEqual(['agenda__event-time-text', 'agenda__event-daypart']);
   });
 
   it('单日事件不显示标注', () => {
@@ -102,7 +106,7 @@ describe('⑬ 日程视图跨天事件「（第 n/m 天）」', () => {
       now: CURSOR,
       actions: VIEW_ACTIONS,
     });
-    expect(node.querySelectorAll('.agenda__event-daypart')).toHaveLength(0);
+    expect(node.querySelectorAll('.agenda__event-daypart')).toHaveLength(0); // 0.7.21：两份都不渲染
   });
 
   it('跨午夜定时事件 天1/2、天2/2；aria-label 也含标注', () => {
@@ -115,7 +119,7 @@ describe('⑬ 日程视图跨天事件「（第 n/m 天）」', () => {
       actions: VIEW_ACTIONS,
     });
     const rows = [...node.querySelectorAll('.agenda__event')];
-    expect(rows.map((r) => r.querySelector('.agenda__event-daypart').textContent)).toEqual([
+    expect(rows.map((r) => r.querySelector('.agenda__event-daypart--time').textContent)).toEqual([
       '（第 1/2 天）',
       '（第 2/2 天）',
     ]);
@@ -135,7 +139,8 @@ describe('⑬ 日程视图跨天事件「（第 n/m 天）」', () => {
       now: new Date(2026, 11, 29),
       actions: VIEW_ACTIONS,
     });
-    const parts = [...node.querySelectorAll('.agenda__event-daypart')].map((n) => n.textContent);
+    // 0.7.21（总监 m02610）：每行渲染两份标注，按 `--time` 取一份。
+    const parts = [...node.querySelectorAll('.agenda__event-daypart--time')].map((n) => n.textContent);
     expect(parts).toEqual(['（第 1/4 天）', '（第 2/4 天）', '（第 3/4 天）', '（第 4/4 天）']);
   });
 

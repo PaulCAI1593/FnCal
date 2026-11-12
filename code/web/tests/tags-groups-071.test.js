@@ -181,7 +181,10 @@ describe('0.7.1 B：分组', () => {
     expect(dialog.querySelector('select.tag-editor__group')).toBeNull();
     expect(trigger.textContent).toContain('旅行');
     trigger.click();
-    const options = [...dialog.querySelectorAll('.tag-editor__group-option')];
+    // 0.7.22（总监 m00…）：分组下拉改成浮层后挂在 document.body，不再在对话框子树里，
+    // 所以这里从 body 上的菜单取条目（断言内容不变）。
+    const groupMenu = document.querySelector('.tag-editor__group-menu');
+    const options = [...groupMenu.querySelectorAll('.tag-editor__group-option')];
     expect(options.map((option) => option.textContent)).toEqual(['未分组', '旅行']);
     options[0].click();
     dialog.querySelector('.btn--primary').click();

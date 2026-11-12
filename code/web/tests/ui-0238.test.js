@@ -76,7 +76,7 @@ describe('0.2.38 日程视图：标题下的地址小字', () => {
     }
   });
 
-  it('跨天事件：第一行「标题 +（第 n/m 天）」，第二行地址', () => {
+  it('跨天事件：名称与地址两行，标注挂在时间列', () => {
     const trip = {
       id: 'trip',
       title: '建筑设计双年展',
@@ -89,9 +89,11 @@ describe('0.2.38 日程视图：标题下的地址小字', () => {
     };
     const { node } = renderAgenda(makeCtx([trip]));
     const row = node.querySelector('.agenda__event');
-    const kids = [...row.querySelector('.agenda__event-main').children].map((c) => c.className);
+    const kids = [...row.querySelector('.agenda__event-main').children].map((c) => c.className.split(' ')[0]);
+    // 0.7.21（总监 m02610）：宽屏标注回名称行右侧（第二份，`--name`），标题与地址仍在。
     expect(kids).toEqual(['agenda__event-title', 'agenda__event-daypart', 'agenda__event-location']);
-    expect(row.querySelector('.agenda__event-daypart').textContent).toBe('（第 1/3 天）');
+    expect(row.querySelector('.agenda__event-main .agenda__event-daypart--name').textContent).toBe('（第 1/3 天）');
+    expect(row.querySelector('.agenda__event-time .agenda__event-daypart--time').textContent).toBe('（第 1/3 天）');
     expect(row.querySelector('.agenda__event-location').textContent).toBe('上海当代艺术博物馆');
   });
 

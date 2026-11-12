@@ -115,25 +115,38 @@ export function tagCategoryLabel(tag) {
  * - 只处理首字素，标题中间/末尾的 emoji 不动；同标签重复保存幂等；
  * - 标题首字素是别的手写 emoji 时不前置、不删除。
  */
+/** 0.7.16：去掉变体选择符再判等 —— `☂️` 与 `☂` 是同一个 emoji。 */
+const VARIATION_SELECTOR_RE = /[\uFE0E\uFE0F]/g;
+export function emojiBase(value) {
+  return String(value ?? '').replace(VARIATION_SELECTOR_RE, '');
+}
+
 export function applyTagToSummary(summary, nextTag, prevTag = null) {
   const text = String(summary ?? '');
   const first = firstGrapheme(text);
   const isEmoji = Boolean(first) && (EMOJI_RE.test(first) || FLAG_RE.test(first));
   const nextEmoji = String((nextTag && nextTag.emoji) || '').trim();
   const prevEmoji = String((prevTag && prevTag.emoji) || '').trim();
+  const base = (value) => emojiBase(value);
   const rest = text.slice(first.length);
   if (!nextTag || !nextEmoji) {
     // K.2 取消标签：先删「原标签 emoji + 一个空白」；再删残留（如 `⚽⚽ 台球` 只剩一个）。
-    if (prevEmoji && first === prevEmoji) {
+    if (prevEmoji && base(first) === base(prevEmoji)) {
       const withoutOne = text.slice(first.length).replace(/^\s/, '');
       const second = firstGrapheme(withoutOne);
-      if (second === prevEmoji) return withoutOne.slice(second.length).replace(/^\s/, '');
+      if (second && base(second) === base(prevEmoji)) {
+        return withoutOne.slice(second.length).replace(/^\s/, '');
+      }
       return withoutOne;
     }
     return text;
   }
-  if (first === nextEmoji) return `${first}${rest.replace(/^\s+/, '') ? ` ${rest.replace(/^\s+/, '')}` : ''}`;
-  if (prevEmoji && first === prevEmoji) {
+  // 0.7.16：同一 emoji 的变体（`☂️` / `☂`）也算同一个，不重复前置。
+  if (first && base(first) === base(nextEmoji)) {
+    const tail = rest.replace(/^\s+/, '');
+    return tail ? `${first} ${tail}` : first;
+  }
+  if (prevEmoji && base(first) === base(prevEmoji)) {
     const tail = rest.replace(/^\s+/, '');
     return `${nextEmoji} ${tail}`.trimEnd();
   }
@@ -445,18 +458,34 @@ export function createTagStore({ store, logger = console }) {
       /**
        * 改名/换 emoji 要把引用对象的 CATEGORIES 一起换掉，否则导出/外部客户端会看到旧值。
        * 0.7.1 H：新值是 `emoji 名称`，只替换命中的那一条，其它分类原样保留。
+       * 0.7.16（用户：改过标签 emoji 之后 chip 里出现两个 emoji）：换 emoji 时同样把
+       * 标题首字素换掉——旧实现只重写 CATEGORIES，标题里的旧 emoji 一直留着，
+       * 渲染层再前置新 emoji 就是两个。只动首字素，名称不动；改名但 emoji 未变
+       * 时不碰标题（避免无谓写盘）。
        */
       const nextLabel = tagCategoryLabel(tag);
+      const emojiChanged = tag.emoji !== current.emoji;
       const journal = [];
       try {
         await walkObjects((record) => {
           if (!references(record, current)) return null;
-          if (!Array.isArray(record.categories) || !record.categories.length) return null;
+          const hasCategories = Array.isArray(record.categories) && record.categories.length > 0;
+          const nextCategories = hasCategories
+            ? record.categories.map((value) => (
+              categoryTagName(value) === current.name ? nextLabel : value
+            ))
+            : null;
+          let nextTitle = null;
+          // `eventFromIcs()` / `taskFromIcs()` 把 SUMMARY 映射成 `title`，不是 `summary`。
+          if (emojiChanged && typeof record.title === 'string') {
+            const rewritten = applyTagToSummary(record.title, tag, current);
+            if (rewritten !== record.title) nextTitle = rewritten;
+          }
+          if (!nextCategories && nextTitle === null) return null;
           return {
             ...record,
-            categories: record.categories.map((value) => (
-              categoryTagName(value) === current.name ? nextLabel : value
-            )),
+            ...(nextCategories ? { categories: nextCategories } : {}),
+            ...(nextTitle === null ? {} : { title: nextTitle }),
           };
         }, journal);
       } catch (err) {

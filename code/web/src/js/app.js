@@ -65,7 +65,7 @@ import { renderMonth } from './views/month.js';
 import { renderWeek } from './views/week.js';
 import { renderFourDay } from './views/four-day.js';
 import { renderDay } from './views/day.js';
-import { renderAgenda } from './views/agenda.js';
+import { renderAgenda, scrollAgendaToToday } from './views/agenda.js';
 import {
   addDays,
   addMonths,
@@ -736,9 +736,19 @@ export function createApp(root, { store, user }) {
     render();
   }
   function goToday() {
+    // 0.7.18（总监：日程列表点「今天」定位）：日程列表除了换日期，还要滚到今天
+    // 那一段并闪一下日期头；范围一定包含今天（游标就是今天、分页锚点随之重置）。
+    const jumpAgenda = state.view === 'agenda';
     state.cursor = startOfDay(new Date());
     state.miniCursor = startOfMonth(new Date());
     render();
+    if (!jumpAgenda) return;
+    const scroller = mainEl.querySelector('.agenda');
+    if (scrollAgendaToToday(scroller) !== 'scrolled') {
+      // 今天没有条目 = 列表里没有今天这一段（列表明细只渲染有条目的天）；
+      // 不滚、不弹模态，只给一句轻提示。
+      toast(t('agenda.noTodayHint'));
+    }
   }
   // No render() after these saveSettings calls: saveSettings applies the
   // patch to memory and emit()s before its first await, and the store
@@ -1734,6 +1744,15 @@ export function createApp(root, { store, user }) {
     clear(headerTitleEl);
     headerTitleEl.append(document.createTextNode(title.main));
     if (title.muted) headerTitleEl.append(el('span', { class: 'muted', text: ' ' + title.muted }));
+    // 0.7.18（总监：日程列表点「今天」定位）：日程列表里「今天」会滚到今天那一段，
+    // 读屏名字要把这次跳转说出来；其它视图仍只叫「今天」。
+    const todayBtnEl = shell.querySelector('.header__today');
+    if (todayBtnEl) {
+      todayBtnEl.setAttribute(
+        'aria-label',
+        state.view === 'agenda' ? t('toolbar.todayJump') : t('toolbar.today'),
+      );
+    }
 
     segmented.querySelectorAll('button').forEach((b) =>
       b.setAttribute('aria-pressed', String(b.dataset.view === state.view)),

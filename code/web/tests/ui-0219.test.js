@@ -268,8 +268,8 @@ describe('0.2.19 D1 跨天定时事件按多日日程拼接', () => {
     expect(node.querySelectorAll('.allday-chip')).toHaveLength(0);
     expect(node.querySelectorAll('.tevent')).toHaveLength(2);
     const dayTimes = [...node.querySelectorAll('.tevent__time')].map((el) => el.textContent);
-    expect(dayTimes).toContain('22:00 – 24:00');
-    expect(dayTimes).toContain('00:00 – 02:00');
+    expect(dayTimes).toContain('22:00-24:00');
+    expect(dayTimes).toContain('00:00-02:00');
 
     // 跨周的同一件事：本周最后一格（22 日）行末画「>」，下一周行首（23 日）画「<」
     // 0.7.9（D）：多日轨现在只服务全天事件，箭头用例改用全天事件（定时事件已进时间轴）。

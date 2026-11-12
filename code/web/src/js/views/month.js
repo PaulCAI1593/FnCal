@@ -1440,6 +1440,44 @@ function buildInlineLunar(dayStart, otherMonth) {
  */
 const DAYHEAD_SLACK = 1;
 
+/**
+ * 0.7.14（规格 J-3，`design/视觉规格-FnCal-v1.md` B4「不得静默截断」）：
+ * 保留 `text-overflow: clip` 与 `.is-truncated` 的省略号，**不**改成
+ * `overflow: visible`（scale 算错时文字会直接压到日号上，比截断更难发现）。
+ * 改为把「放不下」显式上报，两条通道：
+ *   ① `console.warn`（真机/浏览器控制台可见）；
+ *   ② `takeDayheadReports()` 缓冲（测试可断言「没有静默截断」，每次读取后清空）。
+ * 两种触发：
+ *   - `clip-without-scale`：scale = 1，但实际仍在裁（scrollWidth > clientWidth + 1）。
+ *     正常几何下不该出现，出现即说明真机字体度量比测量宽。
+ *   - `scale-floor`：本格比例低于 0.5 下限，缩到最小仍放不下（只能出省略号）。
+ */
+const dayheadReports = [];
+
+/** 取走并清空本轮的日号行放不下记录（0.7.14 J-3，测试用）。 */
+export function takeDayheadReports() {
+  const out = dayheadReports.slice();
+  dayheadReports.length = 0;
+  return out;
+}
+
+function reportDayheadOverflow(reason, entry, extra = {}) {
+  const report = {
+    reason,
+    text: entry.text.textContent,
+    natural: entry.natural,
+    avail: entry.avail,
+    usable: entry.usable,
+    ...extra,
+  };
+  dayheadReports.push(report);
+  // 应用侧没人取时也不许无限增长：只留最近 20 条。
+  if (dayheadReports.length > 20) dayheadReports.shift();
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn('[FnCal] 日号行放不下（0.7.14 J-3）', report);
+  }
+}
+
 function fitCompactDayheads(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
   // 0.5.21（W1，用户：「月视图的农历字体大小，一页还是没有统一」）：两遍量。
@@ -1474,11 +1512,16 @@ function fitCompactDayheads(root) {
     // 的裁切边上。这 1px 从可用宽里先扣掉，后面写 `floor(视觉宽) + 1`，右缘永不越界。
     const usable = Math.max(0, avail - DAYHEAD_SLACK);
     if (!usable) continue;
+    // 0.7.15（用户：「初一的字号比初一 23 的初一大」）：按**字素数**分组缩放。
+    // 一位数与两位数日号宽度差约 13px，逐格算比例会让同样两字的「初一」落到不同字号；
+    // 分组后同字数的名字共用组内最小比例，字号才算统一。
+    const chars = Array.from(text.textContent.trim()).length || 1;
     entries.push({
       head,
       host,
       text,
       isLunar,
+      chars,
       natural,
       avail,
       usable,
@@ -1490,8 +1533,21 @@ function fitCompactDayheads(root) {
   // 0.5.21 起缩放取全页最小值（统一字号），于是最紧的一格把宽格也一起缩了。
   // 现在**逐格**按本格可用宽算比例；向下取 3 位小数，保证写进 CSS 的 scale 永不大于
   // 本格 ratio（0.6005 若 toFixed 成 0.601，下一轮会被重新判成「放不下」而裁字）。
+  //
+  // 0.7.15（用户：「手机上农历字号又不统一了；初一 1 的字号就比初一 23 的初一大」）：
+  // 逐格仍不统一——同是两字，一位数日号与两位数日号可用宽差约 13px，落到不同 scale。
+  // 改为**按字素数分组**：组内取最小 ratio 作为该组统一 scale，同字数的名字字号一致。
+  // 组内 ratio < 0.5 的格子仍走原截断支路（`scale-floor` 上报），不新增静默裁字。
+  const groupScale = new Map();
   for (const entry of entries) {
-    const scale = Math.max(0.5, Math.min(1, Math.floor(entry.ratio * 1000) / 1000));
+    const prev = groupScale.get(entry.chars);
+    if (prev === undefined || entry.ratio < prev) groupScale.set(entry.chars, entry.ratio);
+  }
+  for (const [chars, ratio] of groupScale) {
+    groupScale.set(chars, Math.max(0.5, Math.min(1, Math.floor(ratio * 1000) / 1000)));
+  }
+  for (const entry of entries) {
+    const scale = groupScale.get(entry.chars) ?? 1;
     if (scale < 1) entry.head.style.setProperty('--dayhead-scale', scale.toFixed(3));
     // 该格在统一值下放得下：承载盒按**缩放前**的自然宽给宽。
     // 0.6.10（真机 393×852 DPR 2.75，用户：「和农历日期同样的方式应该就可以了」）：
@@ -1504,7 +1560,9 @@ function fitCompactDayheads(root) {
     // 这里用负的 `margin-inline-end` 把多出来的那截收回去：布局推进量 = 视觉宽，
     // 内层仍是完整自然宽（不出省略号），胶囊右缘因而留在格子内容盒内。
     const visual = Math.min(entry.natural * scale, entry.usable);
-    if (entry.ratio >= scale) {
+    // 0.7.15：组 scale 必 ≤ 本格 ratio，判「放不放得下」只能看本格 ratio；
+    // 若仍与 scale 比，组内更紧的格子会把这里判成永远成立，截断支路变死代码。
+    if (entry.ratio >= 0.5) {
       const box = Math.min(
         Math.ceil(entry.natural) + DAYHEAD_SLACK,
         Math.floor(entry.usable / scale) + DAYHEAD_SLACK,
@@ -1512,12 +1570,21 @@ function fitCompactDayheads(root) {
       entry.host.style.width = `${box}px`;
       const trim = box - Math.ceil(visual);
       if (trim > 0) entry.host.style.marginInlineEnd = `${-trim}px`;
+      // 0.7.14（J-3①）：scale 已是 1（或正常缩放档），若仍在裁就上报——不许静默。
+      const inked = entry.text.clientWidth || box;
+      if (scale === 1 && entry.text.scrollWidth > inked + 1) {
+        reportDayheadOverflow('clip-without-scale', entry, { scale, inked });
+      }
       continue;
     }
     // 0.6.10（用户：「和农历日期同样的方式应该就可以了」）：节日/节气名与农历共用
     // **同一条**截断链路——都按「可用宽 ÷ 0.5」铺满内层，多余的字由同一个
     // `is-truncated` 省略号收掉。0.6.9 让节日单独走 `usable / scale` 分支，真机
     // 厂商字体比测量宽时末字被裁掉、又没有省略号，于是只剩「立」/「小」。
+    // 0.7.14（J-3②）：比例低于 0.5 下限 = 缩到最小仍放不下，必须上报，不能只留省略号。
+    if (entry.ratio < 0.5) {
+      reportDayheadOverflow('scale-floor', entry, { scale, ratio: entry.ratio });
+    }
     entry.text.classList.add('is-truncated');
     // 承载盒同样按缩放前的坐标给宽（可用宽 ÷ 0.5），否则盒先把内层文字裁一刀，
     // 省略号还没轮到画就被切掉了。

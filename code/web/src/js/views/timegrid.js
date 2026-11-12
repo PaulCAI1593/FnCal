@@ -59,22 +59,51 @@ export const TEVENT_METRICS_FALLBACK = {
   timeLh: 13,
   locLh: 13,
 };
-/* 各字段的行数上限：名称 3、时间 1、地点 2（0.6.3 实测取整，见记录 §B）。 */
-const TEVENT_MAX_LINES = { title: 3, time: 1, loc: 2 };
+/* 各字段的行数上限：时间 1（0.7.17 定稿起固定 1 行）、地点 1（末行）、名称 6。
+ * 0.7.19（用户「高度按实际的格子高度来算，下面有很多空间可以换行显示完全」）：名称不再写死 3 行——
+ * 只要块高够就继续折；留 6 行只是给 clamp 一个上界，避免异常数据无限折行（现网最长名称在 90 分钟块里只要 4 行）。 */
+const TEVENT_MAX_LINES = { title: 6, time: 1, loc: 1 };
 let teventMetricsCache = null;
-
 /**
  * 0.7.1（用户，最终口径）：事件条只显示 `emoji + 名称`，标签名不进 DOM。
  * 名称可用宽 < 3 个字宽 → 只留 emoji（tevent--tag-only），不出省略号。
  * 阈值按标题字号换算；拿不到布局（clientWidth 0）时保持默认档。
  */
-function applyTagTitlePriority(root) {
+export function applyTagTitlePriority(root) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
   const nodes = [...root.querySelectorAll('.tevent__title--tagged')];
   if (!nodes.length) return;
   for (const node of nodes) node.classList.remove('tevent--tag-only');
+  const metrics = readTeventMetrics();
   for (const node of nodes) {
+    const block = node.closest ? node.closest('.tevent') : null;
+    // 0.7.17（总监 m00259）：多行块的名称独占整行，判定必须用名称区宽（块内容宽），
+    // 不能扣掉 emoji 与间距——那样 33px 的周视图块会被算成 10px，「四十五」「一小时」
+    // 这类名称整段消失。名称行数由 teventLayoutLines 保证 ≥1，放不下交给 clamp。
+    if (block && teventLayoutLines(blockMeasuredHeight(block), metrics) >= 2) {
+      node.classList.remove('tevent--tag-only');
+      continue;
+    }
+    // 0.7.17（总监 m02263）：档位已经判过名称放得下（S1 / S2b），这里不得再用
+    // 标题自身宽二次判「只 emoji」——那会把刚恢复的名称又藏掉（四日 390 实测）。
+    const tier = block && block.dataset ? block.dataset.teventTier : '';
+    if (tier === 'S1' || tier === 'S2b') {
+      node.classList.remove('tevent--tag-only');
+      continue;
+    }
     applyTagDisplayTier(node, node.querySelector('.tevent__title-text'), 'tevent--tag-only');
+  }
+}
+
+/** 块高：优先 `clientHeight`，无布局环境（jsdom / 首帧）取 `getBoundingClientRect()`。 */
+function blockMeasuredHeight(block) {
+  const own = Number(block.clientHeight) || 0;
+  if (own > 0) return own;
+  try {
+    const rect = block.getBoundingClientRect && block.getBoundingClientRect();
+    return rect && Number(rect.height) > 0 ? Number(rect.height) : 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -132,13 +161,47 @@ export function readTeventMetrics() {
 }
 
 /**
+ * 0.7.15（用户：「有空间换行，没有空间一行显示」）：三档排布的实测阈值。
+ *
+ * 排布固定为 `时间` 在第一行，名称在第二行，地点在第三行：
+ *   A 三行 = 时间 + 名称(1 行) + 地点；
+ *   B 两行 = 时间 + 名称，地点不出现；
+ *   C 一行 = `时间 emoji 名称` 横排。
+ *
+ * 阈值不写死像素，从 `.tevent` 的实测内距与行高算（`readTeventMetrics()` 读不到时
+ * 用 `TEVENT_METRICS_FALLBACK`：两行 35.6px、三行 49.6px）。判定只看块高，
+ * 不看列宽——宽度不足由名称降档处理，不改变档位。
+ * @returns {{oneLine:number,twoLine:number,threeLine:number}}
+ */
+export function teventLayoutTiers(metrics = null) {
+  const m = metrics || TEVENT_METRICS_FALLBACK;
+  const padTop = Number.isFinite(m.padTop) ? m.padTop : TEVENT_METRICS_FALLBACK.padTop;
+  const padBottom = Number.isFinite(m.padBottom) ? m.padBottom : TEVENT_METRICS_FALLBACK.padBottom;
+  const gap = Number.isFinite(m.gap) ? m.gap : TEVENT_METRICS_FALLBACK.gap;
+  const titleLh = m.titleLh > 0 ? m.titleLh : TEVENT_METRICS_FALLBACK.titleLh;
+  const timeLh = m.timeLh > 0 ? m.timeLh : TEVENT_METRICS_FALLBACK.timeLh;
+  const locLh = m.locLh > 0 ? m.locLh : TEVENT_METRICS_FALLBACK.locLh;
+  const pad = padTop + padBottom;
+  const twoLine = pad + timeLh + gap + titleLh;
+  return {
+    oneLine: pad + Math.max(timeLh, titleLh),
+    twoLine,
+    threeLine: twoLine + gap + locLh,
+  };
+}
+
+/**
  * 按可用高度给三个字段分行。
- * - 先各给 1 行（名称 → 时间 → 地点，装不下就停在够得着的那一层）；
- * - 再把剩余高度按同一优先级补满上限；
+ * - 0.7.15（用户：时间永远在第一行、地点只在三行档出现）：先时间（1 行），
+ *   再名称（1 行起，最多 3 行），最后地点（1 行起，最多 2 行）；
+ * - 0.7.16（用户：高度够时时间也可以换行）：`opts.timeLines = 2` 时时间先占
+ *   到 2 行，再排名称与地点——「先满足时间完整，再名称，再地点」；
+ * - 装不下两行（时间 + 名称）时退回一行档：时间与名称横排；
  * - 只有名称到不了 1 行时才会出现「无名称」，没有行数就不生成节点（调用方负责）。
+ * @param {{timeLines?:number}} [opts]
  * @returns {{title:number,time:number,loc:number,short:boolean}}
  */
-export function allocateTeventLines(height, metrics = null, hasLoc = false) {
+export function allocateTeventLines(height, metrics = null, hasLoc = false, opts = {}) {
   const m = metrics || TEVENT_METRICS_FALLBACK;
   const padTop = Number.isFinite(m.padTop) ? m.padTop : TEVENT_METRICS_FALLBACK.padTop;
   const padBottom = Number.isFinite(m.padBottom) ? m.padBottom : TEVENT_METRICS_FALLBACK.padBottom;
@@ -148,7 +211,8 @@ export function allocateTeventLines(height, metrics = null, hasLoc = false) {
     time: m.timeLh > 0 ? m.timeLh : TEVENT_METRICS_FALLBACK.timeLh,
     loc: m.locLh > 0 ? m.locLh : TEVENT_METRICS_FALLBACK.locLh,
   };
-  if (height < 34) return { title: 1, time: 1, loc: 0, short: true };
+  // 0.7.15（用户）：一行档的判据换成实测的两行档最小高，不再写死 34px。
+  if (height < teventLayoutTiers(m).twoLine) return { title: 1, time: 1, loc: 0, short: true };
   let budget = height - padTop - padBottom;
   const counts = { title: 0, time: 0, loc: 0 };
   const used = () => counts.title + counts.time + counts.loc;
@@ -159,19 +223,702 @@ export function allocateTeventLines(height, metrics = null, hasLoc = false) {
     counts[field] += 1;
     return true;
   };
-  add('title');
   add('time');
-  if (hasLoc) add('loc');
+  // 0.7.16（用户）：完整时间放不下且块高够时，第二行给时间（最多 2 行）。
+  const timeLines = Math.max(1, Math.min(2, Number.isFinite(opts.timeLines) ? opts.timeLines : 1));
+  while (counts.time < timeLines && add('time')) {}
+  add('title');
+  // 0.7.16（用户总纲：牺牲序 地点 → 名称 → 结束时间 → emoji）：地点只在名称已有
+  // 一行时才出现——「地点在、名称没了」是禁止组合。
+  if (hasLoc && counts.title > 0) add('loc');
   while (counts.title < TEVENT_MAX_LINES.title && add('title')) {}
-  while (hasLoc && counts.loc < TEVENT_MAX_LINES.loc && add('loc')) {}
+  while (hasLoc && counts.title > 0 && counts.loc < TEVENT_MAX_LINES.loc && add('loc')) {}
   return { ...counts, short: false };
 }
 
+/**
+ * 0.7.16（用户：「18:30-19:00 不要省略 -19:00，窄了优先省略名称」）：一行档也写
+ * 完整时间，宽度不足时降级顺序是 **完整时间 → emoji → 名称**。
+ *
+ * 渲染期只能拿到高度（列宽由 CSS 布局算出），所以「完整时间这一行放不放得下」
+ * 只能在挂载之后量：`afterMount` 里跑 `applyTeventTimeFit()`，把放不下的块改成
+ * 两行时间（`.is-time-wrap`）并让名称/地点按新的行预算退让；两行仍放不下的块
+ * 保留省略号并上报（`takeTimeFitReports()`），不许静默裁时间。
+ */
+const timeFitReports = [];
+
+/** 取走并清空本轮「时间两行仍放不下」的记录（0.7.16，证据页与测试用）。 */
+export function takeTimeFitReports() {
+  const out = timeFitReports.slice();
+  timeFitReports.length = 0;
+  return out;
+}
+
+function reportTimeClipped(reason, block, extra = {}) {
+  const timeEl = block.querySelector('.tevent__time');
+  const report = {
+    reason,
+    focusKey: block.dataset ? block.dataset.focusKey : '',
+    text: timeEl ? timeEl.textContent : '',
+    ...extra,
+  };
+  timeFitReports.push(report);
+  if (timeFitReports.length > 20) timeFitReports.shift();
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn('[FnCal] 时间放不下（0.7.16）', report);
+  }
+}
+
+/**
+ * 用同款探针量一段文字的宽度。`-webkit-box` + `line-clamp` 裁剪时 `scrollWidth`
+ * 常常等于 `clientWidth`（裁掉的部分不体现在滚动宽里），所以不能只信 scrollWidth。
+ * 没有布局的环境（测试/jsdom）探针量为 0，调用方退回 `scrollWidth`。
+ */
+function measureTimeText(text) {
+  let width = 0;
+  try {
+    if (typeof document !== 'undefined' && document.body) {
+      const probe = document.createElement('span');
+      probe.className = 'tevent__time';
+      probe.textContent = text;
+      probe.setAttribute('aria-hidden', 'true');
+      probe.style.cssText =
+        'position:absolute;left:-9999px;top:0;width:auto;max-width:none;visibility:hidden;' +
+        'pointer-events:none;white-space:nowrap;overflow:visible;';
+      document.body.append(probe);
+      width = probe.getBoundingClientRect
+        ? probe.getBoundingClientRect().width
+        : Number(probe.offsetWidth) || 0;
+      probe.remove();
+    }
+  } catch {
+    /* 无布局环境：返回 0。 */
+  }
+  return Number.isFinite(width) ? width : 0;
+}
+
+/**
+ * 0.7.23（总监 m01687 ② / m01712 ②）：按**参照元素的实际字体**量一段文字。
+ * `.tevent__time` 与 `.tevent__title-text` 字号不同，同串 156px 用时间字体量只有
+ * 120px（低估 23%）——名称与地点必须各用自己的 computed font（family / size /
+ * weight / letter-spacing），不许再借 `measureTimeText`。
+ * 无布局环境（jsdom）量为 0，调用方退回注入的 `measure`。
+ */
+function measureTextWithFont(text, el) {
+  let width = 0;
+  try {
+    if (!text || typeof document === 'undefined' || !document.body) return 0;
+    if (!el || typeof getComputedStyle !== 'function') return 0;
+    const cs = getComputedStyle(el);
+    if (!cs) return 0;
+    const probe = document.createElement('span');
+    probe.setAttribute('aria-hidden', 'true');
+    probe.textContent = text;
+    probe.style.cssText =
+      'position:absolute;left:-9999px;top:0;width:auto;max-width:none;visibility:hidden;' +
+      'pointer-events:none;white-space:nowrap;overflow:visible;' +
+      `font-family:${cs.fontFamily || 'inherit'};font-size:${cs.fontSize || 'inherit'};` +
+      `font-weight:${cs.fontWeight || 'inherit'};font-style:${cs.fontStyle || 'normal'};` +
+      `letter-spacing:${cs.letterSpacing || 'normal'};`;
+    document.body.append(probe);
+    width = probe.getBoundingClientRect
+      ? probe.getBoundingClientRect().width
+      : Number(probe.offsetWidth) || 0;
+    probe.remove();
+  } catch {
+    /* 无布局环境：返回 0。 */
+  }
+  return Number.isFinite(width) && width > 0 ? width : 0;
+}
+
+/** 一行时间的自然宽（探针与 scrollWidth 取大）。 */
+function timeTextWidth(timeEl) {
+  if (!timeEl) return 0;
+  const scroll = Number.isFinite(timeEl.scrollWidth) ? timeEl.scrollWidth : 0;
+  return Math.max(scroll, measureTimeText(timeEl.textContent || ''));
+}
+
+/**
+ * 0.7.16：把时间按空格贪心折行，返回需要的行数。时间的唯一断点是破折号两侧的
+ * 空格（`white-space: normal` + `word-break: keep-all`），所以按词量宽就够。
+ */
+export function timeTextLineCount(text, avail, measure = measureTimeText) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length || !(avail > 0)) return 1;
+  const space = measure(' ');
+  let lines = 1;
+  let current = 0;
+  for (const word of words) {
+    const width = measure(word);
+    const next = current === 0 ? width : current + space + width;
+    if (current === 0 || next <= avail + 0.5) {
+      current = next;
+    } else {
+      lines += 1;
+      current = width;
+    }
+  }
+  return lines;
+}
+
+/** 一行时间是否被裁（0.7.17：严格判定，去掉 0.7.16 的 1px 容差）。 */
+function timeOverflows(timeEl, avail) {
+  if (!timeEl) return false;
+  const width = timeTextWidth(timeEl);
+  const space = Number.isFinite(avail) ? avail : Number(timeEl.clientWidth) || 0;
+  return width > space + 0.5;
+}
+
+/** 块的内容宽（扣掉左右内距）：一行档里时间被块宽卡住时，可用宽就是它。 */
+function blockContentWidth(block) {
+  if (!block) return 0;
+  let padX = 0;
+  try {
+    const cs = typeof getComputedStyle === 'function' ? getComputedStyle(block) : null;
+    if (cs) {
+      const l = parseFloat(cs.paddingLeft);
+      const r = parseFloat(cs.paddingRight);
+      padX = (Number.isFinite(l) ? l : 0) + (Number.isFinite(r) ? r : 0);
+    }
+  } catch {
+    /* 无计算样式。 */
+  }
+  return Math.max(0, (Number(block.clientWidth) || 0) - padX);
+}
+
+/**
+ * 0.7.17（总监 m01931，用户定稿；此前 L1–L7 与「时间折两行」作废）：
+ * 行数按块**实测高度**分配——第 1 行时间（固定 1 行），中间各行 `emoji + 名称`
+ * （名称按剩余行数折行），最后 1 行地点（固定 1 行，放不下用省略号）。
+ *
+ * 时间的唯一降级链：完整区间 `18:30-19:00` → 开始时间 `18:30` → 省略（上报
+ * `time-hidden`）。不允许 `18:3…` 这种半截数字，时间永不折行、永不省略号。
+ * 只有一行高的块：先保 `emoji + 名称`，时间让给左侧时间轴。
+ */
+const SHORT_TIER_GAP = 5;
+/**
+ * 0.7.19（总监 m01475 / m01482，用户真机反馈）：地点不再用 108px 固定门槛——
+ * 手机上周/四日块的内容宽只有 19–69px，108px 等于永远不显示地点。改成
+ * 「至少放得下 2 个字」才显示，占最后一行；行数不够时按牺牲序先丢地点、
+ * 把那一行让给名称。CSS 侧同步删掉 `@container (max-width: 108px)` 的隐藏。
+ */
+const TEVENT_LOC_MIN_CHARS = 2;
+
+/**
+ * 0.7.19（用户「高度按实际的格子高度来算」）：按块的真实内容高做行预算。
+ *   budget = height − padTop − padBottom；时间固定 1 行，每加一行扣 `行高 + 1px gap`。
+ * 名称先贪心折到放不下，地点再占最后 1 行（地点之后不再挤名称）。
+ * 不再按 35.6 / 49.6 三档写死，也不再给名称固定 3 行上限——高度够就继续折。
+ * @returns {{title:number,time:number,loc:number,total:number,short:boolean}}
+ */
+export function teventLinePlan(height, metrics = null, hasLoc = false) {
+  const m = metrics || TEVENT_METRICS_FALLBACK;
+  const padTop = Number.isFinite(m.padTop) ? m.padTop : TEVENT_METRICS_FALLBACK.padTop;
+  const padBottom = Number.isFinite(m.padBottom) ? m.padBottom : TEVENT_METRICS_FALLBACK.padBottom;
+  const gap = Number.isFinite(m.gap) ? m.gap : TEVENT_METRICS_FALLBACK.gap;
+  const lh = {
+    title: m.titleLh > 0 ? m.titleLh : TEVENT_METRICS_FALLBACK.titleLh,
+    time: m.timeLh > 0 ? m.timeLh : TEVENT_METRICS_FALLBACK.timeLh,
+    loc: m.locLh > 0 ? m.locLh : TEVENT_METRICS_FALLBACK.locLh,
+  };
+  const h = Number(height) || 0;
+  // 装不下「时间 + 名称」的最小两行高 → 一行档（时间与名称横排），与 0.7.15 同判据。
+  if (h < padTop + padBottom + lh.time + gap + lh.title) {
+    return { title: 1, time: 1, loc: 0, total: 1, short: true };
+  }
+  let budget = h - padTop - padBottom;
+  const used = { title: 0, time: 0, loc: 0 };
+  const total = () => used.title + used.time + used.loc;
+  // 0.7.19：行盒取整会差零点几像素（60 分钟块 46px 预算 vs 两行名称 46.2px），
+  // 留 0.5px 容差，避免为了 0.2px 白丢一行；clamp 会裁掉溢出部分，不会撑破块。
+  const take = (field) => {
+    const cost = lh[field] + (total() > 0 ? gap : 0);
+    if (cost > budget + 0.5) return false;
+    budget -= cost;
+    used[field] += 1;
+    return true;
+  };
+  take('time');
+  // 地点是末行：先预留「名称 1 行 + 地点 1 行」，预留不成就整块不留地点（牺牲序：
+  // 地点先让），省下的行全部给名称继续折。预留成功后再把余量加给名称。
+  let locPlaced = false;
+  if (hasLoc) {
+    const budget0 = budget;
+    const titles0 = used.title;
+    if (take('title') && take('loc')) locPlaced = true;
+    else {
+      budget = budget0;
+      used.title = titles0;
+      used.loc = 0;
+    }
+  }
+  while (used.title < TEVENT_MAX_LINES.title && take('title')) {}
+  return { ...used, total: total(), short: false };
+}
+/** 块高按实测阈值折成 1 / 2 / 3 行（总监 m01875：不用固定 33px）。 */
+export function teventLayoutLines(height, metrics = null) {
+  const tiers = teventLayoutTiers(metrics);
+  if (height >= tiers.threeLine) return 3;
+  if (height >= tiers.twoLine) return 2;
+  return 1;
+}
+
+/**
+ * 时间折两行所需的最小块高（保留导出给旧文档引用；0.7.17 定稿起时间固定 1 行，
+ * 排布不再用它判定）。
+ */
+export function teventTimeWrapMinHeight(metrics = null) {
+  const m = metrics || TEVENT_METRICS_FALLBACK;
+  const padTop = Number.isFinite(m.padTop) ? m.padTop : TEVENT_METRICS_FALLBACK.padTop;
+  const padBottom = Number.isFinite(m.padBottom) ? m.padBottom : TEVENT_METRICS_FALLBACK.padBottom;
+  const gap = Number.isFinite(m.gap) ? m.gap : TEVENT_METRICS_FALLBACK.gap;
+  const timeLh = m.timeLh > 0 ? m.timeLh : TEVENT_METRICS_FALLBACK.timeLh;
+  return padTop + padBottom + timeLh * 2 + gap;
+}
+
+function elementWidth(el) {
+  if (!el) return 0;
+  try {
+    const w = el.getBoundingClientRect ? el.getBoundingClientRect().width : 0;
+    if (Number.isFinite(w) && w > 0) return w;
+  } catch {
+    /* 无布局。 */
+  }
+  return 0;
+}
+
+function blockHeight(block) {
+  try {
+    const h = block.getBoundingClientRect ? block.getBoundingClientRect().height : 0;
+    if (Number.isFinite(h) && h > 0) return h;
+  } catch {
+    /* 无布局。 */
+  }
+  return Number(block.offsetHeight) || 0;
+}
+
+/**
+ * 0.7.23（总监 m01712，验收不变量）：名称 / 地点被截时，块内不得还剩 1 行以上的
+ * 垂直空间——「块里还有空行、名称仍被截」一律判失败。
+ * 纯函数：`availableH` = 块内容高，`usedH` = 已排内容高，`rows` = 当前给的行数，
+ * `needRows` = 按字体量出的需要行数；`rowsLeft` 用（行高 + 行距）向下取整。
+ * 探针页用它逐块自查，单测用它逐例判定（jsdom 没有布局，页面实测在探针里做）。
+ */
+export function teventRowAudit({ availableH = 0, usedH = 0, lineH = 0, gap = 0, rows = 0, needRows = 0, field = 'name' } = {}) {
+  const rowUnit = Math.max(1, (Number(lineH) || 0) + (Number(gap) || 0));
+  const rowsLeft = Math.max(0, Math.floor((Number(availableH) - Number(usedH) + 0.5) / rowUnit));
+  const violations = [];
+  if (Number(needRows) > Number(rows) && rowsLeft >= 1) {
+    violations.push({ field, rows: Number(rows), needRows: Number(needRows), rowsLeft, rowUnit });
+  }
+  return { rowsLeft, violations };
+}
+
+/**
+ * 0.7.24（总监 m02597，用户 m00189）：显示优先级 时间 > emoji > 名称 > 地址 的验收不变量。
+ * 纯函数，探针页逐块调用、单测逐例判定。
+ * - 有标签 emoji 却不可见 → 违规；
+ * - 名称被隐藏，但块内还剩 ≥ 1 行、且 emoji 后有 ≥ 1 个字宽 → 违规；
+ * - 地址可见而名称没满足（需要行数 > 已给行数）→ 违规。
+ */
+export function teventPriorityAudit({
+  hasEmoji = false, emojiVisible = true, nameLines = 0, nameNeed = 0,
+  rowsLeft = 0, nameCapInline = 0, titleMin = 12, locLines = 0,
+} = {}) {
+  const violations = [];
+  if (hasEmoji && !emojiVisible) violations.push({ rule: 'emoji-hidden' });
+  if (Number(nameLines) === 0 && Number(rowsLeft) >= 1 && Number(nameCapInline) >= Number(titleMin)) {
+    violations.push({ rule: 'name-hidden-with-room', rowsLeft: Number(rowsLeft) });
+  }
+  if (Number(locLines) > 0 && Number(nameNeed) > Number(nameLines)) {
+    violations.push({ rule: 'loc-before-name', nameLines: Number(nameLines), nameNeed: Number(nameNeed) });
+  }
+  return { violations };
+}
+
+function applyTimeTierLadder(block, timeEl, avail, ctx) {
+  const { rangeText, startText, measure, metrics } = ctx;
+  // 0.7.19（总监 m01475 ②）：幂等——每次重排先清掉上一轮的行结构与 emoji 副本。
+  // 0.7.21 重打（总监 2026-11-12 裁决 ①）：时间行不再挂 emoji，这里只做历史清理。
+  block.classList.remove('tevent--emoji-on-time');
+  block.classList.remove('tevent--emoji-own-line');
+  // 0.7.24（总监 m02597）：`tevent--name-no-emoji` 机制已整条删除；仍做一次历史清理，
+  // 避免旧 DOM 残留类把 emoji 藏起来（热更新/复用节点时可能出现）。
+  block.classList.remove('tevent--name-no-emoji');
+  for (const stray of block.querySelectorAll('.tevent__tag-emoji--on-time')) stray.remove();
+  const titleEl = block.querySelector('.tevent__title');
+  const titleTextEl = titleEl ? titleEl.querySelector('.tevent__title-text') : null;
+  const locElRef = block.querySelector('.tevent__loc');
+  // 0.7.23：同行时 emoji 与间距会被挪进 `.tevent__title-text`（名称文字流内部）。
+  // 重排前先移回 `.tevent__title`，否则量到的 emoji 盒宽与名称文字宽都受行内排布影响。
+  {
+    const strayEmoji = titleTextEl ? titleTextEl.querySelector(':scope > .tevent__tag-emoji') : null;
+    if (strayEmoji) {
+      const strayGap = titleTextEl.querySelector(':scope > .tag-gap');
+      titleEl.insertBefore(strayEmoji, titleTextEl);
+      if (strayGap) titleEl.insertBefore(strayGap, titleTextEl);
+    }
+  }
+  // 0.7.23（总监 m01687 ② / m01712 ②）：名称宽度必须用名称字体量——`.tevent__time`
+  // 的字号比 `.tevent__title-text` 小，实测同串 156px 会被量成 120px（低估 23%），
+  // 名称需要行数因此少算，块内还有空行却只给 1 行。注入的 `measureTitle` 优先，
+  // 否则按 `.tevent__title-text` 的 computed font 直接量（jsdom 量不到再退回 `measure`）。
+  const measureName =
+    typeof ctx.measureTitle === 'function'
+      ? ctx.measureTitle
+      : (text) => measureTextWithFont(text, titleTextEl) || measure(text);
+  // 地点同理（总监 m01712 ③）：`.tevent__loc` 的字号比时间更小，借时间字体会低估。
+  const measureLocText =
+    typeof ctx.measureLoc === 'function'
+      ? ctx.measureLoc
+      : (text) => measureTextWithFont(text, locElRef) || measure(text);
+  const rangeW = measure(rangeText) || timeTextWidth(timeEl);
+  const startW = measure(startText) || rangeW;
+  const hourW = measure(startText.split(':')[0] || startText) || 0;
+  const emojiEl = block.querySelector('.tevent__tag-emoji');
+  // 0.7.17（总监 m02263 复核）：flex/grid 行里 emoji 的**盒子**会被撑宽——四日 390 实测
+  // 盒子 29.5px、同字号字形只有 16.5px，用盒子宽判档会让 S2b 差 1.4px 落空、名称白丢。
+  // 取两者较小值：盒子更宽说明被拉伸，以字形宽为准；盒子更窄说明被裁，以可见宽为准。
+  const emojiBox = emojiEl ? elementWidth(emojiEl) || 0 : 0;
+  const emojiGlyph = emojiEl ? measure(emojiEl.textContent || '') || 0 : 0;
+  const emojiW = emojiBox && emojiGlyph ? Math.min(emojiBox, emojiGlyph) : (emojiBox || emojiGlyph);
+  // 0.7.23：同行排布时 emoji 在文字流里占的是**排版推进宽**（盒宽），不是字形宽；
+  // 用 min(盒, 字形) 会把首行容量算大 7px 左右，末 1 个字被 clip（四日 720 m75 实测）。
+  const emojiAdvance = Math.max(emojiBox, emojiGlyph) || emojiW;
+  const spaceW = measure(' ') || 3;
+  const titleMin = measure('测') || 12;
+  // 总监 m01101：严格放得下，不加 1px。
+  const fits = (w) => w <= avail;
+
+  // 0.7.19（用户「高度按实际的格子高度来算」）：行预算按块真实内容高算，
+  // 不再用 1 / 2 / 3 行的固定门槛；名称只要高度够就继续折。
+  const plan = teventLinePlan(ctx.height, metrics, Boolean(ctx.hasLoc));
+  const maxLines = plan.total;
+
+  // ── 只有一行（总监 m02031，用户 m01091）：时间 + emoji 同进同退，名称是唯一
+  //    会被让掉的一项。档位由宽到窄（总监 m02263 加 S2b；0.7.19 / m01475 删 S2，
+  //    因 S2 判 `rangeW + gap + emoji` 而 S2b 判 `startW + gap + emoji + space + titleMin`，
+  //    后者恒更窄 ⇒ S2 一旦命中 S2b 必然也命中，S2 只会白丢名称，是死档）：
+  //    区间+emoji+名称 → 开始+emoji+名称 → 开始+emoji → 只小时+emoji。
+  //    名称只要放得下就一定显示（四日 390 可用 69px 时落 S2b，不再丢名称）。 ──
+  if (maxLines === 1) {
+    block.classList.add('is-short');
+    if (block.dataset) delete block.dataset.teventTight;
+    block.style.setProperty('--tevent-lines-time', '1');
+    block.style.setProperty('--tevent-lines-title', '1');
+    block.style.setProperty('--tevent-lines-loc', '0');
+    const loc = block.querySelector('.tevent__loc');
+    if (loc) loc.remove();
+
+    let tier;
+    let text;
+    if (fits(rangeW + SHORT_TIER_GAP + emojiW + spaceW + titleMin)) {
+      tier = 'S1';
+      text = rangeText;
+    } else if (fits(startW + SHORT_TIER_GAP + emojiW + spaceW + titleMin)) {
+      // 0.7.17（总监 m02263）：完整区间放不下时先试「开始时间 + emoji + 名称」，
+      // 名称还有余量就不该消失。
+      tier = 'S2b';
+      text = startText;
+    } else if (fits(startW + SHORT_TIER_GAP + emojiW)) {
+      tier = 'S3';
+      text = startText;
+    } else if (fits(hourW + SHORT_TIER_GAP + emojiW)) {
+      tier = 'S4';
+      text = startText.split(':')[0] || startText;
+    } else if (fits(hourW + emojiW)) {
+      // 最后一级：`18 ⚽` 的 5px 间距在 320/360 的周视图放不下（差 0.3–5px），
+      // 去掉间距仍保留「时间 + emoji」两者——不违反「不许只剩时间/只剩 emoji」。
+      tier = 'S4';
+      text = startText.split(':')[0] || startText;
+      if (block.dataset) block.dataset.teventTight = '1';
+    } else {
+      // 连 `18 ⚽` 都放不下（并发窄块）：只能整段省略时间、留 emoji 与名称，
+      // 并上报——不裁字、不出现半截数字。
+      tier = 'S-name';
+      text = '';
+      reportTimeClipped('time-hidden', block, {
+        avail: Math.round(avail * 10) / 10,
+        needed: Math.round((hourW + SHORT_TIER_GAP + emojiW) * 10) / 10,
+      });
+    }
+    timeEl.textContent = text;
+    if (block.dataset) {
+      block.dataset.hasLoc = '0';
+      block.dataset.teventTier = tier;
+      block.dataset.teventMaxLines = '1';
+    }
+    return tier;
+  }
+
+  // ── 两行及以上：第 1 行时间（固定 1 行），中间各行名称（可折行），末行地点 ──
+  block.classList.remove('is-short');
+  const hasLoc = Boolean(block.querySelector('.tevent__loc'));
+  // 0.7.19（总监 m01482）：地点只占最后一行，且必须在时间与名称之后（maxLines ≥ 3 才有它）。
+  // 判据从「内容宽 > 108px」改成「至少放得下 2 个字」；手机窄块也能显示地点。
+  // 行数不够时按牺牲序先丢地点（后面按名称实际行数再回退），那一行还给名称。
+  const contentW = blockContentWidth(block);
+  // 0.7.20（总监 m02349）：地点只在 L ≥ 4 时出现，具体行数在下面按名称实际行数再定。
+  let locLines = 0;
+
+  let tier;
+  let text;
+  if (fits(rangeW)) {
+    tier = 'M-range';
+    text = rangeText;
+  } else if (fits(startW)) {
+    tier = 'M-start';
+    text = startText;
+  } else {
+    // 最后手段：整段省略时间（不出现 `18:3…` 半截数字），上报后由名称接管。
+    tier = 'M-hidden';
+    text = '';
+    reportTimeClipped('time-hidden', block, {
+      avail: Math.round(avail * 10) / 10,
+      needed: Math.round(startW * 10) / 10,
+    });
+  }
+
+  timeEl.textContent = text;
+  const timeShown = tier !== 'M-hidden';
+  block.style.setProperty('--tevent-lines-time', '1');
+
+  // 0.7.23（总监 m01687 / m01712）：结构只由「块高能容几行」与「emoji 后是否还剩
+  // 1 个字宽」决定，不再用 L 档固定结构：
+  //   - 两行块（扣掉时间行只剩 1 行）：0.7.22 的「名称优先」，隐藏 emoji；
+  //   - 其余先试 `emoji 名称` 同行（emoji 后 ≥ 1 个字宽）；
+  //   - 同行放不下才让 emoji 独占第 2 行；连 emoji 行的高度都没有则隐藏 emoji。
+  const label = String((titleTextEl ? titleTextEl.textContent : titleEl ? titleEl.textContent : '') || '');
+  const nameW = label ? measureName(label) || 0 : 0;
+  // 0.7.24（总监 m02597，用户 m00189）：emoji 后能放几个字按**排版推进宽**算
+  // （`emojiAdvance` ≈ 盒宽，不是 13.7px 的字形宽）；用字形宽会把首行容量算大 9–10px，
+  // 于是「≥ 1 字宽」误判成立、名称实际一个字也显示不出来（周 390 m45 实测 vis 0/4）。
+  const nameCapInline = Math.max(0, avail - (emojiEl ? emojiAdvance + spaceW : 0));
+
+  // 0.7.20（总监 m02349）：可用行数 L 决定结构，地点只在 L ≥ 4 出现——
+  //   L = 2：时间 + `emoji 名称`（emoji 不得把名称挤没）；
+  //   L >= 3：先试 `emoji 名称` 同行；
+  //   L >= 4：地点 1 行（最后一行），名称先用剩余行算。
+  // 0.7.21（总监 m02704，用户「emoji+名称一行放得下就一行啊，我说的是放不下才换行」）：
+  // emoji 独占行不再是 L>=3 的无条件结构——名称在「块内容宽 − emoji 宽 − 间距」里
+  // 至少放得下 1 个字（titleMin）且需要行数不超过可用行数时，就保持同行；只有连
+  // 1 个字都放不下才拆行。宽块（四日、日）因此不再白占一行。
+  // 牺牲序：名称放不下先丢地点、把最后一行还给名称；再让 emoji 回到名称行。
+  // ── 0.7.23（总监 m01687 / m01712，任务书「名称按高度换行」）：行数只由块实测高
+  //    给，宽度只决定一行放几个字；emoji 那一行按 CSS clamp 的实际占用计费
+  //    （一个标题行 + 一个行距），不再用 `max(titleLh, emoji 实测 ≈18px)` 高估；
+  //    名称与地点各用自己字体的量法（`measureName` / `measureLocText`）。 ──
+  const L = Math.max(1, maxLines);
+  const budget = Math.max(0, ctx.height - (metrics.padTop || 0) - (metrics.padBottom || 0));
+  const gap = metrics.gap || 1;
+  const timeLh = metrics.timeLh || 13;
+  const titleLh = metrics.titleLh || 15.6;
+  // 时间行按实测盒高收费（`timeLh` 是行高的兜底值，实际 `.tevent__time` 常矮于它）。
+  const timeBoxH = timeShown && timeEl ? timeEl.getBoundingClientRect().height || timeLh : 0;
+  const timeCost = timeShown ? Math.max(1, timeBoxH) + gap : 0;
+  // 0.7.23（总监 m01712）：标题盒里的行按 CSS clamp 的实际占用计费——每行一个
+  // `titleLh`，行与行之间没有额外间距（行距只发生在 时间/名称/地点 三个子节点之间）。
+  // emoji 独占行就是标题盒里的第 1 行，同样只占一个 `titleLh`，不再按 emoji 实测
+  // 18px 收费（那会让 65px 块白丢一行）。
+  const titleCost = (rows, ownEmojiRow) => (rows + (ownEmojiRow ? 1 : 0)) * titleLh;
+  const rowsFit = (n, ownEmojiRow) => n > 0 && timeCost + titleCost(n, ownEmojiRow) <= budget + 0.5;
+  const maxRows = (ownEmojiRow) => {
+    let fit = 0;
+    for (let k = 1; k <= TEVENT_MAX_LINES.title; k += 1) {
+      if (!rowsFit(k, ownEmojiRow)) break;
+      fit = k;
+    }
+    return fit;
+  };
+  const rowsNoTime = L - (timeShown ? 1 : 0);
+  // ── 0.7.24（总监 m02597，用户 m00189「emoji 优先级在名称前面」）──
+  // 优先级改为 时间 > emoji > 名称 > 地址：
+  //   - emoji 永不为名称让位（0.7.22/0.7.23 的「丢掉 emoji 保名称」整条删除）；
+  //   - 第 2 行先试 `emoji + 名称` 同行（emoji 后 ≥ 1 个字宽）；
+  //   - 只够一行（两行块）且 emoji 后不足 1 个字宽：第 2 行只放 emoji、名称隐藏；
+  //   - 三行及以上放不下同行时：emoji 独占第 2 行、名称第 3 行起拿整块宽。
+  const canInlineName = nameCapInline >= titleMin;
+  let emojiMode = 'none';
+  if (emojiEl) {
+    if (rowsNoTime >= 2) {
+      if (canInlineName && maxRows(false) >= 1) emojiMode = 'inline';
+      else if (maxRows(true) >= 1) emojiMode = 'own-line';
+      else emojiMode = 'inline';
+    } else if (rowsNoTime >= 1) {
+      emojiMode = canInlineName && maxRows(false) >= 1 ? 'inline' : 'emoji-only';
+    }
+  }
+  const emojiOwnLine = emojiMode === 'own-line';
+  const nameHidden = emojiMode === 'emoji-only';
+  const emojiChar = emojiEl ? String(emojiEl.textContent || '') : '';
+  const gapEl = titleEl ? titleEl.querySelector('.tag-gap') : null;
+  // 0.7.23：同行时把 emoji 与间距挪进名称文字流内部（`title-text`），clamp 落在
+  // `title-text` 上——第 1 行 `emoji + 字`，第 2 行起回到整块左缘、每行都是整块宽。
+  if (emojiMode === 'inline' && titleTextEl && emojiEl) {
+    titleTextEl.insertBefore(emojiEl, titleTextEl.firstChild);
+    if (gapEl) titleTextEl.insertBefore(gapEl, emojiEl.nextSibling);
+  }
+  block.classList.toggle('tevent--name-hidden', nameHidden);
+  const rowsAvail = nameHidden ? 0 : Math.max(1, emojiOwnLine ? maxRows(true) : maxRows(false));
+  // 名称一律拿整块内容宽；同行时首行被 emoji 占掉一点，按「emoji + 间距 + 名称」的
+  // 总宽算需要行数（分开量三段再相加：整串拼接量宽在测试注入的 measure 里量不到）。
+  const nameWEff = emojiMode === 'inline' && emojiChar ? nameW + emojiAdvance + spaceW : nameW;
+  // 每行可用宽留 0.5px 余量：按字体算出的净宽常与浏览器排版差不到 1 个字宽，
+  // 恰好等于内容宽时浏览器会折行（m75 四日 720：151 vs 151.4），留半像素避免少排一行。
+  // 0.7.23（总监 m02420②）：每行容量留 3px 亚像素余量。实测四日 360 m120 名称 156px
+  // 在 61px 行宽上要 2.56 行，给 3 行后末行仍溢出 2.4px 被裁；留 3px 后算成 4 行、
+  // 块里有空行就补上——正是「块里还有空行、名称仍被截」要消灭的那一类。
+  const nameLineW = Math.max(1, avail - Math.max(2, titleMin * 0.4));
+  // 同行时第 1 行只剩「内容宽 − emoji − 间距」，名称超出的部分从第 2 行起按整块宽折；
+  // 不能直接用 `nameWEff / avail`（那会把「第 1 行被 emoji 挤掉一点」算成 1 行，
+  // 末 1 个字被 clip 掉）。同样留 1px 余量兜住亚像素差。
+  let nameNeed = 0;
+  if (nameWEff > 0 && avail > 0) {
+    if (emojiMode === 'inline' && emojiChar) {
+      const firstCap = Math.max(0, avail - emojiAdvance - spaceW - 1);
+      nameNeed = nameW <= firstCap ? 1 : 1 + Math.ceil((nameW - firstCap) / nameLineW);
+    } else {
+      nameNeed = Math.ceil(nameW / nameLineW);
+    }
+  }
+  let nameLines = nameHidden ? 0 : Math.max(1, Math.min(nameNeed || 1, rowsAvail));
+  locLines = 0;
+  // 地点按牺牲序放在最后：名称需要的行先满足（名称被隐藏时不给地点），剩下的行才给
+  // 地点，允许折行。0.7.24：地址可见而名称未满足 = 禁止。
+  if (hasLoc && L >= 4 && contentW >= titleMin * TEVENT_LOC_MIN_CHARS && nameLines > 0 && (nameNeed || 1) <= nameLines) {
+    const leftover = rowsAvail - nameLines;
+    if (leftover >= 1) {
+      const locText = locElRef ? String(locElRef.textContent || '') : '';
+      const locW = locText ? measureLocText(locText) || 0 : 0;
+      const locNeed = locW > 0 ? Math.ceil(locW / Math.max(1, avail)) : 1;
+      locLines = Math.min(leftover, Math.max(1, locNeed));
+    }
+  }
+  // 0.7.21 重打（总监 2026-11-12 裁决 ①，用户 m01833「时间换行，才是 emoji」）：
+  // 时间行永远只有时间，禁止把 emoji 挪到时间行。
+  let titleLines = emojiOwnLine ? nameLines + 1 : Math.max(1, nameLines);
+  block.classList.toggle('tevent--emoji-own-line', emojiOwnLine);
+  if (emojiOwnLine) block.style.setProperty('--tevent-lines-name', String(nameLines));
+  else block.style.removeProperty('--tevent-lines-name');
+  block.style.setProperty('--tevent-lines-title', String(titleLines));
+  block.style.setProperty('--tevent-lines-loc', String(locLines));
+  const locEl = block.querySelector('.tevent__loc');
+  if (locLines === 0 && locEl) {
+    locEl.remove();
+  }
+  // 0.7.23（总监 m01687 ① 的实测口径）：按字体算出的净宽与浏览器实际排版可能差 1–3px，
+  // 只靠算术会在边界上少排一行。这里在排完后把 clamp 临时放开，量出名称真正要几行
+  // （`scrollHeight` 在 `-webkit-box` + clamp 下不可靠，会等于 clientHeight），
+  // 再按块里还容得下的行数补齐；最多两轮（改一次 clamp 就要重排一次）。
+  const growth = [];
+  for (let pass = 0; pass < 2 && titleTextEl && !nameHidden; pass += 1) {
+    const prevClamp = titleTextEl.style.webkitLineClamp;
+    // 用一个大数而不是 `none`：`none` 会让 `-webkit-box` 退回普通盒，量到的高度
+    // 与 clamp 生效时不是一个口径（实测 12px vs 31.2px）。
+    titleTextEl.style.webkitLineClamp = '99';
+    const natH = titleTextEl.getBoundingClientRect().height;
+    titleTextEl.style.webkitLineClamp = prevClamp;
+    // 末字被横向裁掉（`scrollWidth > clientWidth`）同样算「还该多一行」，否则
+    // 亚像素差会让最后一个字永远看不见。
+    const horizontalClip = titleTextEl.scrollWidth > titleTextEl.clientWidth + 0.5;
+    const needRows = Math.max(
+      horizontalClip ? nameLines + 1 : 1,
+      natH > 0 ? Math.max(1, Math.round(natH / Math.max(1, titleLh))) : 1,
+    );
+    growth.push({ pass, natH: Math.round(natH * 10) / 10, needRows, nameLines, horizontalClip });
+    if (needRows <= nameLines) break;
+    const titleH = titleEl.getBoundingClientRect().height;
+    const locNow = block.querySelector('.tevent__loc');
+    const locReserve = locNow ? locNow.getBoundingClientRect().height + gap : 0;
+    const spare = budget - timeCost - locReserve - titleH;
+    const canGrow = Math.floor((spare + 0.5) / titleLh);
+    if (canGrow < 1) break;
+    const nextName = Math.min(TEVENT_MAX_LINES.title, nameLines + canGrow);
+    if (nextName <= nameLines) break;
+    nameLines = nextName;
+    titleLines = emojiOwnLine ? nameLines + 1 : Math.max(1, nameLines);
+    block.style.setProperty('--tevent-lines-title', String(titleLines));
+    if (emojiOwnLine) block.style.setProperty('--tevent-lines-name', String(nameLines));
+  }
+  if (block.dataset) {
+    block.dataset.hasLoc = locLines > 0 ? '1' : '0';
+    block.dataset.teventEmojiLine = emojiOwnLine ? '1' : '0';
+    block.dataset.teventNameLines = String(nameLines);
+    block.dataset.teventTitleLines = String(titleLines);
+    // 0.7.24（总监 m02597）：结构判定与优先级读数，供探针页逐块核对。
+    block.dataset.teventEmojiMode = emojiMode;
+    block.dataset.teventNameHidden = nameHidden ? '1' : '0';
+    block.dataset.teventNameNeed = String(nameNeed || 0);
+  }
+  if (block.dataset) {
+    block.dataset.teventTier = tier;
+    block.dataset.teventMaxLines = String(maxLines);
+    // 0.7.23 调试读数（探针页取用）：结构判定与量宽，便于逐个核对。
+    block.dataset.teventDbg = JSON.stringify({
+      mode: emojiMode, avail: Math.round(avail * 10) / 10, nameCapInline: Math.round(nameCapInline * 10) / 10,
+      nameW: Math.round(nameW * 10) / 10, emojiW: Math.round(emojiW * 10) / 10, spaceW,
+      nameNeed, rowsAvail, nameLines, titleLines, budget: Math.round(budget * 10) / 10,
+      timeCost: Math.round(timeCost * 10) / 10, titleLh, gap, growth,
+    });
+  }
+  // 兜底断言（0.7.21 更正注释，总监 m02610）：这里只上报 `time-clip`，
+  // 降档（区间 → 开始时间 → 省略）已在前面阶梯完成，本处不再降档。
+  if (timeShown && timeOverflows(timeEl, avail)) {
+    reportTimeClipped('time-clip', block, {
+      avail: Math.round(avail * 10) / 10,
+      needed: Math.round(timeTextWidth(timeEl) * 10) / 10,
+    });
+  }
+  return tier;
+}
+
+/**
+ * 挂载后跑一遍（0.7.16 起；0.7.17 定稿为「时间 1 行 + 名称折行 + 地点 1 行」）：
+ * - 行数由块实测高度算（`teventLayoutLines()`），不看宽度；
+ * - 时间只有三态：完整区间 / 开始时间 / 省略（上报 `time-hidden`）；
+ * - 一行高的块改为横排 `emoji + 名称`，时间让给时间轴。
+ * 幂等：时间文案先还原到原始区间再量。
+ */
+export function applyTeventTimeFit(root, opts = {}) {
+  if (!root || typeof root.querySelectorAll !== 'function') return;
+  const metrics = readTeventMetrics();
+  // 测试可注入 measure（jsdom 没有字体度量，探针恒为 0）。
+  const measure = typeof opts.measure === 'function' ? opts.measure : measureTimeText;
+  // 0.7.23（总监 m01687 ② / m01712 ②）：名称与地点各有自己的字体，允许注入；
+  // 不注入时由 `applyTimeTierLadder()` 按对应元素的 computed font 量（下方 ctx 传 null）。
+  const measureTitle = typeof opts.measureTitle === 'function' ? opts.measureTitle : null;
+  const measureLoc = typeof opts.measureLoc === 'function' ? opts.measureLoc : null;
+  for (const block of root.querySelectorAll('.tevent')) {
+    const timeEl = block.querySelector('.tevent__time');
+    if (!timeEl || !block.dataset) continue;
+    const rangeText = block.dataset.teventRange || (block.dataset.teventRange = timeEl.textContent || '');
+    // 0.7.17（总监 m01561）：区间分隔符改半角 `-`、两侧无空格，按第一个 `-` 拆。
+    const sep = rangeText.indexOf('-');
+    const startText =
+      block.dataset.teventStart || (block.dataset.teventStart = sep > 0 ? rangeText.slice(0, sep) : rangeText);
+    const endText =
+      block.dataset.teventEnd || (block.dataset.teventEnd = sep > 0 ? rangeText.slice(sep + 1) : '');
+    timeEl.textContent = rangeText;
+    const ctx = {
+      rangeText,
+      startText,
+      endText,
+      measure,
+      // null 表示「由 ladder 按元素字体量」；注入时优先用注入的。
+      measureTitle,
+      measureLoc,
+      height: blockHeight(block),
+      metrics,
+      hasLoc: Boolean(block.querySelector('.tevent__loc')),
+    };
+    applyTimeTierLadder(block, timeEl, blockContentWidth(block), ctx);
+  }
+}
+
 /*
- * 0.6.3（B）备注：列宽 <108px 时不生成地点行的问题交给 CSS 容器查询
- * （`@container (max-width: 108px) .tevent__loc { display: none }`）处理，
- * 与 0.3.5 的注释同源：列宽由布局算出、JS 拿不到，测量还会触发重排。
- * 地点被隐藏时不占行、不影响名称与时间的行数，所以不需要在渲染后重算。
+ * 0.7.20（总监 m02080）：列宽窄时地点由 pplyTimeTierLadder() 的行预算判定
+ * （TEVENT_LOC_MIN_CHARS = 2），不再有 CSS 容器查询；地点让出的行会还给名称。
+ * 渲染时只按行预算生不生成地点，最终行数在挂载后统一重算。
  */
 
 /**
@@ -504,6 +1251,11 @@ export function renderTimeGrid(days, ctx) {
     fitCompactHolidayChips(root);
     // 0.7.9 E：全天行按「run」画一次名称（跨列才换层，单格条不动）。
     applyAllDayRailLabels(root);
+    // 0.7.16（用户：完整时间优先）：宽度落定后量一次，一行放不下就按块高改两行。
+    applyTeventTimeFit(root);
+    // 0.7.17（总监 m02263）：档位写进 `data-tevent-tier` 之后再判一次名称可见性——
+    // S1 / S2b 的档位已经保证名称放得下，不能被「只 emoji」二次藏掉（四日 390）。
+    applyTagTitlePriority(root);
     // The date header and the all-day / tasks rails are siblings of the hour
     // scroller, not children of it, so the scroller's vertical scrollbar eats
     // width from the body's columns and from nothing else. Both bands are
@@ -677,12 +1429,14 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
   const durMin = Math.max(minutesFromMidnight(clipEnd, dayStart) - startMin, 15);
   const top = (startMin / 60) * HOUR_H;
   const height = Math.max((durMin / 60) * HOUR_H, MIN_EVENT_H);
-  const isShort = height < 34;
   // 0.6.3（B）：行预算按可用高度分配，不再用 <34 / 34–50 / ≥50 三档写死。
   // 空地点 / 只有空格按「无地点」处理，不留空行（同 agenda.js:337）。
   const location = String(source.location || '').trim();
   const metrics = (grid && grid.teventMetrics) || readTeventMetrics();
   const alloc = allocateTeventLines(height, metrics, Boolean(location));
+  // 0.7.15（用户）：一行档由 allocateTeventLines 按实测两行档阈值判定，
+  // 这里只读结果，避免两个地方各写一个常量。
+  const isShort = alloc.short;
 
   const hex = colorHex(source.color);
   const node = el('div', {
@@ -694,7 +1448,9 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
       width: `calc(${(1 / colCount) * 100}% - 4px)`,
       '--ev-fill': hex,
       '--ev-fg': colorFg(source.color),
-      // 每块自己的行数上限；CSS 的 line-clamp 读这三个变量。
+      // 每块自己的行数上限（0.7.21 更正注释，总监 m02610）：CSS 的 clamp 读这四个变量。
+      // emoji 独占行时名称单独用 `--tevent-lines-name`——标题整体 clamp 会把 emoji 行
+      // 与名称算成同一行，名称就只能显示一行。
       '--tevent-lines-title': String(alloc.title),
       '--tevent-lines-time': String(alloc.time),
       '--tevent-lines-loc': String(alloc.loc),
@@ -729,18 +1485,19 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
     // 0.7.9 D：跨天定时事件裁进时间轴后，标签用**这一段**的起止（event 是当天副本）：
     // 第一天裁到 24:00 显示 `24:00`（否则跳回 `00:00`，像当天结束）；后续天从 `00:00` 起。
     // 未跨天的块两值相同，文案不变。
+    // 0.7.16（用户：「18:30-19:00 不要省略 -19:00，窄了优先省略名称」）：一行档
+    // 也只写完整时间——宽度不足由名称降档吸收，时间只在连两行都放不下时才省略
+    // （`applyTeventTimeFit()` 会上报，不许静默裁）。
     const startText = formatTime(new Date(event.start), { hour12: ctx.settings.hour12 });
-    const timeText = isShort
-      ? startText
-      : event.clippedEnd
-        ? `${startText} – 24:00`
-        : formatTimeRange(new Date(event.start), new Date(event.end), {
-            hour12: ctx.settings.hour12,
-          });
+    const timeText = event.clippedEnd
+      ? `${startText}-24:00`
+      : formatTimeRange(new Date(event.start), new Date(event.end), {
+          hour12: ctx.settings.hour12,
+        });
     node.append(el('span', { class: 'tevent__time', text: timeText }));
   }
-  // 窄列（<108px）时地点让位给名称+时间：由 CSS 容器查询隐藏（display:none 不占行，
-  // 名称与时间的行数不受影响），JS 不做二次测量。见文件上方 0.6.3（B）备注。
+  // 0.7.20（总监 m02080）：窄列是否显示地点由行预算判定（TEVENT_LOC_MIN_CHARS = 2），
+  // 挂载后 pplyTeventTimeFit() 会按实测块高与内容宽重算行，地点不占行时移除节点。
   if (alloc.loc > 0 && location) {
     node.append(el('span', { class: 'tevent__loc', text: location }));
   }
@@ -810,7 +1567,7 @@ function attachTimedResize(node, source, ctx, grid, dayStart) {
         const height = Math.max(((en - s) / 60) * hourH, MIN_EVENT_H);
         node.style.top = `${(s / 60) * hourH}px`;
         node.style.height = `${height}px`;
-        node.classList.toggle('is-short', height < 34);
+        node.classList.toggle('is-short', height < teventLayoutTiers(readTeventMetrics()).twoLine);
 
         // Only the dragged edge moves; keep the other edge's exact original
         // instant so a sub-minute (imported) event isn't silently nudged by the
@@ -972,9 +1729,8 @@ function attachTimedDrag(node, source, ctx, grid) {
     const timeEl = ghost.querySelector('.tevent__time');
     if (timeEl) {
       const opts = { hour12: ctx.settings.hour12 };
-      timeEl.textContent = ghost.classList.contains('is-short')
-        ? formatTime(start, opts)
-        : formatTimeRange(start, end, opts);
+      // 0.7.16（用户）：一行档也写完整时间，ghost 与落块保持一致，不再只给开始时间。
+      timeEl.textContent = formatTimeRange(start, end, opts);
     }
   }
 

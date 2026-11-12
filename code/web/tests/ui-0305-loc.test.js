@@ -151,19 +151,19 @@ describe('0.3.5 M10 · 时间网格地点行', () => {
 
   it('aria-label：地点非空时拼在时间后；为空不留多余逗号', () => {
     const [withLoc] = renderBlocks(makeEvent({ start: at(10), end: at(11), location: '3 号会议室' }));
-    expect(withLoc.getAttribute('aria-label')).toBe('评审会，10:00 – 11:00，3 号会议室');
+    expect(withLoc.getAttribute('aria-label')).toBe('评审会，10:00-11:00，3 号会议室');
 
     for (const location of ['', '   ']) {
       const [empty] = renderBlocks(makeEvent({ start: at(10), end: at(11), location }));
       const label = empty.getAttribute('aria-label');
-      expect(label).toBe('评审会，10:00 – 11:00');
+      expect(label).toBe('评审会，10:00-11:00');
       expect(label.endsWith('，')).toBe(false);
     }
 
     // A 档（不渲染地点节点）仍按 §5 拼地点：aria 只看数据，不看档位。
     const [short] = renderBlocks(makeEvent({ start: at(10), end: at(10, 30), location: '3 号会议室' }));
     expect(short.querySelector('.tevent__loc')).toBeNull();
-    expect(short.getAttribute('aria-label')).toBe('评审会，10:00 – 10:30，3 号会议室');
+    expect(short.getAttribute('aria-label')).toBe('评审会，10:00-10:30，3 号会议室');
   });
 
   it('跨天定时事件：0.7.9 起裁进时间网格，15 分钟残段放不下地点行', () => {
@@ -187,21 +187,15 @@ describe('0.3.5 M10 · 时间网格地点行', () => {
     expect(rule).not.toMatch(/--text-3/);
   });
 
-  it('CSS：容器宽 <108px 时隐藏地点行（§3.1 实现期改为容器查询）', () => {
-    expect(views).toContain('@container (max-width: 108px)');
-    // 定位到包含 .tevent__loc 的那条容器查询：块内必须是 display: none
-    const marker = '.tevent__loc {';
-    const index = views.lastIndexOf(marker);
-    expect(index).toBeGreaterThan(-1);
-    const open = views.lastIndexOf('{', index);
-    const close = views.indexOf('}', index);
-    expect(views.slice(close + 1, close + 16)).toMatch(/^\s*\}\s*$/m); // 查询块闭合
-    const rule = views.slice(open + 1, close);
-    expect(rule).toMatch(/display:\s*none/);
-    // 判据与既有短块时间行同源：.tevent 自己就是容器
+  // 0.7.19（总监 m01475 ③）：108px 容器查询已删——地点只按「宽度够不够 2 个字的宽度」让位
+  // （`TEVENT_LOC_MIN_CHARS = 2`，由 timegrid.js 的行预算决定），不再由 CSS 宽度阈值直接隐藏。
+  it('CSS：不再有 108px 容器查询隐藏地点行（0.7.19 改为按 2 个字宽让位）', () => {
+    expect(views).not.toContain('@container (max-width: 108px)');
+    // `.tevent__loc` 的隐藏交给行预算（locLines=0 时移除节点），样式只负责排版。
+    const rule = cssRule(views, '.tevent__loc');
+    expect(rule).toBeTruthy();
+    expect(rule).not.toMatch(/display:\s*none/);
+    // 判据与既有短块时间行同源：.tevent 自己仍是容器（0.7.19 只是删掉了这条查询）。
     expect(cssRule(views, '.tevent')).toMatch(/container-type:\s*inline-size/);
-    // 并且该规则确实在 @container 里（前文最近一条 @container 与它之间没有其他顶层规则）
-    const before = views.slice(0, open);
-    expect(before.lastIndexOf('@container (max-width: 108px)')).toBeGreaterThan(-1);
   });
 });

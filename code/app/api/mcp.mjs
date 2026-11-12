@@ -526,8 +526,8 @@ function tagToolFailure(err) {
 
 /**
  * 0.4.13 / M4 §4：AI 端批准工具。
- * 只有凭据显式打开 agentApproval 才注册；关闭时调用也回「未开启」而不是「未知工具」，
- * 让助手能照着文案提示用户去设置里打开（见 agent_approval_disabled）。
+ * 只有凭据显式打开 agentApproval 才注册；关闭时调用也回「未开启」而不是「未知工具」，
+ * 让助手能照着文案提示用户去设置里打开（见 agent_approval_disabled）。
  */
 const AGENT_TOOLS = Object.freeze([
   tool(

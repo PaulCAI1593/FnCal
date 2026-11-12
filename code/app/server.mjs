@@ -87,7 +87,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 重新量宽。纯前端，无接口与数据变化。
 // 0.7.9：月格「今天」胶囊贴右、全天任务 emoji 被前导挤掉、平板周视图名称只显示
 // emoji、跨天定时事件进时间轴、平板多日条名称跨格——纯前端，无接口与数据变化。
-export const VERSION = '0.7.13';
+export const VERSION = '0.7.24';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';

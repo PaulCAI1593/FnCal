@@ -17,6 +17,9 @@ import { EVENT_COLORS, colorHex, colorFg, colorKeyOfHex, isValidColor } from './
 import { DEFAULT_TAG_GROUP_ID, tagForRecord, tagDisplayName } from './store.js';
 // 0.7.5（用户「下拉菜单的分组也可以折叠」）：与编辑器标签下拉共用折叠状态。
 import { expandAllGroups, isGroupCollapsed, toggleGroupCollapsed } from './tag-dropdown-collapse.js';
+// 0.7.22（总监 m00…，用户「筛选面板里的标签下拉被裁剪」）：下拉改成浮层，避开
+// `.search__filters`（max-height: 45vh; overflow-y: auto）的裁剪。
+import { createFloatingLayer } from './floating-layer.js';
 // 0.7.5（用户「搜索里的任务没带emoji」）：结果标题与详情卡共用同一套拆分。
 import { splitTagTitle } from './tag-display.js';
 import { describeRecurrence, occurrenceNear } from './recurrence.js';
@@ -83,6 +86,9 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
   let panelEl = null;
   let filterPanel = null;
   let filterBtn = null;
+  // 0.7.22（总监 m00…）：标签下拉浮层的收尾函数——面板重建 / 关闭时统一关掉，
+  // 避免 body 上留下一个孤儿菜单。
+  let closeTagMenu = null;
   let filters = null;
   let index = []; // snapshot of searchable entries, built on open
   let results = [];
@@ -317,6 +323,9 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
 
   function close() {
     if (!scrim) return;
+    // 0.7.22：全屏搜索关闭时收掉 body 上的标签下拉浮层。
+    if (closeTagMenu) closeTagMenu();
+    document.querySelectorAll('body > .search__tag-menu').forEach((node) => node.remove());
     if (tagTriggerObserver) {
       tagTriggerObserver.disconnect();
       tagTriggerObserver = null;
@@ -538,6 +547,8 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
           if (!filterPanel) return;
           const open = filterPanel.hidden;
           filterPanel.hidden = !open;
+          // 0.7.22：面板收起时顺带关掉浮层菜单（它挂在 body 上，不会随面板隐藏）。
+          if (!open && closeTagMenu) closeTagMenu();
           filterBtn.setAttribute('aria-expanded', String(open));
           filterBtn.classList.toggle('is-open', open);
           if (open) renderFilterPanel();
@@ -671,6 +682,10 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
   /** 渲染筛选区：日历 chip 多选、颜色 swatch 多选、时间范围、含任务开关。 */
   function renderFilterPanel() {
     if (!filterPanel) return;
+    // 0.7.22（总监 m00…）：重建前先收掉上一轮的浮层菜单——它排在 body 上，
+    // `clear(filterPanel)` 清不到，留着会变成孤儿节点。
+    if (closeTagMenu) closeTagMenu();
+    document.querySelectorAll('body > .search__tag-menu').forEach((node) => node.remove());
     if (tagTriggerObserver) {
       tagTriggerObserver.disconnect();
       tagTriggerObserver = null;
@@ -1004,6 +1019,11 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
         tagTriggerObserver.observe(trigger);
       }
 
+      // 0.7.22（总监 m00…，用户「标签下拉被裁剪」）：菜单打开时挂到 body、fixed 定位，
+      // 不再被 `.search__filters` 的 overflow 裁掉，也不再用 z-index: 6 被结果区压住。
+      // 键盘与 aria 逻辑完全不动（仍由下面的 keydown / aria-expanded 管）。
+      const menuFloat = createFloatingLayer(menu, trigger, { minUsable: 160 });
+
       /* 0.7.6（用户「下拉菜单默认都是全展开，不用记忆折叠与否」）：每次打开都重置为全展开，
          本次打开期间仍可折叠；关闭即丢弃（不写 localStorage、不同步服务端）。
          菜单只在面板构建时生成一次，所以这里同时把 DOM 的折叠态复位。 */
@@ -1026,15 +1046,18 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
 
       function closeMenu() {
         if (menu.hidden) return;
-        menu.hidden = true;
+        // 0.7.22：菜单已挂到 body，关闭走浮层，只把 hidden 置回。
+        menuFloat.close();
         trigger.setAttribute('aria-expanded', 'false');
         document.removeEventListener('pointerdown', onMenuOutside, true);
+        if (closeTagMenu === closeMenu) closeTagMenu = null;
       }
 
       trigger.addEventListener('click', () => {
         if (menu.hidden) {
           resetGroupCollapse();
-          menu.hidden = false;
+          menuFloat.open();
+          closeTagMenu = closeMenu;
           trigger.setAttribute('aria-expanded', 'true');
           document.addEventListener('pointerdown', onMenuOutside, true);
           applyTagTriggerFit(trigger, measure, labelEl);

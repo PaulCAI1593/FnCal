@@ -80,14 +80,15 @@ describe('0.7.1 事件显示：emoji + 名称（两档）', () => {
     expect(chip.classList.contains('chip--tag-only')).toBe(false);
   });
 
-  it('名称不足 3 个字（320 最窄格）：只留 emoji', () => {
-    const { chip, title } = makeChip({ titleWidth: 30 });
+  it('可用宽不足 1 个字：只留 emoji', () => {
+    // 0.7.15（用户）：短块门槛从 3 字降到 1 字；11px < 12px 仍判「放不下」。
+    const { chip, title } = makeChip({ titleWidth: 11 });
     expect(applyTagDisplayTier(chip, title, 'chip--tag-only')).toBe('only');
     expect(chip.classList.contains('chip--tag-only')).toBe(true);
   });
 
   it('宽度变大后能回到默认档（类互斥、可逆）', () => {
-    const { chip, title, state } = makeChip({ titleWidth: 20 });
+    const { chip, title, state } = makeChip({ titleWidth: 11 });
     applyTagDisplayTier(chip, title, 'chip--tag-only');
     expect(chip.classList.contains('chip--tag-only')).toBe(true);
     state.titleWidth = 80;
@@ -213,8 +214,12 @@ describe('0.7.1 K：标题拆成 emoji 节点 + 名称节点', () => {
     expect(splitTagTitle(tag, '台球')).toEqual({ emoji: '⚽', label: '台球' });
     // 只处理首字素：中间/末尾的 emoji 不动。
     expect(splitTagTitle(tag, '台球 ⚽')).toEqual({ emoji: '⚽', label: '台球 ⚽' });
-    // 连续两个：只剥第一个，剩下的仍在名称里。
-    expect(splitTagTitle(tag, '⚽⚽ 台球')).toEqual({ emoji: '⚽', label: '⚽ 台球' });
+    // 0.7.16（用户报 chip 里出现 `🌂 🌂`）：前导连续 emoji 一并剥掉，保证 chip 内
+    // 只有 1 个 emoji；旧断言是「只剥第一个，剩下的留在名称里」，与新的单一 emoji
+    // 规则冲突，按 m00477 改写。
+    expect(splitTagTitle(tag, '⚽⚽ 台球')).toEqual({ emoji: '⚽', label: '台球' });
+    // 0.7.16：标题首字素是别的 emoji 也剥掉，emoji 一律用标签当前值（标签优先）。
+    expect(splitTagTitle(tag, '🚀 台球')).toEqual({ emoji: '⚽', label: '台球' });
     expect(splitTagTitle(null, '台球')).toEqual({ emoji: '', label: '台球' });
   });
 

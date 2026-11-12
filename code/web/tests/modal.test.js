@@ -608,7 +608,7 @@ describe('event modal — view mode (details card)', () => {
     expect(card).toBeTruthy();
     expect(card.querySelectorAll('input, textarea, select').length).toBe(0);
     expect(card.querySelector('#view-title').textContent).toBe('Standup');
-    expect(card.textContent).toContain('2026年7月14日周二 · 上午9:00 – 上午9:30');
+    expect(card.textContent).toContain('2026年7月14日周二 · 上午9:00-上午9:30');
     // 0.2.1（#16）：提醒由客户端执行，详情卡不再渲染提醒；
     // 数据层仍保留 reminders（VALARM 透传），只是没有显示入口。
     expect(card.textContent).not.toContain('提前 10 分钟');

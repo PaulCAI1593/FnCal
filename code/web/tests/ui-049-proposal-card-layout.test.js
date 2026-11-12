@@ -113,14 +113,15 @@ function compact(text) {
 }
 
 describe('0.4.10 · 提案卡片时间格式化（M19 §4）', () => {
-  it('定时同日：MM-DD 周X HH:MM–HH:MM（en dash）', () => {
+  // 0.7.17（总监 m01561）：区间分隔符统一为半角 `-`、两侧无空格，不再用 en dash。
+  it('定时同日：MM-DD 周X HH:MM-HH:MM（半角连字符，无空格）', () => {
     const text = formatSnapshotTime({
       start: localIso(2026, 11, 9, 18, 30),
       end: localIso(2026, 11, 9, 19, 30),
       allDay: false,
     });
-    expect(text).toBe('11-09 周一 18:30–19:30');
-    expect(text).toContain('–');
+    expect(text).toBe('11-09 周一 18:30-19:30');
+    expect(text).not.toContain('–');
     expect(text).not.toContain(' - ');
   });
 
@@ -186,9 +187,9 @@ describe('0.4.10 · 提案卡片时间格式化（M19 §4）', () => {
   it('时间取哪个快照：删除取 before，修改/新建取 after', () => {
     const before = { start: localIso(2026, 11, 9, 10, 0), end: localIso(2026, 11, 9, 11, 0), allDay: false };
     const after = { start: localIso(2026, 11, 10, 10, 0), end: localIso(2026, 11, 10, 11, 0), allDay: false };
-    expect(formatProposalTime({ action: 'delete', before, after: null })).toBe('11-09 周一 10:00–11:00');
-    expect(formatProposalTime({ action: 'update', before, after })).toBe('11-10 周二 10:00–11:00');
-    expect(formatProposalTime({ action: 'create', before: null, after })).toBe('11-10 周二 10:00–11:00');
+    expect(formatProposalTime({ action: 'delete', before, after: null })).toBe('11-09 周一 10:00-11:00');
+    expect(formatProposalTime({ action: 'update', before, after })).toBe('11-10 周二 10:00-11:00');
+    expect(formatProposalTime({ action: 'create', before: null, after })).toBe('11-10 周二 10:00-11:00');
   });
 });
 
@@ -271,7 +272,7 @@ describe('0.4.10 · 卡片 DOM 行序与缺失行（M19 §3/§5）', () => {
     expect(card.querySelector('.ai-proposal__head .ai-badge').textContent).toBe(t('settings.ai.proposal.update'));
     expect(card.querySelector('.ai-proposal__meta .ai-proposal__calendar').textContent).toBe('我的日历');
     expect(card.querySelector('.ai-proposal__meta .ai-proposal__dot').getAttribute('aria-hidden')).toBe('true');
-    expect(card.querySelector('.ai-proposal__when .ai-proposal__time').textContent).toBe('11-09 周一 18:30–19:30');
+    expect(card.querySelector('.ai-proposal__when .ai-proposal__time').textContent).toBe('11-09 周一 18:30-19:30');
     const location = card.querySelector('.ai-proposal__when .ai-proposal__location');
     expect(location.textContent).toBe('5F 大会议室, B 座 请带电脑');
     expect(location.getAttribute('title')).toBe('5F 大会议室, B 座 请带电脑');
@@ -323,7 +324,7 @@ describe('0.4.10 · 卡片 DOM 行序与缺失行（M19 §3/§5）', () => {
     })]);
     const card = cardOf(panel);
     expect(card.querySelector('.ai-proposal__title').textContent).toBe('周会');
-    expect(card.querySelector('.ai-proposal__time').textContent).toBe('11-09 周一 18:30–19:30');
+    expect(card.querySelector('.ai-proposal__time').textContent).toBe('11-09 周一 18:30-19:30');
     expect(card.querySelector('.ai-proposal__location').textContent).toBe('3F 会议室');
     expect(card.querySelector('.ai-proposal__diff')).toBe(null);
     expect(card.textContent).not.toContain(t('settings.ai.proposal.before'));

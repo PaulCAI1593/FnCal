@@ -419,7 +419,13 @@ describe('0.5.10 S1 细则：窄格优先缩字号（不折行、不省略）', 
       // 0.7.10（用户：11/22「小雪」被裁、11/7「立冬」完整）：缩放改成逐格按本格
       // 可用宽算比例，不再取整页统一最小值——宽格不会跟着最紧的一格一起缩。
       expect(monthJs).not.toMatch(/const uniform = Math\.min\(/);
-      expect(monthJs).toMatch(/const scale = Math\.max\(0\.5, Math\.min\(1, Math\.floor\(entry\.ratio \* 1000\) \/ 1000\)\);/);
+      // 0.7.15（用户：「初一的字号比初一 23 的初一大」）：缩放按字素数分组，组内取最小
+      // 比例并向下取 3 位小数；逐格 clamp 的旧写法退场（否则同字数落到不同字号）。
+      expect(monthJs).toMatch(/const scale = groupScale\.get\(entry\.chars\) \?\? 1;/);
+      expect(monthJs).toMatch(
+        /groupScale\.set\(chars, Math\.max\(0\.5, Math\.min\(1, Math\.floor\(ratio \* 1000\) \/ 1000\)\)\);/,
+      );
+      expect(monthJs).toMatch(/const chars = Array\.from\(text\.textContent\.trim\(\)\)\.length \|\| 1;/);
       // 0.6.7 起了 1px 保护边；0.6.10 起承载盒按缩放前的自然宽给宽，上限 = usable ÷ scale。
       expect(monthJs).toMatch(/Math\.ceil\(entry\.natural\) \+ DAYHEAD_SLACK/);
       expect(monthJs).toMatch(/Math\.floor\(entry\.usable \/ scale\) \+ DAYHEAD_SLACK/);
@@ -462,10 +468,10 @@ describe('0.5.21 W1：整页日号行取同一个缩放值', () => {
         naturalW: 40,
       });
       afterMount();
-      // 0.7.10：逐格算——窄格 0.597；宽格可用 59 / 自然 40 = 1.475（> 1），本格不需要
-      // 缩放，所以不写变量（容器取默认 1），不再被窄格拖到 0.598。
+      // 0.7.15（用户：「初一的字号比初一 23 的初一大」）：逐格算仍会因日号宽度差落到不同
+      // 字号；改为按字素数分组后，两格同为两字农历，宽格取组内最小值 0.597（不再留空 = 1）。
       expect(narrow.head.style.getPropertyValue('--dayhead-scale')).toBe('0.597');
-      expect(wide.head.style.getPropertyValue('--dayhead-scale')).toBe('');
+      expect(wide.head.style.getPropertyValue('--dayhead-scale')).toBe('0.597');
       // 0.6.10 起：承载盒按缩放前的自然宽给宽 = 40 + 1 = 41（视觉宽 41 × 1 = 41 ≤ 可用 59）
       expect(wide.host.style.width).toBe('41px');
       expect(wide.label.classList.contains('is-truncated')).toBe(false);
@@ -490,14 +496,17 @@ describe('0.5.21 W1：整页日号行取同一个缩放值', () => {
         naturalW: 40,
       });
       afterMount();
-      // 0.7.10：逐格算——放不下的那格触底 0.500 并进入省略模式；宽格本格放得下、
-      // 比例 ≥ 1，不再被统一值压到 0.5（变量为空 = 用默认 1）。
+      // 0.7.15（按字素数分组，规格同 ui-060 上一条）：两格同为两字农历，组最小值 0.297
+      // 触底成 0.500 —— 两格同用 0.500（宽格也被同组最紧的一格拉齐，这正是「字号统一」）；
+      // 只有 ratio < 0.5 的那格进入省略模式，宽格仍完整显示。
       expect(tooNarrow.head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
       expect(tooNarrow.label.classList.contains('is-truncated')).toBe(true);
-      expect(normal.head.style.getPropertyValue('--dayhead-scale')).toBe('');
+      expect(normal.head.style.getPropertyValue('--dayhead-scale')).toBe('0.500');
       expect(normal.label.classList.contains('is-truncated')).toBe(false);
       // 0.6.10 起：放得下就按缩放前自然宽给盒（40 + 1），不再写 40 × 0.5 + 1。
       expect(normal.host.style.width).toBe('41px');
+      // 盒宽是缩放前坐标，视觉宽只有 40 × 0.5 = 20，多出的 21px 用负 margin 收回。
+      expect(normal.host.style.marginInlineEnd).toBe('-21px');
     } finally {
       restore();
     }

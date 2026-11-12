@@ -9,7 +9,9 @@ export default {
   base: './',
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // 0.6.12：发布产物不带 source map（两张 map 约 1.9 MB，走 Cloudflare Tunnel
+    // 时纯属额外流量，还等于公开源码）。本地排查时用 FNCAL_SOURCEMAP=1 构建。
+    sourcemap: process.env.FNCAL_SOURCEMAP === '1',
     target: 'es2020',
   },
   server: {

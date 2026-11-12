@@ -4055,6 +4055,20 @@ label,
   gap: 2px;
 }
 .editor__tag-list[hidden] { display: none; }
+/* 0.7.22（总监 m00…）：编辑器标签下拉打开时由 `floating-layer.js` 挂到 body、按
+   `.editor__tag` 按钮的 rect 定位；这里只留 fixed + 浮层 z-index（150：高于
+   `.search-scrim` 110、弹窗 100、`.dialog-scrim` 130，低于 toast 200），并清掉旧的
+   `top/left/min-width/max-width`，宽度改由 JS 写行内值。
+   原来 `position: absolute; z-index: 4` 会被 `.modal__body` 的滚动容器裁掉。 */
+.editor__tag-list.is-floating {
+  position: fixed;
+  z-index: 150;
+  top: auto;
+  left: auto;
+  min-width: 0;
+  max-width: none;
+  max-height: none;
+}
 /* 0.7.1（用户）：条目多时靠滚动，不靠压缩。容器是 flex column + max-height，
    子项默认 flex-shrink:1 会被压到内容高度以下，文字互相叠住；这里固定不缩，
    并给 8px 上下内距 + 一行 12px 文字算出的 34px 下限。 */
@@ -4105,6 +4119,17 @@ label,
   box-shadow: var(--shadow-md);
 }
 .tag-editor__group-menu[hidden] { display: none; }
+/* 0.7.22（总监 m00…）：分组下拉同样改成浮层（挂 body、fixed、按触发器 rect 定位），
+   不再被标签编辑页的滚动容器裁剪；z-index 用 150（高于 `.dialog-scrim` 130，
+   低于 toast 200），否则会躲在「新建标签」对话框下面看不见。 */
+.tag-editor__group-menu.is-floating {
+  position: fixed;
+  z-index: 150;
+  top: auto;
+  left: auto;
+  right: auto;
+  max-height: none;
+}
 .tag-editor__group-option {
   display: flex;
   align-items: center;
@@ -4199,6 +4224,15 @@ label,
 .agenda__event-main--tagged > .agenda__event-daypart { grid-column: 3; padding-left: var(--sp-2); }
 .agenda__event-main--tagged > .agenda__event-location { grid-column: 1 / -1; }
 .agenda__event-tag-emoji { flex: 0 0 auto; font-size: 1em; }
+/* 0.7.17（总监 m00284 B）：带标签的日程标题把 emoji 内联进标题自身（`data-tag-emoji`
+   的 `::before`），标题占满整行。这样名称折行时第二行起于标题左沿，不再被单独的
+   emoji 网格列缩进约一个字符宽。 */
+.agenda__event-main--tagged > .agenda__event-title--tagged { grid-column: 1 / -1; }
+.agenda__event-title--tagged::before {
+  content: attr(data-tag-emoji) ' ';
+  font-size: var(--fs-sm);
+  font-weight: 400;
+}
 
 /* 详情卡：标签独立一行（emoji + 标签名），左内距对齐色块右侧的名称文字；
    色块只和标题行首行对齐（layout.css 的 margin-top:5px 不动）。 */
@@ -4249,6 +4283,22 @@ label,
   border-radius: var(--r-md);
   background: var(--surface);
   box-shadow: var(--shadow-md, 0 8px 24px rgba(0, 0, 0, .18));
+}
+/* 0.7.22（总监 m00…，用户「筛选面板里的标签下拉被裁剪」）：菜单打开时由
+   `floating-layer.js` 挂到 `document.body` 并写 left/top/width/max-height，
+   这里只留固定定位与浮层 z-index（150：高于 `.search-scrim` 110 与弹窗 100，
+   低于 toast 200），并清掉行内绝对定位的 top/left/right，
+   避免与 JS 写入的值打架。旧的 `position: absolute; z-index: 6` 会把菜单
+   压在搜索结果区下面、还会被 `.search__filters`（max-height: 45vh;
+   overflow-y: auto）裁掉。 */
+.search__tag-menu.is-floating {
+  position: fixed;
+  z-index: 150;
+  top: auto;
+  left: auto;
+  right: auto;
+  width: auto;
+  max-height: none;
 }
 .search__tag-menu[hidden] { display: none; }
 .search__tag-option {

@@ -288,8 +288,9 @@ function weekdayText(parts) {
 /**
  * 单个快照（before / after）的时间行文案（M19 §4）。空串 = 整行不渲染。
  *
- * 定时：同日 `11-09 周一 18:30–22:30`；跨天 `11-09 22:00 → 11-10 08:00`；
+ * 定时：同日 `11-09 周一 18:30-22:30`；跨天 `11-09 22:00 → 11-10 08:00`；
  * 跨年两端带年。全天：同日 `11-09 周一 全天`；跨天 `11-09 → 11-11 全天`。
+ * 0.7.17（总监 m01561）：同日区间的分隔符随全局改半角 `-`、两侧无空格。
  * 全天事件的 `end` 按 ICS 排他边界处理（最后一天 = end − 1 天），
  * 所以单日事件 start=11-09、end=11-10 显示为「11-09 周一 全天」。
  */
@@ -311,7 +312,7 @@ export function formatSnapshotTime(snapshot) {
   }
   if (!end) return `${mdText(start)} ${weekdayText(start)} ${hmText(start)}`;
   if (dayEpoch(start) === dayEpoch(end)) {
-    return `${mdText(start)} ${weekdayText(start)} ${hmText(start)}–${hmText(end)}`;
+    return `${mdText(start)} ${weekdayText(start)} ${hmText(start)}-${hmText(end)}`;
   }
   const head = start.year === end.year ? mdText(start) : ymdText(start);
   const foot = start.year === end.year ? mdText(end) : ymdText(end);

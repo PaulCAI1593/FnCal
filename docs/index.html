@@ -441,14 +441,14 @@
 </header>
 <main>
   <section class="hero wrap">
-    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.7.13</p>
+    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.7.24</p>
     <h1>日历留在自己的 NAS 上</h1>
     <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
-      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.13/FnCal-0.7.13.fpk">下载安装包 0.7.13</a>
+      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.24/FnCal-0.7.24.fpk">下载安装包 0.7.24</a>
       <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.3.8/FnCal-Android-0.3.8.apk">下载安卓 APK 0.3.8</a>
       <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/skill-v0.7.13/FnCal-MCP-Skill-0.7.13.zip">下载 AI 技能包</a>
-      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.13/SHA256SUMS.txt">下载校验文件</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.24/SHA256SUMS.txt">下载校验文件</a>
     </div>
     <p style="margin-top:12px;font-size:var(--t-sm);color:var(--ink-3)">国内访问慢时可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>，内容与 GitHub 相同。</p>
     <p style="margin-top:16px;font-size:var(--t-md);color:var(--ink-3)">安装包 796,162 B · 安卓 APK 988,397 B · 技能包 29,576 B · 校验文件 83 B。先看 <a href="#ai-abilities">两条 AI 能力</a>、<a href="#ai">提案与审批</a> 与 <a href="#features">六条特色</a>。</p>
@@ -749,7 +749,7 @@
           <p>飞牛 OS 用户走应用中心；其他环境用 Docker。装之前先核对包的 SHA-256。</p>
         </div>
         <ol class="steps">
-          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.13/FnCal-0.7.13.fpk">Release 下载 <code>FnCal-0.7.13.fpk</code></a>（国内慢可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>），核对哈希后再装。</div></li>
+          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.24/FnCal-0.7.24.fpk">Release 下载 <code>FnCal-0.7.24.fpk</code></a>（国内慢可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>），核对哈希后再装。</div></li>
           <li><div><strong>安装向导</strong><br>填一个空闲端口（1024 以上，避开 5232）与管理员用户名、密码；两步都必填。</div></li>
           <li><div><strong>打开并登录</strong><br>装完点桌面图标，浏览器新标签打开 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用刚设的账号登录。</div></li>
         </ol>
@@ -763,10 +763,10 @@
       </div>
       <div>
         <pre class="code"><span># 先核对哈希（Linux / macOS）</span>
-sha256sum FnCal-0.7.13.fpk
+sha256sum FnCal-0.7.24.fpk
 
 <span># Windows PowerShell</span>
-Get-FileHash .\FnCal-0.7.13.fpk -Algorithm SHA256
+Get-FileHash .\FnCal-0.7.24.fpk -Algorithm SHA256
 
 <span># 期望值</span>
 8C302393549D8A338542DE61A9CF3B475B6A8C653AE8E4F598E1BEEC4973D062</pre>
@@ -956,14 +956,14 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
       <div class="sec__head">
         <p class="kicker">Releases</p>
         <h2>版本与下载</h2>
-        <p>当前版本 0.7.13（2026-11-11）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
+        <p>当前版本 0.7.24（2026-11-12）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
       </div>
       <div class="assets">
         <div class="asset">
-          <div class="asset__name">安装包 <code>FnCal-0.7.13.fpk</code></div>
+          <div class="asset__name">安装包 <code>FnCal-0.7.24.fpk</code></div>
           <div class="asset__act">
-            <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.7.13.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.13/FnCal-0.7.13.fpk">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安装包 FnCal-0.7.13.fpk" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.7.13/FnCal-0.7.13.fpk">Gitee 镜像</a>
+            <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.7.24.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.24/FnCal-0.7.24.fpk">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安装包 FnCal-0.7.24.fpk" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.7.24/FnCal-0.7.24.fpk">Gitee 镜像</a>
           </div>
           <div class="asset__meta">796,162 B · SHA-256 8C302393549D8A338542DE61A9CF3B475B6A8C653AE8E4F598E1BEEC4973D062</div>
         </div>
@@ -986,8 +986,8 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
         <div class="asset">
           <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
           <div class="asset__act">
-            <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.13/SHA256SUMS.txt">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载校验文件 SHA256SUMS.txt" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.7.13/SHA256SUMS.txt">Gitee 镜像</a>
+            <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.7.24/SHA256SUMS.txt">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载校验文件 SHA256SUMS.txt" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.7.24/SHA256SUMS.txt">Gitee 镜像</a>
           </div>
           <div class="asset__meta">83 B · 只含网页安装包一行的哈希</div>
         </div>

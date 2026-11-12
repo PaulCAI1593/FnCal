@@ -366,9 +366,11 @@ export function formatWeekRange(date, weekStartsOn = 0) {
   return formatDateRange(start, addDays(start, 6));
 }
 
-/** Compact time range for a single event, e.g. "上午9:00 – 上午10:30". */
+/** Compact time range for a single event, e.g. "09:00-10:30".
+ *  0.7.17（用户 m00702–m00744 一直写 `18:30-19:00`，总监 m01561）：区间分隔符改为
+ *  半角连字符、两侧无空格，全局一套写法，不再分宽窄两种。 */
 export function formatTimeRange(start, end, opts) {
-  return `${formatTime(start, opts)} – ${formatTime(end, opts)}`;
+  return `${formatTime(start, opts)}-${formatTime(end, opts)}`;
 }
 
 /* ---- Time zones (display-only secondary zone) ------------------------- */

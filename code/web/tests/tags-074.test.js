@@ -232,7 +232,11 @@ describe('0.7.4 L：筛选面板标签框', () => {
   it('框与菜单都占满整行（无 160px 上限）', () => {
     expect(calendarCss).toMatch(/\.search__tag-filter \{[^}]*display: block;[^}]*width: 100%;/s);
     expect(calendarCss).toMatch(/\.search__tag-trigger \{[^}]*width: 100%;[^}]*max-width: none;/s);
-    expect(calendarCss).toMatch(/\.search__tag-menu \{[^}]*left: 0;[^}]*right: 0;/s);
+    // 0.7.22（总监 m00…）：菜单改成浮层后不再靠 `left: 0; right: 0` 拉满，
+    // 而是由 `floating-layer.js` 按触发器宽度写行内 width/left；这里改断言
+    // 浮层形态本身（fixed + 与 `.popover` 同一档 z-index），覆盖同一意图。
+    expect(calendarCss).toMatch(/\.search__tag-menu\.is-floating \{[^}]*position: fixed;[^}]*z-index: 150;/s);
+    expect(calendarCss).toMatch(/\.search__tag-menu \{[^}]*width: auto;/s);
     expect(calendarCss).not.toMatch(/\.search__tag-trigger \{ max-width: 160px/);
   });
 

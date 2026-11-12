@@ -1109,8 +1109,8 @@ export function createAiService({
   }
 
   /**
-   * MCP pprove_proposal / eject_proposal：
-   *   ① 凭据必须显式打开 gentApproval（关闭时任何路径都拒绝）；
+   * MCP approve_proposal / reject_proposal：
+   *   ① 凭据必须显式打开 agentApproval（关闭时任何路径都拒绝）；
    *   ② 只处理本凭据自己的 pending 提案，别家凭据 / 不存在一律 missing（不证明存在性）；
    *   ③ 批准前**再校验**提案所属日历仍可见且是写档（防改权限后越权）。
    */

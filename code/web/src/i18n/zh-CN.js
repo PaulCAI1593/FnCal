@@ -52,6 +52,9 @@ export const zhCN = {
 
   /* ---- 工具栏 ---- */
   'toolbar.today': '今天',
+  // 0.7.18（总监：日程列表点「今天」定位）：日程列表里这个按钮不只是换日期，
+  // 还会滚到今天那一段，aria-label 要把这件事说出来；其它视图仍是「今天」。
+  'toolbar.todayJump': '今天（跳到日程列表里的今天）',
   'toolbar.previous': '上一页',
   'toolbar.next': '下一页',
   'toolbar.search': '搜索事件与任务',
@@ -520,6 +523,8 @@ export const zhCN = {
   'agenda.loading': '加载中…',
   'agenda.noMore': '已无更多日程',
   'agenda.loadError': '加载失败，请重试',
+  // 0.7.18（总监）：点「今天」时今天没有条目——列表里没有这一段，不滚、不弹模态，只提示。
+  'agenda.noTodayHint': '今天没有日程',
   // 0.5.6（C）：列表顶部向过去翻页——「加载更早」按钮 + 下拉手势提示 + 到底静态文字。
   'agenda.loadEarlier': '加载更早',
   'agenda.pullEarlierHint': '下拉加载更早的日程',

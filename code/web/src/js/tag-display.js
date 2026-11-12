@@ -52,20 +52,59 @@ export function firstGrapheme(value) {
 /**
  * 0.7.1 K.4（用户）：标题拆成「emoji 节点 + 名称节点」。
  *
- * - 标题首字素正好等于标签 emoji → emoji 取首字素，名称去掉它和前导空白；
- * - 否则 emoji 用标签 emoji 兜底，名称原样；
+ * - 标题首字素是 emoji（不论是否等于标签 emoji）→ 只用标题自带的那一个，
+ *   不再前置标签 emoji；名称去掉它、其余前导 emoji 与前导空白；
+ * - 标题首字素不是 emoji → emoji 用标签 emoji 兜底，名称原样；
  * - 标签没有 emoji → emoji 为空，名称原样。
  * 只用于渲染，不改数据。
+ *
+ * 0.7.16（用户：周视图全天条一个 chip 里出现 `🌂 🌂 ›`）：根因是「改过标签 emoji
+ * 之后标题里的旧前缀还在」（写路径 0.7.16 起会同步重写标题，见 `code/app/lib/tags.mjs`
+ * 的 `update()`）。渲染侧按**标签优先**兜底：
+ * - 标签有 emoji → chip 用标签的 emoji；标题首字素是任何 emoji 时剥掉（不论是否
+ *   等于标签 emoji），名称取剩余部分；连续前导 emoji（历史双前缀）一并剥掉；
+ * - 标签没有 emoji → 标题自带 emoji 时保留它；
+ * 于是任何历史残留数据也只显示 1 个 emoji，且显示的是标签当前值。
+ *
+ * 变体选择符（U+FE0F/U+FE0E）不参与判等：`☂️` 与 `☂` 视为同一个 emoji，否则
+ * 同一 base 的两种写法会被当成两个不同 emoji 各显示一次。
  */
+const VARIATION_SELECTOR_RE = /[\uFE0E\uFE0F]/g;
+
+/** 去掉变体选择符后的 emoji，用于判等（`☂️` → `☂`）。 */
+export function emojiBase(value) {
+  return String(value ?? '').replace(VARIATION_SELECTOR_RE, '');
+}
+
+function isEmojiGrapheme(grapheme) {
+  if (!grapheme) return false;
+  return EMOJI_RE.test(grapheme) || FLAG_RE.test(grapheme);
+}
+
+/** 剥掉一段文本开头连续的 emoji 与前导空白（历史双前缀在渲染层一次归一）。 */
+function stripLeadingEmoji(text) {
+  let rest = String(text ?? '');
+  for (let guard = 0; guard < 4; guard += 1) {
+    const trimmed = rest.replace(/^\s+/, '');
+    const next = firstGrapheme(trimmed);
+    if (!isEmojiGrapheme(next)) return trimmed;
+    rest = trimmed.slice(next.length);
+  }
+  return rest.replace(/^\s+/, '');
+}
+
 export function splitTagTitle(tag, title) {
   const text = String(title ?? '');
   const emoji = String((tag && tag.emoji) || '');
-  if (!emoji) return { emoji: '', label: text };
+  if (!text) return { emoji, label: text };
   const first = firstGrapheme(text);
-  if (first === emoji) {
-    return { emoji, label: text.slice(first.length).replace(/^\s+/, '') };
+  const firstIsEmoji = isEmojiGrapheme(first);
+  if (!emoji) {
+    if (!firstIsEmoji) return { emoji: '', label: text };
+    return { emoji: first, label: stripLeadingEmoji(text.slice(first.length)) };
   }
-  return { emoji, label: text };
+  if (!firstIsEmoji) return { emoji, label: text };
+  return { emoji, label: stripLeadingEmoji(text.slice(first.length)) };
 }
 
 /**
@@ -83,18 +122,20 @@ export function withTagEmoji(prevTag, nextTag, title) {
   const nextEmoji = String((nextTag && nextTag.emoji) || '').trim();
   const prevEmoji = String((prevTag && prevTag.emoji) || '').trim();
   const rest = text.slice(first.length);
+  // 0.7.16：判等按 emoji base（`☂️` 与 `☂` 同一个），与服务端一致。
+  const sameEmoji = (a, b) => Boolean(a) && Boolean(b) && emojiBase(a) === emojiBase(b);
   if (!nextTag || !nextEmoji) {
     // 取消标签：先删「原标签 emoji + 一个空白」；再删残留（如 `⚽⚽ 台球` 只剩一个）。
-    if (prevEmoji && first === prevEmoji) {
+    if (prevEmoji && sameEmoji(first, prevEmoji)) {
       const withoutOne = text.slice(first.length).replace(/^\s/, '');
       const second = firstGrapheme(withoutOne);
-      if (second === prevEmoji) return withoutOne.slice(second.length).replace(/^\s/, '');
+      if (sameEmoji(second, prevEmoji)) return withoutOne.slice(second.length).replace(/^\s/, '');
       return withoutOne;
     }
     return text;
   }
-  if (first === nextEmoji) return `${first}${rest.replace(/^\s+/, '') ? ` ${rest.replace(/^\s+/, '')}` : ''}`;
-  if (prevEmoji && first === prevEmoji) {
+  if (sameEmoji(first, nextEmoji)) return `${first}${rest.replace(/^\s+/, '') ? ` ${rest.replace(/^\s+/, '')}` : ''}`;
+  if (prevEmoji && sameEmoji(first, prevEmoji)) {
     const tail = rest.replace(/^\s+/, '');
     return `${nextEmoji} ${tail}`.trimEnd();
   }
@@ -128,8 +169,12 @@ function titleFontSize(title, node) {
 }
 
 /**
- * 两档：名称可用宽 ≥ 3 字 → 默认；否则只留 emoji。
+ * 两档：名称可用宽 ≥ 1 字 → 保留名称（放不下交给原生省略号）；否则只留 emoji。
  * 周/日短块与既有测试使用这个入口。
+ *
+ * 0.7.15（用户：「周/四日/日视图下有些只有 emoji 而没有名称的日程」）：门槛由 3 字
+ * 降到 1 字，与月格 `TAG_LADDER_MIN_CHARS` 同口径。3 字门槛在窄列里会把 1–2 个字
+ * 放得下的块全判成「只 emoji」，用户看到的就是这种现象。
  * @returns {'named'|'only'}
  */
 export function applyTagDisplayTier(node, title, onlyClass) {
@@ -140,7 +185,7 @@ export function applyTagDisplayTier(node, title, onlyClass) {
   // 短块里只是文字自身宽，1–2 字名称（「会议」）在很宽的列里也恒判「放不下」。改用
   // 实际可用宽（伸展就用自身，未伸展就用块宽减兄弟与 gap），与月格同一口径。
   const available = titleAvailableWidth(node, title);
-  const only = available < tagTitleMinWidth(titleFontSize(title, node));
+  const only = available < tagTitleMinWidth(titleFontSize(title, node), TAG_LADDER_MIN_CHARS);
   if (onlyClass) node.classList.toggle(onlyClass, only);
   return only ? 'only' : 'named';
 }
@@ -180,7 +225,13 @@ export function titleAvailableWidth(node, title) {
   } catch {
     grow = null;
   }
-  if (grow === null || grow > 0) return own;
+  // 0.7.15（用户：「周/四日/日视图下有些只有 emoji 而没有名称」）：`.tevent__title-text`
+  // 是行内 span，`clientWidth` 恒 0；标题伸展（`flex-grow > 0`）时旧代码直接返回 0，
+  // 于是每一个带标签的块都被判成「可用宽 0 → 只 emoji」。0 不能当作「没有可用宽」，
+  // 退回按容器宽减兄弟估算（与不伸展的短块同一条路径）。
+  if (grow === null || grow > 0) {
+    if (own > 0) return own;
+  }
   const total = node.clientWidth || 0;
   if (!total) return own;
   let used = 0;

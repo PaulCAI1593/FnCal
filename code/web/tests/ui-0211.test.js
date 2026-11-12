@@ -517,8 +517,12 @@ describe('C8 日程视图「（第 n/m 天）」', () => {
       now: cursor,
       actions: VIEW_ACTIONS,
     });
-    const parts = [...node.querySelectorAll('.agenda__event-daypart')].map((n) => n.textContent);
-    expect(parts).toEqual(['（第 1/3 天）', '（第 2/3 天）', '（第 3/3 天）']);
+    // 0.7.21（总监 m02610）：每行渲染两份标注——时间列里那份（≤520px 显示）与
+    // 名称行右侧那份（>520px 显示）。这里只数同一天的顺序，两份文案必须一致。
+    const timeParts = [...node.querySelectorAll('.agenda__event-daypart--time')].map((n) => n.textContent);
+    const nameParts = [...node.querySelectorAll('.agenda__event-daypart--name')].map((n) => n.textContent);
+    expect(timeParts).toEqual(['（第 1/3 天）', '（第 2/3 天）', '（第 3/3 天）']);
+    expect(nameParts).toEqual(timeParts);
   });
 });
 

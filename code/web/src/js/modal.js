@@ -67,6 +67,8 @@ import {
 } from './lib/lunar-core.js';
 import { t } from '../i18n/index.js';
 import { initKeyboardInset, keyboardState, onKeyboardChange } from './keyboard-inset.js';
+// 0.7.22（总监 m00…）：标签下拉 / 分组下拉改成浮层，避开弹窗正文的滚动裁剪。
+import { createFloatingLayer } from './floating-layer.js';
 
 // 0.5.13：应用一起来就挂可视视口监听（键盘开合 → --vv-* 变量 + html.kb-open）。
 // 弹窗只在自己打开期间订阅变化；初始化幂等，测试里重复加载不会重复绑定。
@@ -86,6 +88,9 @@ export function createEventModal({
   onHolidaySettings = null,
 }) {
   let scrim = null;
+  // 0.7.22（总监 m00…）：本次打开期间标签下拉浮层的收尾函数；关窗时调用，
+  // 避免 body 上留下 `.editor__tag-list` 孤儿节点。
+  let closeTagListFloat = null;
   // 0.5.13：弹窗打开期间订阅可视视口变化（键盘开合），关闭时退订。
   let stopKeyboardWatch = null;
   let current = null; // the event/task being edited, or null for new
@@ -130,8 +135,8 @@ export function createEventModal({
   // 切到任务 = 任务日历（色随日历），切回事件 = 回到这个日历（没有则用默认日历）。
   let lastEventCalendarId = '';
   const fields = {};
-  // 0.7.0：标签控件建在 uildForm() 里（跟着表单生命周期），保存与回填在工厂层用到，
-  // 所以由 uildForm() 结束时把三个入口挂到这里；未建表单时为 null。
+  // 0.7.0：标签控件建在 BuildForm() 里（跟着表单生命周期），保存与回填在工厂层用到，
+  // 所以由 BuildForm() 结束时把三个入口挂到这里；未建表单时为 null。
   let formApi = null;
   const OOO_COLOR = 'graphite';
 
@@ -600,6 +605,14 @@ export function createEventModal({
       fields.tagList,
     ]);
 
+    // 0.7.22（总监 m00…，用户「筛选面板里的标签下拉被裁剪」同批排查）：编辑器标签
+    // 下拉原来也挂在 `.modal__body` 的滚动容器里，标签多时同样会被裁掉；
+    // 这里一并改成浮层（挂 body、fixed、按按钮 rect 定位），键盘与 aria 不动。
+    // 最小宽度沿用旧 CSS 的 200px：触发器只有 32×32，按它算宽度会把标签名挤没。
+    const tagListFloat = createFloatingLayer(fields.tagList, fields.tagButton, { minUsable: 200, minWidth: 200 });
+    // 关窗时才真正销毁（`closeTagList()` 只收起，节点留着下次复用）。
+    closeTagListFloat = () => tagListFloat.destroy();
+
     function tagChoices() {
       return typeof store.getTags === 'function' ? store.getTags() : [];
     }
@@ -619,7 +632,8 @@ export function createEventModal({
     }
 
     function closeTagList({ restoreFocus = false } = {}) {
-      fields.tagList.hidden = true;
+      // 0.7.22：菜单已挂到 body，收起走浮层（保持 hidden 语义，测试仍查 `.editor__tag-list`）。
+      tagListFloat.close();
       fields.tagButton.setAttribute('aria-expanded', 'false');
       document.removeEventListener('pointerdown', onTagListOutside, true);
       if (restoreFocus) fields.tagButton.focus();
@@ -716,7 +730,8 @@ export function createEventModal({
         }
       }
       fields.tagList.replaceChildren(...items);
-      fields.tagList.hidden = false;
+      // 0.7.22：打开时挂到 body 并定位（原 `hidden = false` 留在 `.modal__body` 里会被裁）。
+      tagListFloat.open();
       fields.tagButton.setAttribute('aria-expanded', 'true');
       document.addEventListener('pointerdown', onTagListOutside, true);
       const options = visibleTagItems();
@@ -2640,7 +2655,8 @@ export function createEventModal({
         : `${formatDateRange(start, end)} · ${t('editor.allDay')}`;
     }
     if (isSameDay(start, end)) return `${formatFullDate(start)} · ${formatTimeRange(start, end, opts)}`;
-    return `${formatFullDate(start)}, ${formatTime(start, opts)} – ${formatFullDate(end)}, ${formatTime(end, opts)}`;
+    // 0.7.17（总监 m01561）：区间分隔符统一为半角 `-`、两侧无空格。
+    return `${formatFullDate(start)}, ${formatTime(start, opts)}-${formatFullDate(end)}, ${formatTime(end, opts)}`;
   }
 
   /** "Weekly on Monday" etc., or '' for a non-repeating item. An occurrence's
@@ -3266,6 +3282,11 @@ export function createEventModal({
   function close(force = false) {
     // 0.2.20（E8）：日期弹层是单例，编辑器关掉时一并收起，不留孤儿节点。
     closeDatePopover();
+    // 0.7.22（总监 m00…）：标签下拉改浮层后挂在 body 上，关窗时要一并销毁。
+    if (closeTagListFloat) {
+      closeTagListFloat();
+      closeTagListFloat = null;
+    }
     // 0.2.16（A1）：保存中的窗口不允许被关掉（按钮已禁用，这里兜住 Esc/遮罩）。
     if (saving && !force) return;
     if (!scrim) return;

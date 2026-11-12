@@ -19,6 +19,8 @@ import { mountDialog } from './recurrence-dialog.js';
 import { DEFAULT_TAG_GROUP_ID, tagDisplayName } from './store.js';
 import { TAG_EMOJI_GROUPS } from './tag-emoji.js';
 import { applyTagsFromTitles } from './api-client.js';
+// 0.7.22（总监 m00…）：标签分组下拉改成浮层。
+import { createFloatingLayer } from './floating-layer.js';
 
 /** 兼容 0.7.0 的导入：常用组就是原来的 24 个。 */
 export { TAG_EMOJI_CHOICES } from './tag-emoji.js';
@@ -594,6 +596,10 @@ export function createTagsPage({ store, toast, api = null }) {
       hidden: true,
     }, options);
 
+    // 0.7.22（总监 m00…）：分组下拉改成浮层——挂 body、fixed、按触发器 rect 定位，
+    // 不被标签编辑页的滚动容器裁掉；键盘 / aria-activedescendant 逻辑不动。
+    const menuFloat = createFloatingLayer(menu, trigger, { minUsable: 160, minWidth: 180 });
+
     const node = el('div', { class: 'tag-editor__group' }, [trigger, menu]);
 
     function syncActive() {
@@ -609,7 +615,7 @@ export function createTagsPage({ store, toast, api = null }) {
 
     function openMenu() {
       open = true;
-      menu.hidden = false;
+      menuFloat.open();
       trigger.setAttribute('aria-expanded', 'true');
       syncActive();
       document.addEventListener('pointerdown', onOutside, true);
@@ -617,14 +623,17 @@ export function createTagsPage({ store, toast, api = null }) {
 
     function closeMenu() {
       open = false;
-      menu.hidden = true;
+      menuFloat.close();
       trigger.setAttribute('aria-expanded', 'false');
       trigger.removeAttribute('aria-activedescendant');
       document.removeEventListener('pointerdown', onOutside, true);
     }
 
     function onOutside(event) {
-      if (!node.contains(event.target)) closeMenu();
+      // 0.7.22：菜单已挂到 body，`node.contains` 不再覆盖它，要单独判菜单。
+      const target = event.target;
+      if (target instanceof Node && (node.contains(target) || menu.contains(target))) return;
+      closeMenu();
     }
 
     function choose(index) {
@@ -638,7 +647,10 @@ export function createTagsPage({ store, toast, api = null }) {
 
     syncTrigger();
     node.pickerValue = () => selected;
-    node.destroy = () => document.removeEventListener('pointerdown', onOutside, true);
+    node.destroy = () => {
+      document.removeEventListener('pointerdown', onOutside, true);
+      menuFloat.destroy();
+    };
     return node;
   }
 

@@ -803,7 +803,9 @@
 .tevent {
   position: absolute;
   border-radius: var(--r-sm);
-  padding: 3px 6px;
+  /* 0.7.17（用户：全局内距 6 → 4px）：左右各让 2px 给内容，周/四日/日一致；
+     上下 3px 不动，三档行高阈值 21.6 / 35.6 / 49.6 不受影响。 */
+  padding: 3px 4px;
   overflow: hidden;
   cursor: grab;
   /* No text selection / iOS long-press callout on a draggable event. */
@@ -923,11 +925,9 @@ body.is-dragging .tevent--resizing * {
   overflow-wrap: anywhere;
   min-width: 0;
 }
-/* A time is only readable whole: allowed to wrap, it splits at the space
-   inside its own value — "3" over "PM", in a block one line tall — so it is
-   pinned to a single line and ellipsised instead. On a short block it gives up
-   no width at all (below); the title, which still reads truncated, is what
-   absorbs a narrow column. */
+/* 0.7.17（用户定稿，总监 m01931）：时间固定 1 行，永不折行、永不省略号。
+   放不下只降一档：完整区间 `18:30-19:00` → 开始时间 `18:30` → 整段省略并上报。
+   `text-overflow: clip` 是兜底，绝不出现 `18:…` 这种半截数字。 */
 .tevent__time {
   font-size: 10px;
   font-variant-numeric: tabular-nums;
@@ -936,13 +936,17 @@ body.is-dragging .tevent--resizing * {
   -webkit-line-clamp: var(--tevent-lines-time, 1);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+  /* 0.7.15（用户：时间在第一行）：DOM 里名称在前、时间在后；三档排布都把时间
+     提到第一行（A/B 竖排的第一行、C 横排的第一个）。 */
+  order: -1;
 }
 .tevent.is-short {
   flex-direction: row;
   align-items: center;
   gap: 5px;
-  padding: 1px 6px;
+  /* 0.7.17（用户：全局内距 6 → 4px）：窄列把 2+2px 让给内容，周/四日/日一致。 */
+  padding: 1px 4px;
 }
 .tevent.is-short .tevent__title {
   flex: 1 1 auto;
@@ -953,13 +957,95 @@ body.is-dragging .tevent--resizing * {
 }
 .tevent.is-short .tevent__time {
   font-size: 10px;
-  flex: none;
+  /* 单行块（0.7.17 定稿）里时间已由 JS 省略、交给左侧时间轴；这条保留给
+     「两行以上但被 CSS 兜住」的极端情况，避免时间被块硬裁半个字形。 */
+  flex: 0 0 auto;
+  max-width: 100%;
   display: block;
   -webkit-line-clamp: unset;
 }
 /* 0.7.1（用户）：短块同一行固定 `时间 → emoji → 名称`。DOM 里标题先、时间后，
    这里把时间提到最前；标题内的 emoji 本来就在名称前。 */
 .tevent.is-short .tevent__time { order: -1; }
+/* 0.7.17（总监 m01931 + m02031 + m02263，用户定稿）：先保「时间 + emoji」、再保名称。
+   多行块：时间 1 行 → 名称 n 行 → 地点 1 行。
+   0.7.19（总监 m01475）：删掉 S2（`区间 + emoji`）——它判 `rangeW + gap + emoji`，
+   而 S2b 判 `startW + gap + emoji + space + 1 字`，后者恒更窄，S2 一旦命中 S2b 必然
+   也命中，等于白丢名称。单行块现为四档：S1 区间+emoji+名称 → S2b 开始+emoji+名称
+   → S3 开始+emoji → S4 只小时+emoji（窄到 28.2px 时 S4 紧排）。
+   档位由 JS 按块实测高度与宽度写在 `data-tevent-tier`：
+   - `S3` / `S4` 只让名称文字（保留 emoji，用户 m01091「最短 18 ⚽」）；
+   - `S-name`（连 `18 ⚽` 都放不下）与 `M-hidden` 让时间；
+   - `M-range` / `M-start` = 时间放第 1 行，其余行给名称与地点。
+   时间永不折行、永不省略号。 */
+.tevent[data-tevent-tier='S-name'] .tevent__time,
+.tevent[data-tevent-tier='M-hidden'] .tevent__time { display: none; }
+.tevent[data-tevent-tier='S3'] .tevent__title-text,
+.tevent[data-tevent-tier='S3'] .tag-gap,
+.tevent[data-tevent-tier='S4'] .tevent__title-text,
+.tevent[data-tevent-tier='S4'] .tag-gap { display: none; }
+/* 无标签块的标题没有 emoji 子节点，整段让位。 */
+.tevent[data-tevent-tier='S3'] .tevent__title:not(.tevent__title--tagged),
+.tevent[data-tevent-tier='S4'] .tevent__title:not(.tevent__title--tagged) { display: none; }
+/* 0.7.21（总监 m02704，用户「emoji+名称一行放得下就一行啊」）：多行块第 2 行先试
+   `emoji + 名称` 同行；名称可用宽不足 1 个字宽时才让 emoji 独占第 2 行，
+   名称从第 3 行起按整块宽折行。时间行永远只有时间（见下方 emoji-on-time 说明）。 */
+.tevent--emoji-own-line .tevent__title {
+  display: block;
+}
+.tevent--emoji-own-line .tevent__title .tevent__tag-emoji {
+  display: block;
+  line-height: 1;
+}
+.tevent--emoji-own-line .tevent__title .tag-gap { display: none; }
+/* 0.7.21 重打（总监 2026-11-12 裁决 ①）：时间行永远只有时间，emoji 不得挂到时间行。
+   旧的 `.tevent--emoji-on-time` 与 `.tevent__tag-emoji--on-time` 规则已删除（JS 也同步移除）。 */
+/* 名称行数单独 clamp：emoji 占一行后，名称不能再用标题整体的 clamp（会被算成 1 行）。 */
+.tevent--emoji-own-line .tevent__title .tevent__title-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--tevent-lines-name, 1);
+  overflow: hidden;
+  /* calendar.css 给 .tevent__title-text 设了 nowrap + 省略号（单行用），这里必须放开。 */
+  white-space: normal;
+  text-overflow: clip;
+}
+/* 0.7.23（总监 m01687 / m01712）定稿：多行块（tier `M-*`）里 `emoji + 名称` 同行时，
+   名称必须每行都拿整块内容宽。JS 把 emoji 与间距挪进 `.tevent__title-text` 内
+   （第 1 行 `emoji + 字`，第 2 行起回到整块左缘），因此 clamp 落在名称文字流上；
+   标题容器退回基础块级盒，避免 flex 把名称压成 `内容宽 − emoji − 间距` 的窄盒。
+   单行块（S1–S4）与 emoji 独占行分支不受影响。 */
+.tevent[data-tevent-tier^='M-']:not(.tevent--emoji-own-line) .tevent__title--tagged {
+  display: block;
+  overflow: visible;
+}
+.tevent[data-tevent-tier^='M-']:not(.tevent--emoji-own-line) .tevent__title .tevent__title-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--tevent-lines-title, 1);
+  white-space: normal;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+/* emoji 在名称文字流里保持固定字宽，不参与压缩。 */
+.tevent[data-tevent-tier^='M-']:not(.tevent--emoji-own-line) .tevent__title .tevent__title-text .tevent__tag-emoji,
+.tevent[data-tevent-tier^='M-']:not(.tevent--emoji-own-line) .tevent__title .tevent__title-text .tag-gap {
+  flex: 0 0 auto;
+}
+/* 0.7.24（总监 m02597，用户 m00189）：优先级改为 时间 > emoji > 名称 > 地址，emoji 永不
+   为名称让位——0.7.22/0.7.23 的 `.tevent--name-no-emoji`（丢 emoji 保名称）整条删除。
+   两行块里 emoji 后不足 1 个字宽时，第 2 行只放 emoji、名称整段隐藏（JS 打
+   `tevent--name-hidden`）：emoji 留在 `.tevent__title` 里照常可见。
+   选择器必须带上 `[data-tevent-tier^='M-']:not(.tevent--emoji-own-line)` 这一串：
+   上面那条 `display: -webkit-box` 的名称行内规则特异性更高，只写
+   `.tevent--name-hidden .tevent__title-text` 会被它压回去、名称照样显示。 */
+.tevent.tevent--name-hidden[data-tevent-tier^='M-']:not(.tevent--emoji-own-line) .tevent__title .tevent__title-text {
+  display: none;
+}
+/* 最短档 `18 ⚽` 在 320/360 的周视图差 0.3–5px：去掉 5px 间距留住两者，
+   比「只剩时间」或「只剩 emoji」都更接近用户口径（0.7.17 偏差）。 */
+.tevent[data-tevent-tier='S4'][data-tevent-tight='1'] { gap: 0; }
 /* 0.3.5（M10 §2）：定时事件块第三行——地点。墨色继承 .tevent 的 --ev-fg，只靠
    opacity 退一档，形成标题/时间/地点的三级层次。
    0.6.3（B）：行数由 `--tevent-lines-loc` 决定（默认 1，够高才 2），允许折行。 */
@@ -975,24 +1061,16 @@ body.is-dragging .tevent--resizing * {
   color: inherit;
   opacity: 0.85;
 }
-/* Past the point where the title would be squeezed to nothing, the time is the
-   half to drop: a block with no name says less than one with no time, and the
-   editor and tooltip both still carry it. Queried against the block itself
-   (`container-type` above), so it answers the real column width — overlap
-   packing and all. */
-@container (max-width: 108px) {
-  .tevent.is-short .tevent__time {
-    display: none;
-  }
-}
+/* 0.7.15（用户：「只有半小时高度比较小，也应该横向的一行写好 emoji、名称、时间」，
+   追问后定死「时间在第一行」）：矮块里的时间不再隐藏——`display:none` 会让
+   「时间 emoji 名称」缺一项，也与「时间永远可见」冲突。宽度不足由名称吸收
+   （标题省略号），名称连 1 个字都放不下才降为 `时间 emoji`（JS 降档）。 */
 /* 0.3.5（M10 §3.1，实现期修正）：重叠列把块压窄时地点行没有可读宽度，整行隐藏。
    规格原写「渲染期判断宽度」，但列宽由 CSS 布局算出、JS 拿不到，测量还会触发重排；
    改为与上面时间行同源的容器查询，判据一致、零 JS 成本。 */
-@container (max-width: 108px) {
-  .tevent__loc {
-    display: none;
-  }
-}
+/* 0.7.19（总监 m01482）：删掉 108px 容器查询——手机周/四日块内容宽只有
+   19–69px，这条等于地点永远不显示。改由 JS 判「至少放得下 2 个字」，
+   宽度不够时让出最后一行（`timegrid.js` 的 `TEVENT_LOC_MIN_CHARS`）。 */
 
 /* 0.2.10（用户 1-16 / §19.2）：整行泳道占位——某列在某个带位没有内容时也要
    吃掉同样的高度，否则后面的条会往上顶，跨列就断成两截。不可见、不可点、
@@ -1415,6 +1493,25 @@ body.is-dragging .tevent--resizing * {
   font-weight: 700;
   line-height: 1;
 }
+/* 0.7.18（总监：日程列表点「今天」定位）：滚到今天后日期头闪一下，约 1 秒。
+   JS 只在非 `prefers-reduced-motion` 时加类；这里再从渲染侧兜一层，减少动态
+   偏好下即使类残留也不会动。 */
+@keyframes agenda-today-flash {
+  from {
+    background: color-mix(in srgb, var(--accent-soft) 85%, var(--surface));
+  }
+  to {
+    background: var(--surface);
+  }
+}
+.agenda__date--flash {
+  animation: agenda-today-flash 1s ease-out 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .agenda__date--flash {
+    animation: none;
+  }
+}
 .agenda__date-num.is-today {
   color: var(--accent);
 }
@@ -1585,6 +1682,39 @@ body.is-dragging .tevent--resizing * {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* 0.7.17（总监 m00333）：跨天行的「（第 n/m 天）」搬进时间列，排在时间文字下面
+   一行小字，名称区拿回整行宽度。竖排用 flex column；窄屏紧凑时间（flex-wrap）
+   里标注 flex-basis: 100%，独占一行、不夹在两个时间片段之间。
+   0.7.21（总监 m02610）：这套竖排只在 <=520px 生效——宽屏那份标注回到名称行右侧。 */
+.agenda__event-time--stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  row-gap: 1px;
+  line-height: 1.25;
+}
+/* 0.7.21（总监 m02610）：标注有两份 DOM，由断点二选一显示。
+   >520px：名称行右侧那份（`--name`，与 0.7.17 之前一致），时间列那份隐藏；
+   <=520px：只显示时间列那份（`--time`），排在时间文字下面、左缘与时间文字对齐。
+   0.7.17 曾把两份都压进时间列，电脑端长屏也因此多出一行，用户不接受。 */
+.agenda__event-daypart--time {
+  display: none;
+}
+@media (max-width: 520px) {
+  .agenda__event-daypart--name {
+    display: none;
+  }
+  .agenda__event-daypart--time {
+    display: inline;
+    align-self: flex-start;
+    margin-left: 0;
+    padding-left: 0;
+  }
+}
+/* 窄屏紧凑时间（flex-wrap）里标注 flex-basis 100%，独占一行、不夹在两个时间片段之间。 */
+.agenda__event-time--compact > .agenda__event-daypart--time {
+  flex: 0 0 100%;
+}
 /* 0.2.38（用户 m01831「名称下面加一行小字地址」）：标题区改成两行网格 ——
    第一行「标题 + （天 n/m）」，第二行地址小字（仅当事件有地址时由 JS 渲染
    .agenda__event-location）。标题仍占满剩余宽度并在过长时省略。 */
@@ -1604,6 +1734,14 @@ body.is-dragging .tevent--resizing * {
 .agenda__event-main > .agenda__event-daypart {
   grid-column: 2;
   grid-row: 1;
+}
+/* 0.7.21（总监 m02610）：宽屏标注回到名称行右侧后，带标签的标题不能再跨到标注那一列
+   （`grid-column: 1 / -1` 会让长标题压到标注下面）。带标签网格是「标签 / 名称 / 标注」
+   三列，标题改占前两列；窄屏仍跨整行——`--name` 那份在 ≤520px 是 display:none。 */
+@media (min-width: 521px) {
+  .agenda__event-main--tagged:has(> .agenda__event-daypart--name) > .agenda__event-title--tagged {
+    grid-column: 1 / 3;
+  }
 }
 .agenda__event-location {
   grid-column: 1 / -1;
@@ -2630,13 +2768,11 @@ button.year__day {
     height: 44px;
     transform: translateY(-50%);
   }
-  /* 320 宽一格只有 45.7px，「还有 3 个」在 11px 下差 1–2px 会把尾字截掉。
-     只把这一行计数降到 10px（辅助信息）；标题、时间、日号字号不变。 */
-  @media (max-width: 360px) {
-    .month__more {
-      font-size: 10px;
-    }
-  }
+  /* 0.7.14（规格 J-2，`design/视觉规格-FnCal-v1.md` A3：字号下限 11px）：
+     0.5.9 曾在这里把 320 档的计数行降到 10px，靠缩小字号让尾字不被截。
+     0.7.14 删除这个例外——计数行统一 11px（`--fs-xs`，见上一条规则），
+     放不下时由 `fitMoreButtonText()`（`month.js:971`）按实测宽度把文案
+     换成 `+N`，完整文案仍留在 `title` 与 `aria-label`。 */
 }
 
 /* ---- 0.2.3：顶部常驻搜索条（桌面常显输入框，≤720 收起为图标） ---- */
@@ -2868,12 +3004,13 @@ button.year__day {
   .agenda__event-main {
     grid-template-columns: minmax(0, 1fr);
   }
-  .agenda__event-main > .agenda__event-daypart {
-    grid-column: 1;
-    grid-row: 2;
+  /* 0.7.21（总监 m02610）：旧的「标注放标题下面 grid-row: 2」作废——窄屏标注改由
+     时间列的 `--time` 那份承担（见上方 1658 一段），名称区拿回整行宽度。 */
+  .agenda__event-main > .agenda__event-daypart--name {
+    display: none;
   }
   .agenda__event-location {
-    grid-row: 3;
+    grid-row: 2;
   }
   /* 标题仍放不下时换到第二行（最多两行），不把「跨三天」这种关键后缀截掉。 */
   .agenda__event-main > .agenda__event-title {
