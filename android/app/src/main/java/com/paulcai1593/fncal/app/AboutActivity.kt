@@ -227,8 +227,22 @@ class AboutActivity : AppCompatActivity() {
     private fun onCheckOutcome(outcome: UpdateChecker.Outcome) {
         buttonCheckUpdate.isEnabled = true
         buttonCheckUpdate.setText(R.string.update_retry)
-        // 0.3.6（§A）：四源结果写进诊断行，用户截图就能看出卡在哪一源。
-        updateSourceDiag(outcome.diagnostics)
+        // 0.4.3（§A）：三源结果写进诊断行，用户截图就能看出卡在哪一源。
+        // 0.4.3（§十一）：只补「已选源 + 版本号」，不写地址全文、不写域名。
+        val selected = when (outcome) {
+            is UpdateChecker.Outcome.Found -> getString(
+                R.string.update_diag_selected,
+                sourceName(outcome.source),
+                outcome.manifest.versionName
+            )
+            is UpdateChecker.Outcome.Latest -> getString(
+                R.string.update_diag_selected,
+                sourceName(outcome.source),
+                outcome.remoteVersionName
+            )
+            is UpdateChecker.Outcome.Failure -> null
+        }
+        updateSourceDiag(outcome.diagnostics, selected)
         when (outcome) {
             is UpdateChecker.Outcome.Failure -> {
                 textUpdateStatus.text = getString(R.string.update_check_failed, outcome.message)
@@ -253,7 +267,7 @@ class AboutActivity : AppCompatActivity() {
             getString(R.string.update_dialog_version, manifest.versionName, manifest.versionCode)
         )
         lines.add(getString(R.string.update_dialog_date, manifest.releasedAt))
-        // 0.3.6（§A 修订）：只有两个源，来源照实写（Gitee 镜像 / GitHub 直通）。
+        // 0.4.3（§A）：三个源，来源照实写（Gitee / jsDelivr / GitHub）。
         lines.add(getString(R.string.update_dialog_source, sourceName(outcome.source)))
         if (manifest.notes.isNotEmpty()) {
             lines.add(getString(R.string.update_dialog_notes))
@@ -272,33 +286,63 @@ class AboutActivity : AppCompatActivity() {
     private fun sourceName(source: UpdateSources.Source): String =
         getString(
             when (source) {
-                UpdateSources.Source.GITEE -> R.string.update_source_gitee
+                UpdateSources.Source.GITEE_API -> R.string.update_source_gitee
+                UpdateSources.Source.JSDELIVR -> R.string.update_source_jsdelivr
                 UpdateSources.Source.GITHUB -> R.string.update_source_github
             }
         )
 
-    /** 0.3.6（§A）：两源检查结果——`Gitee 200 · GitHub 超时`。 */
-    private fun updateSourceDiag(attempts: List<UpdateChecker.SourceAttempt>) {
+    /** 0.4.3（§A）：三源检查结果——`Gitee 200 · jsDelivr 200 旧 · GitHub 超时`。 */
+    private fun updateSourceDiag(
+        attempts: List<UpdateChecker.SourceAttempt>,
+        selected: String? = null,
+    ) {
         if (!::textUpdateDiag.isInitialized || attempts.isEmpty()) {
             return
         }
         val text = attempts.joinToString(" · ") {
             UpdateChecker.sourceTag(it.source) + " " + it.status
         }
-        textUpdateDiag.text = getString(R.string.update_diag_sources, text)
+        val full = if (selected == null) text else text + " · " + selected
+        textUpdateDiag.text = getString(R.string.update_diag_sources, full)
         textUpdateDiag.visibility = View.VISIBLE
     }
 
+    /**
+     * 0.4.3（§十一 先探后下）：选定清单后先 HEAD 探 `apkCn`，再决定用哪个地址。
+     *
+     * 探测在后台线程做（3 秒超时）；死链不进 DownloadManager，
+     * 两个地址都不通就只提示「暂时取不到安装包」，不给用户一个 404 的下载。
+     */
     private fun startDownload(manifest: UpdateChecker.Manifest) {
         expectedVersionCode = manifest.versionCode
         expectedApkName = manifest.apk
         lastManifest = manifest
         retriedAfterExists = false
-        // 0.3.6（§B）：Gitee 附件优先，失败一次换 GitHub 直连。
-        downloadTargets = UpdateSources.downloadTargets(manifest)
-        targetIndex = 0
         firstFailureReason = 0
+        downloadTargets = emptyList()
+        targetIndex = 0
+        textUpdateStatus.visibility = View.VISIBLE
+        textUpdateStatus.text = getString(R.string.update_probing)
+        thread(name = "fncal-update-probe") {
+            val plan = UpdateSources.planDownload(manifest)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (plan.isEmpty()) {
+                    downloadTargets = emptyList()
+                    targetIndex = 0
+                    textUpdateStatus.text = getString(R.string.update_unavailable)
+                    return@runOnUiThread
+                }
+                downloadTargets = plan
+                targetIndex = 0
+                startProbedDownload(manifest)
+            }
+        }
+    }
 
+    /** 地址已探明之后的实际下载步骤（磁盘上已有正确包就直接装）。 */
+    private fun startProbedDownload(manifest: UpdateChecker.Manifest) {
         // 0.3.4 §D：磁盘上已有同版本的正确包（包名 + versionCode 都对）就直接装，
         // 不再重下；这也顺带避开「目标文件已存在」导致的失败。
         val cached = existingValidApk(manifest.apk, manifest.versionCode)
@@ -327,9 +371,11 @@ class AboutActivity : AppCompatActivity() {
      * 首选失败后 [targetIndex] 加一，再由这里取回退地址；两次都失败才报错。
      */
     private fun enqueueDownload(manifest: UpdateChecker.Manifest) {
+        // 0.4.3（§十一）：地址表由 planDownload 探测后给出，空表只提示，不再回退到死链。
         if (downloadTargets.isEmpty()) {
-            downloadTargets = UpdateSources.downloadTargets(manifest)
-            targetIndex = 0
+            textUpdateStatus.visibility = View.VISIBLE
+            textUpdateStatus.text = getString(R.string.update_unavailable)
+            return
         }
         val target = downloadTargets.getOrNull(targetIndex)
         if (target == null) {

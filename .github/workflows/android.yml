@@ -62,8 +62,8 @@ jobs:
           AAPT="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/aapt"
           # 0.3.0（§A5）：版本号必须真的打进包里，避免 tag 与包内容对不上。
           "$AAPT" dump badging "$APK" | tee badging.txt | head -6
-          grep -q "versionCode='402'" badging.txt
-          grep -q "versionName='0.4.2'" badging.txt
+          grep -q "versionCode='403'" badging.txt
+          grep -q "versionName='0.4.3'" badging.txt
           # 0.2.1（§S1）：打印签名证书指纹；同一签名的包才能覆盖升级。
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner"
           "$APKSIGNER" verify --print-certs "$APK" | tee apk-signature.txt
@@ -88,9 +88,9 @@ jobs:
         run: |
           set -e
           APK=app/build/outputs/apk/release/app-release.apk
-          OUT=FnCal-Android-0.4.2.apk
+          OUT=FnCal-Android-0.4.3.apk
           cp "$APK" "$OUT"
-          TAG=android-v0.4.2
+          TAG=android-v0.4.3
           if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$OUT"; then
             echo "资产 $OUT 已存在，跳过覆盖（已发布的包不改字节）"
             exit 0
@@ -99,8 +99,8 @@ jobs:
             echo "release $TAG 已存在，覆盖资产"
           else
             gh release create "$TAG" \
-              --title "FnCal Android 0.4.2" \
-              --notes "安卓外壳 0.4.2（固定测试签名，可直接覆盖升级）。启动图标修复：自适应图标前景由 66% 缩到 54%，不再贴住安全区边缘，圆形与圆角遮罩下留白一致。其余同 0.4.1：桌面卡片九款（小月历、今日日程、大月历、四日、日程列表、当月热度、当月分类、一周节奏、时段分析）；四日与日程列表默认 4×2 可拉到 4×4，统计四款默认 2×2 可拉到 4×2；日程列表每行显示开始至结束时间；大月历徽章全天实底、定时淡底加细边；主题色读网页设置。" \
+              --title "FnCal Android 0.4.3" \
+              --notes "安卓外壳 0.4.3（固定测试签名，可直接覆盖升级）。两项改动：一、检查更新改三源依次回落（Gitee API、jsDelivr、GitHub raw），任一源版本落后都继续试下一个、取最大 versionCode，单一源不可用不再报整条更新不可用，下载仍先 Gitee 附件再 GitHub Release；二、启动图标前景由 54% 缩到 48%，圆形与圆角遮罩下留白更均衡。其余同 0.4.2：桌面卡片九款（小月历、今日日程、大月历、四日、日程列表、当月热度、当月分类、一周节奏、时段分析）；四日与日程列表默认 4×2 可拉到 4×4；日程列表每行显示开始至结束时间；大月历徽章全天实底、定时淡底加细边；主题色读网页设置。" \
               --latest=false
           fi
           gh release upload "$TAG" "$OUT" --clobber

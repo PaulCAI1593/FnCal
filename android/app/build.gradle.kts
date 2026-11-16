@@ -11,11 +11,11 @@ android {
         applicationId = "com.paulcai1593.fncal.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 402
-        versionName = "0.4.2"
+        versionCode = 403
+        versionName = "0.4.3"
 
         // 外壳版本与 FnCal 服务端版本无关；UA 里带的是壳版本。
-        resValue("string", "fncal_shell_version", "0.4.2")
+        resValue("string", "fncal_shell_version", "0.4.3")
 
         // 0.3.7（包体瘦身）：只保留中英两种语言资源。AGP 8.5.2 用新的
         // resourceConfigurations；resConfigs 已弃用，别用。
@@ -74,5 +74,8 @@ dependencies {
 
     // 0.4.1：九款卡片的颜色运算与统计是纯 Kotlin（WidgetTokens / WidgetStats），
     // 用普通 JUnit 在本机跑，不必起模拟器。
+    // 0.4.3：UpdateChecker 解析清单用 org.json；Android 运行时有这份实现，
+    // JVM 单测没有，所以测试期补一份同 API 的依赖（不打进 APK）。
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }
