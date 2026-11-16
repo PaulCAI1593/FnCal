@@ -4,7 +4,7 @@ import android.os.Build
 
 /**
  * 0.3.0 §D：设备机型标签，供两个 UA 共用：
- *   - 壳内 WebView：`FnCalAndroid/0.3.8 (<MANUFACTURER> <MODEL>)`
+ *   - 壳内 WebView：`FnCalAndroid/0.4.2 (<MANUFACTURER> <MODEL>)`
  *   - 卡片取数：  `FnCalWidget/0.3.8 (<MANUFACTURER> <MODEL>)`
  *
  * 规则：去首尾空格、连续空格压成一个、最长 40 字符（按字符而不是字节截断，

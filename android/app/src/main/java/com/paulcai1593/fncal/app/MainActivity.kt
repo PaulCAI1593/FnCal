@@ -63,7 +63,7 @@ class MainActivity : AppCompatActivity() {
         /** 0.3.8：诊断块最多保留的失败请求条数（内存，不落盘）。 */
         private const val DIAG_MAX = 5
         // 0.3.0 §D：UA 带机型，服务端「我的安全」因此能显示是哪台手机。
-    private val UA_SUFFIX = " FnCalAndroid/0.3.8" + DeviceName.suffix()
+    private val UA_SUFFIX = " FnCalAndroid/0.4.2" + DeviceName.suffix()
     }
 
     private lateinit var webView: WebView

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""0.4.1（总监 m02019）：安卓自适应图标自检 + 预览图。
+"""0.4.2（总监）：安卓自适应图标自检 + 预览图。0.4.1 起建，0.4.2 加 54% 前景尺寸校验。
 
 检查：
   1. 五档 `ic_launcher_foreground.png` 四角 alpha = 0；
   2. 前景内容全部落在居中 66% 安全区内（含 1px 抗锯齿容差）；
+  2b. 前景内容宽度 = 54% ±1%（0.4.2 定稿；66% 时贴住安全区边缘，用户报「logo 太大」）；
   3. `ic_launcher.png` / `logo_mark.png` 与 `code/web/public/icon-512.png` 同源（尺寸链一致）；
   4. `mipmap-anydpi-v26/ic_launcher*.xml` 用渐变 drawable 作底，`drawable/ic_launcher_background.xml` 是 #1E72D6 → #01B597。
 
 用法（仓库根目录）：`C:\\Python314\\python.exe projects/FnCal/android/tools/check_icons.py`
-产出预览：`projects/FnCal/design/widget-041/ic-adaptive-preview-0.4.1.png`
-（左：圆形遮罩，中：方形圆角遮罩，右：66% 安全区示意）
+产出预览：`projects/FnCal/design/app-icon/ic-adaptive-preview-0.4.2.png`
+（左：圆形遮罩，中：方形圆角遮罩，右：66% 安全区 + 54% 内容框示意）
 """
 from __future__ import annotations
 
@@ -22,10 +23,11 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / "app" / "src" / "main" / "res"
 SRC = ROOT.parent / "code" / "web" / "public" / "icon-512.png"
-PREVIEW = ROOT.parent / "design" / "widget-041" / "ic-adaptive-preview-0.4.1.png"
+PREVIEW = ROOT.parent / "design" / "app-icon" / "ic-adaptive-preview-0.4.2.png"
 
 DENSITIES = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
-RATIO = 0.66
+RATIO = 0.66        # 自适应图标安全区：108dp 画布的居中 72dp
+LOGO_RATIO = 0.54   # 0.4.2：前景内容占画布比例（58.3dp）
 A = (30, 114, 214)
 B = (1, 181, 151)
 
@@ -78,6 +80,10 @@ def main() -> int:
                   and box[0] >= margin - tol and box[1] >= margin - tol
                   and box[2] <= canvas - margin + tol and box[3] <= canvas - margin + tol)
         check(f"{density} 内容在 66% 安全区内", inside, f"bbox={box} 期望 {margin:.1f}..{canvas - margin:.1f}")
+        if box is not None:
+            got_ratio = (box[2] - box[0]) / canvas
+            check(f"{density} 内容宽度 = 54% ±1%", abs(got_ratio - LOGO_RATIO) <= 0.01,
+                  f"实测 {got_ratio:.3f}")
         if density == "xxxhdpi":
             preview_icons.append((canvas, fg))
 
@@ -130,6 +136,9 @@ def main() -> int:
         inner = canvas * RATIO
         margin = (canvas - inner) / 2
         d.rectangle((margin, margin, canvas - margin, canvas - margin), outline=(255, 255, 255, 200), width=2)
+        inner2 = canvas * LOGO_RATIO
+        margin2 = (canvas - inner2) / 2
+        d.rectangle((margin2, margin2, canvas - margin2, canvas - margin2), outline=(255, 255, 255, 110), width=1)
         tiles = [masked(base, circle), masked(base, squircle), zone]
         gap = 24
         sheet = Image.new("RGBA", (canvas * 3 + gap * 4, canvas + gap * 2), (237, 241, 247, 255))
