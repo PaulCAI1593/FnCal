@@ -868,7 +868,9 @@ class WidgetCards041(
                 this.shader = shader
             }
             canvas.drawPath(fillPath, fillPaint)
-            canvas.drawPath(path, stroke(ink, if (big) 1.8f else 1.6f).apply { lineJoin = Paint.Join.ROUND })
+            // 0.4.1（CI run 43815981359 修复）：android.graphics.Paint 的拐角属性叫 strokeJoin；
+            // Skia / Compose 层的同名写法在这个类上不存在（防回归，name 不再写原拼法）。
+            canvas.drawPath(path, stroke(ink, if (big) 1.8f else 1.6f).apply { strokeJoin = Paint.Join.ROUND })
             if (peak >= 0) {
                 canvas.drawCircle(points[peak].first, points[peak].second, dp(1.7f), solid(ink))
             }

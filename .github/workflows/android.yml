@@ -37,6 +37,14 @@ jobs:
 
       # 0.3.7（包体瘦身）：发布包改走 release + R8（minify + shrinkResources），
       # 签名仍是固定测试 keystore，保证覆盖升级、证书指纹不变。
+      # 0.4.1：出包前先跑卡片逻辑的纯 Kotlin 单测（两组，见 design/widget-041）。
+      - name: Unit tests (widget stats)
+        working-directory: android
+        run: |
+          gradle testDebugUnitTest --no-daemon --stacktrace \
+            --tests "*.WidgetStatsTest" \
+            --tests "*.WidgetTagFieldsTest"
+
       - name: Build release APK
         working-directory: android
         run: gradle assembleRelease --no-daemon --stacktrace
@@ -54,8 +62,8 @@ jobs:
           AAPT="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/aapt"
           # 0.3.0（§A5）：版本号必须真的打进包里，避免 tag 与包内容对不上。
           "$AAPT" dump badging "$APK" | tee badging.txt | head -6
-          grep -q "versionCode='308'" badging.txt
-          grep -q "versionName='0.3.8'" badging.txt
+          grep -q "versionCode='401'" badging.txt
+          grep -q "versionName='0.4.1'" badging.txt
           # 0.2.1（§S1）：打印签名证书指纹；同一签名的包才能覆盖升级。
           APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)/apksigner"
           "$APKSIGNER" verify --print-certs "$APK" | tee apk-signature.txt
@@ -80,9 +88,9 @@ jobs:
         run: |
           set -e
           APK=app/build/outputs/apk/release/app-release.apk
-          OUT=FnCal-Android-0.3.8.apk
+          OUT=FnCal-Android-0.4.1.apk
           cp "$APK" "$OUT"
-          TAG=android-v0.3.8
+          TAG=android-v0.4.1
           if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$OUT"; then
             echo "资产 $OUT 已存在，跳过覆盖（已发布的包不改字节）"
             exit 0
@@ -91,8 +99,8 @@ jobs:
             echo "release $TAG 已存在，覆盖资产"
           else
             gh release create "$TAG" \
-              --title "FnCal Android 0.3.8" \
-              --notes "安卓外壳测试包（固定测试签名，可直接覆盖升级）。本版修「打不开页面一直转圈」：页面 15 秒未完成显示「加载超时」，服务器 403 / 5xx 显示带状态码的错误页；错误页给出失败请求与域名解析诊断，可长按选中或一键复制。网页请求也加 15 秒超时。更新仍是两源：先试 Gitee 镜像，清单过期或不可用再试 GitHub 直通；清单里的 apkCn 与 GitHub Release 包互为备份，下载失败自动换一个再试一次。桌面卡片与四日视图沿用 0.3.7。" \
+              --title "FnCal Android 0.4.1" \
+              --notes "安卓外壳 0.4.1（固定测试签名，可直接覆盖升级）。桌面卡片按新设计重做九款：小月历、今日日程、大月历、四日、日程列表、当月热度、当月分类、一周节奏、时段分析。四日与日程列表默认 4×2，可拉伸到 4×4；统计四款默认 2×2，可拉伸到 4×2。日程列表每行显示开始至结束时间，全天行写「全天」。大月历徽章分色：全天与多日实底，定时日程淡底加细边。主题色读网页设置，卡片上的今天、曲线与柱子跟着变；日历九色与分类十色不跟主题。" \
               --latest=false
           fi
           gh release upload "$TAG" "$OUT" --clobber
