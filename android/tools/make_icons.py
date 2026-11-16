@@ -8,7 +8,7 @@
 生成：
   mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png        48/72/96/144/192
   mipmap-{...}/ic_launcher_round.png                              同上，圆形裁切
-  mipmap-{...}/ic_launcher_foreground.png                         108dp 自适应前景（图标 54%）
+  mipmap-{...}/ic_launcher_foreground.png                         108dp 自适应前景（图标 48%）
   mipmap-anydpi-v26/ic_launcher.xml / ic_launcher_round.xml       自适应图标描述
 """
 from __future__ import annotations
@@ -54,8 +54,8 @@ BACKGROUND_XML = """<?xml version="1.0" encoding="utf-8"?>
         android:type="linear" />
 </shape>
 """
-# 0.4.2：66% 正好占满 72dp 安全区，圆形遮罩下贴边显大；改 54%（58.3dp，离安全区边 7dp）。
-FOREGROUND_RATIO = 0.54
+# 0.4.3：54%（58.3dp）用户仍觉偏大；改 48%（51.8dp，离安全区边 10.1dp）。
+FOREGROUND_RATIO = 0.48
 
 
 def rounded(source: Image.Image, size: int) -> Image.Image:
@@ -103,7 +103,7 @@ def extract_mark(source: Image.Image) -> Image.Image:
 
 
 def foreground(mark: Image.Image, canvas: int) -> Image.Image:
-    """自适应前景：标记本体占画布 54%，居中，周边全透明。"""
+    """自适应前景：标记本体占画布 48%，居中，周边全透明。"""
     out = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
     inner = int(round(canvas * FOREGROUND_RATIO))
     width, height = mark.size

@@ -308,7 +308,12 @@ def check_urls() -> None:
 
 
 def check_update_manifest() -> None:
-    """0.2.0（§B4）：update.json 必须存在，且版本号与 app/build.gradle.kts 一致。"""
+    """0.2.0（§B4）：update.json 必须存在且自洽。
+
+    0.4.3：真源换成 app/build.gradle.kts。发版流程是「先出 APK 再推清单」，
+    所以源码升号后、发布前 update.json 允许停在上一版（落后但自洽）；
+    两者相等时三处版本串必须全对上。
+    """
     import json
 
     path = ROOT / "update.json"
@@ -321,25 +326,38 @@ def check_update_manifest() -> None:
         fail("update.json parse: " + str(exc))
         return
     app_gradle = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
+    gradle_code = re.search(r"versionCode = (\d+)", app_gradle)
+    gradle_name = re.search(r'versionName = "([^"]+)"', app_gradle)
+    if not (gradle_code and gradle_name):
+        fail("app/build.gradle.kts version strings not found")
+        return
+    want_code = int(gradle_code.group(1))
+    want_name = gradle_name.group(1)
     code = data.get("versionCode")
     name = data.get("versionName")
     apk = data.get("apk")
     notes = data.get("notes")
-    if not isinstance(code, int) or ("versionCode = " + str(code)) not in app_gradle:
-        fail("update.json versionCode mismatch: " + repr(code))
+    if not isinstance(code, int) or code > want_code:
+        fail("update.json versionCode %r newer than gradle %d" % (code, want_code))
+    elif code < want_code:
+        ok("update.json versionCode %d lags gradle %d (release pushes it later)"
+           % (code, want_code))
     else:
         ok("update.json versionCode " + str(code))
-    if not isinstance(name, str) or ('versionName = "' + name + '"') not in app_gradle:
+    if not isinstance(name, str):
+        fail("update.json versionName missing")
+    elif name != want_name and code == want_code:
         fail("update.json versionName mismatch: " + repr(name))
+    elif name != want_name:
+        ok("update.json versionName %s lags gradle %s" % (name, want_name))
     else:
         ok("update.json versionName " + name)
-    expected_apk = "FnCal-Android-" + str(name) + ".apk"
-    if apk != expected_apk:
-        fail("update.json apk should be " + expected_apk + ", got " + repr(apk))
+    if not isinstance(name, str) or apk != "FnCal-Android-" + name + ".apk":
+        fail("update.json apk should be FnCal-Android-<its versionName>.apk, got "
+             + repr(apk))
     else:
         ok("update.json apk " + apk)
-    # 0.3.2 起允许 2 条 notes：本版只有「系统栏底色」「关于页说明」两处改动，
-    # 硬凑第三条会写进无关内容。上限仍是 6。
+    # 0.3.2 起允许 2 条 notes：本版只有两处改动时不必硬凑第三条。上限仍是 6。
     if not isinstance(notes, list) or not (2 <= len(notes) <= 6) \
             or not all(isinstance(n, str) and n for n in notes):
         fail("update.json notes should be 2-6 non-empty strings")
@@ -359,9 +377,11 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 402": app_gradle,
-        'versionName = "0.4.2"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.4.2")': app_gradle,
+        "versionCode = 403": app_gradle,
+        'versionName = "0.4.3"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.4.3")': app_gradle,
+        # 0.4.3：UpdateChecker 解析清单用 org.json，JVM 单测要补一份同 API 依赖。
+        'testImplementation("org.json:json:20240303")': app_gradle,
         # 0.3.7（包体瘦身）：release 变体必须真的开 R8 与资源收缩，并挂固定签名。
         "isMinifyEnabled = true": app_gradle,
         "isShrinkResources = true": app_gradle,
@@ -912,7 +932,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.4.2"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.4.3"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -935,11 +955,14 @@ def check_widgets() -> None:
 
     # ⑧ 发版口径：workflow 的 tag / 资产名跟版本走。0.3.4 起 workflow 由总监单独
     # 改（他正在推 Release 正文），升号过渡期规则见 workflow_version_status()。
-    import json
-
-    manifest = json.loads((ROOT / "update.json").read_text(encoding="utf-8"))
+    gradle_text = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
+    gradle_code = re.search(r"versionCode = (\d+)", gradle_text)
+    gradle_name = re.search(r'versionName = "([^"]+)"', gradle_text)
+    if not (gradle_code and gradle_name):
+        fail("gradle version strings not found for workflow check")
+        return
     wf_ok, wf_note = workflow_version_status(
-        str(manifest.get("versionName", "")), int(manifest.get("versionCode", 0))
+        gradle_name.group(1), int(gradle_code.group(1))
     )
     if wf_ok:
         ok("workflow release names (" + wf_note + ")")
@@ -1420,21 +1443,25 @@ def check_update_fallback() -> None:
     strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
     layout = (APP / "res" / "layout" / "activity_about.xml").read_text(encoding="utf-8")
     markers = (
-        # 两个清单地址
-        '"https://gitee.com/Paul1593/FnCal/raw/main/android/update.json"',
+        # 0.4.3（§A）：三个清单地址，依次试
+        '"https://gitee.com/api/v5/repos/Paul1593/FnCal/contents/android/update.json?ref=main"',
+        '"https://cdn.jsdelivr.net/gh/PaulCAI1593/FnCal@main/android/update.json"',
         '"https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/android/update.json"',
-        # 0.3.6（§A 修订）：两源固定顺序，Gitee 永远第一
-        # 0.3.6 编译修正：object 体里的 val 不能套 companion，枚举项要写全限定名
-        "val checkOrder: List<Source> = listOf(Source.GITEE, Source.GITHUB)",
+        # 三源固定顺序，Gitee API 永远第一
+        "val checkOrder: List<Source> = listOf(Source.GITEE_API, Source.JSDELIVR, Source.GITHUB)",
+        # Gitee API 的正文在 content 里、base64 编码，要先解码
+        "internal fun parseManifestBody(source: UpdateSources.Source, body: String): Manifest",
+        "internal fun decodeBase64(text: String): String",
         # 严格按 longVersionCode 比较
-        "manifest.versionCode.toLong() > currentVersionCode",
-        # 不比当前新就继续下一个源（0.3.1 的 bug 不能重演）
-        "不判最新，继续下一个源（§11 关键）",
-        # 两源都不新：取版本号最大的候选
+        "manifest.versionCode.toLong() <= currentVersionCode",
+        # 不比当前新就继续下一个源（0.3.1 的 bug 不能重演，§11 关键）
+        "不判最新，继续下一个源（§11 关键",
+        # 三源都不新：取版本号最大的候选
         "if (current == null || manifest.versionCode > current.versionCode)",
-        # 全失败：报第一个失败原因
-        '"检查更新失败：" + (firstError ?: "所有更新源都不可用")',
-        "fun check(currentVersionCode: Long): Outcome",
+        # 全失败：报一次，文案不点名某个源
+        'return Outcome.Failure("所有更新源都不可用", attempts)',
+        "fun check(",
+        "fetcher: (UpdateSources.Source) -> String = ::fetchBody",
         # 0.3.6（§B）：apkCn 可选字段，缺省不报错
         "val apkCn: String? = null",
         'json.optString("apkCn")',
@@ -1443,6 +1470,13 @@ def check_update_fallback() -> None:
         "fun downloadTargets(manifest: UpdateChecker.Manifest): List<DownloadTarget> {",
         "return listOfNotNull(gitee, github)",
         "fun apkUrl(manifest: UpdateChecker.Manifest): String =",
+        # 0.4.3（§十一 先探后下）：HEAD 探测 3 秒，非 2xx / 超时都算不通
+        "private const val PROBE_TIMEOUT_MS = 3_000",
+        "fun probeUrl(url: String, timeoutMs: Int = PROBE_TIMEOUT_MS): Boolean {",
+        'requestMethod = "HEAD"',
+        "fun planDownload(",
+        "probe: (String) -> Boolean = { UpdateChecker.probeUrl(it) }",
+        "private fun safeProbe(probe: (String) -> Boolean, url: String): Boolean =",
     )
     for marker in markers:
         if marker in updater:
@@ -1462,8 +1496,10 @@ def check_update_fallback() -> None:
         "MANIFEST_PAGES",
         "MANIFEST_CN",
         "PAGES",
-        "jsdelivr",
-        "Jsdelivr",
+        # 0.4.3：旧 raw 地址会 302 跳到 raw.giteeusercontent.com（部分网络 TLS 被断），
+        # 这个域名与旧地址都不许再出现。jsDelivr 现在是正路，不再是禁用项。
+        "gitee.com/Paul1593/FnCal/raw/",
+        "raw.giteeusercontent.com",
         "gh-proxy",
         "cnFileName",
         "apkFileNames",
@@ -1476,6 +1512,8 @@ def check_update_fallback() -> None:
         "radio_source_",
         "group_update_source",
         "orderFor(preferred",
+        # 0.4.3（§十一）：地址表为空时不许自己补一条（会补回死链）
+        "downloadTargets = UpdateSources.downloadTargets(manifest)",
     )
     for text_name, text in (
         ("UpdateChecker.kt", updater),
@@ -1487,7 +1525,7 @@ def check_update_fallback() -> None:
         if left:
             fail(text_name + " still has " + ", ".join(left))
         else:
-            ok("two-source chain clean in " + text_name)
+            ok("three-source chain clean in " + text_name)
 
     # 关于页不再有更新源单选。
     if "RadioGroup" in about or "RadioButton" in about:
@@ -1496,23 +1534,41 @@ def check_update_fallback() -> None:
         ok("about page has no update source radio")
 
     # 两个来源文案齐备，sourceName 两个分支都在。
-    for key in ("update_source_gitee", "update_source_github"):
+    for key in ("update_source_gitee", "update_source_jsdelivr", "update_source_github"):
         if key in strings and ("R.string." + key) in about:
             ok("update source label " + key)
         else:
             fail("update source label missing " + key)
 
-    # 诊断行仍写两个源的结果。
+    # 诊断行仍写各源的结果。
     if "update_diag_sources" in strings and "R.string.update_diag_sources" in about:
         ok("diag label update_diag_sources")
     else:
         fail("diag label missing update_diag_sources")
 
+    # 0.4.3（§十一）：诊断行补「已选源 + 版本号」，不写地址全文。
+    for key in (
+        "update_probing",
+        "update_unavailable",
+        "update_diag_selected",
+    ):
+        if key in strings and ("R.string." + key) in about:
+            ok("update flow string " + key)
+        else:
+            fail("update flow string missing " + key)
+    if "sourceName(outcome.source)" in about and "outcome.manifest.versionName" in about:
+        ok("diag shows selected source and version")
+    else:
+        fail("diag must show selected source and version")
+
     # 0.3.6（§B）：下载先按目标列表取地址，失败一次才换下一个；两次都失败才报错。
     download_markers = (
         "downloadTargets.getOrNull(targetIndex)",
         "targetIndex + 1 < downloadTargets.size",
-        "UpdateSources.downloadTargets(manifest)",
+        # 0.4.3（§十一）：地址表由 planDownload 探测后给出，空表只提示「暂时取不到安装包」
+        "UpdateSources.planDownload(manifest)",
+        "startProbedDownload(manifest)",
+        "R.string.update_unavailable",
     )
     for marker in download_markers:
         if marker in about:
@@ -1521,16 +1577,22 @@ def check_update_fallback() -> None:
             fail("download fallback missing " + marker)
 
     # 地址顺序：Gitee 镜像 → GitHub 直通。
-    gitee_at = updater.find("MANIFEST_GITEE = ")
+    gitee_at = updater.find("MANIFEST_GITEE_API =")
+    jsdelivr_at = updater.find("MANIFEST_JSDELIVR =")
     github_at = updater.find("MANIFEST_GITHUB =")
-    if 0 <= gitee_at < github_at:
-        ok("manifest sources ordered gitee < github")
+    if 0 <= gitee_at < jsdelivr_at < github_at:
+        ok("manifest sources ordered gitee api < jsdelivr < github")
     else:
-        fail("manifest sources must be ordered gitee < github")
+        fail("manifest sources must be ordered gitee api < jsdelivr < github")
     gradle = (ROOT / "app" / "build.gradle.kts").read_text(encoding="utf-8")
     manifest = json.loads((ROOT / "update.json").read_text(encoding="utf-8"))
-    name = str(manifest.get("versionName", ""))
-    code = manifest.get("versionCode")
+    gradle_name_match = re.search(r'versionName = "([^"]+)"', gradle)
+    gradle_code_match = re.search(r"versionCode = (\d+)", gradle)
+    if not (gradle_name_match and gradle_code_match):
+        fail("gradle version strings not found")
+        return
+    name = gradle_name_match.group(1)
+    code = int(gradle_code_match.group(1))
     checks = {
         "gradle versionCode": ("versionCode = " + str(code)) in gradle,
         "gradle versionName": ('versionName = "' + name + '"') in gradle,
@@ -1539,15 +1601,20 @@ def check_update_fallback() -> None:
         in (kt / "MainActivity.kt").read_text(encoding="utf-8"),
         "widget UA": ('const val VERSION = "' + name + '"')
         in (kt / "WidgetClient.kt").read_text(encoding="utf-8"),
-        "update.json apk": manifest.get("apk") == "FnCal-Android-" + name + ".apk",
+        "device name comment": ("FnCalAndroid/" + name)
+        in (kt / "DeviceName.kt").read_text(encoding="utf-8"),
     }
     for label, good in checks.items():
         if good:
             ok("version string agrees: " + label)
         else:
             fail("version string mismatch: " + label)
-    # 0.3.4 起 workflow 由总监单独改：过渡期按自洽性规则检查（见 workflow_version_status）。
-    wf_ok, wf_note = workflow_version_status(name, int(code))
+    # update.json 的资产名跟它自己的 versionName 走（发布前可能落后一版）。
+    if manifest.get("apk") == "FnCal-Android-" + str(manifest.get("versionName")) + ".apk":
+        ok("version string agrees: update.json apk")
+    else:
+        fail("version string mismatch: update.json apk")
+    wf_ok, wf_note = workflow_version_status(name, code)
     if wf_ok:
         ok("workflow version (" + wf_note + ")")
     else:
@@ -1611,12 +1678,12 @@ def check_release_workflow() -> None:
         "release apk path": "app/build/outputs/apk/release/app-release.apk" in wf,
         "no debug apk path": "apk/debug/app-debug.apk" not in wf,
         "build step name": "Build release APK" in wf,
-        "badging versionCode 402": "versionCode='402'" in wf,
-        "badging versionName 0.4.2": "versionName='0.4.2'" in wf,
+        "badging versionCode 403": "versionCode='403'" in wf,
+        "badging versionName 0.4.3": "versionName='0.4.3'" in wf,
         "artifact name": "FnCal-Android-release" in wf,
         "mapping upload": "app/build/outputs/mapping/release/mapping.txt" in wf,
-        "TAG android-v0.4.2": "TAG=android-v0.4.2" in wf,
-        "OUT 0.4.2": "OUT=FnCal-Android-0.4.2.apk" in wf,
+        "TAG android-v0.4.3": "TAG=android-v0.4.3" in wf,
+        "OUT 0.4.3": "OUT=FnCal-Android-0.4.3.apk" in wf,
         "signature pin": "SHA-256 digest: 0a7889854bb2e8a82153a15d59a348676d772a8a22f7c971cf98a7f1c08c3ace" in wf,
     }
     for label, good in checks.items():
@@ -1743,6 +1810,33 @@ def check_widget_041() -> None:
         fail("0.4.1 numeric table missing design/widget-041/数值表-0.4.1.md")
 
 
+def check_icon_ratio() -> None:
+    """0.4.3（§B）：启动图标前景 48%，两个脚本的常量必须一致。
+
+    用户 2026-11-16 15:41 定：66% → 54% 后仍觉偏大，0.4.3 改 48%。
+    生成脚本与自检脚本各有一个常量，任何一处漂移都会让自检形同虚设，
+    所以在这里做一次交叉校验。
+    """
+    maker = (ROOT / "tools" / "make_icons.py").read_text(encoding="utf-8")
+    checker = (ROOT / "tools" / "check_icons.py").read_text(encoding="utf-8")
+    if "FOREGROUND_RATIO = 0.48" in maker:
+        ok("make_icons foreground ratio 0.48")
+    else:
+        fail("make_icons FOREGROUND_RATIO should be 0.48")
+    if "LOGO_RATIO = 0.48" in checker:
+        ok("check_icons logo ratio 0.48")
+    else:
+        fail("check_icons LOGO_RATIO should be 0.48")
+    for gone in ("FOREGROUND_RATIO = 0.54", "LOGO_RATIO = 0.54"):
+        if gone in maker or gone in checker:
+            fail("icon ratio still 0.54: " + gone)
+    preview = ROOT.parent / "design" / "app-icon" / "ic-adaptive-preview-0.4.3.png"
+    if preview.is_file():
+        ok("0.4.3 icon preview " + preview.name)
+    else:
+        fail("0.4.3 icon preview missing: " + preview.name)
+
+
 def main() -> int:
     print("root:", ROOT)
     check_xml()
@@ -1765,6 +1859,7 @@ def main() -> int:
     check_layouts()
     check_widgets()
     check_widget_041()
+    check_icon_ratio()
     check_line_endings()
     print()
     if failures:
