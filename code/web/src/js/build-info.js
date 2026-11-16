@@ -28,3 +28,14 @@ export function getFrontendVersion() {
   const value = meta && meta.getAttribute('content');
   return typeof value === 'string' ? value.trim() : '';
 }
+/**
+ * 0.7.30：给静态资源加版本串。图标换版后浏览器仍可能按旧缓存显示上一版图标；
+ * 带上前端版本号即可让请求地址变化，不必依赖强刷。
+ * 取不到版本（开发服务器 / 旧包）时原样返回，不加空串参数。
+ */
+export function versionedAsset(path) {
+  const version = getFrontendVersion();
+  if (!version) return path;
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}v=${encodeURIComponent(version)}`;
+}

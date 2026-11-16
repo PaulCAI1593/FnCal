@@ -56,7 +56,7 @@
             android:theme="@style/Theme.FnCal"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- 0.3.0（§A3）：五款桌面卡片。导出给桌面进程投递 APPWIDGET_UPDATE。 -->
+        <!-- 0.3.0（§A3）五款 + 0.4.1 四款统计卡：九款桌面卡片，导出给桌面进程投递 APPWIDGET_UPDATE。 -->
         <receiver
             android:name=".MiniMonthWidgetProvider"
             android:exported="true"
@@ -115,6 +115,54 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_agenda_list_info" />
+        </receiver>
+
+        <receiver
+            android:name=".MonthHeatWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_month_heat_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_month_heat_info" />
+        </receiver>
+
+        <receiver
+            android:name=".MonthCategoryWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_month_category_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_month_category_info" />
+        </receiver>
+
+        <receiver
+            android:name=".WeekRhythmWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_week_rhythm_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_week_rhythm_info" />
+        </receiver>
+
+        <receiver
+            android:name=".HoursWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_hours_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_hours_info" />
         </receiver>
 
         <!-- 0.3.0（§A2）：开机 / 改时间 / 改时区 / 升级后重排并刷新。 -->

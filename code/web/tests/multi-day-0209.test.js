@@ -81,7 +81,8 @@ describe('⑬ 日程视图跨天事件「（第 n/m 天）」', () => {
       actions: VIEW_ACTIONS,
     });
     const parts = [...node.querySelectorAll('.agenda__event-daypart--time')].map((n) => n.textContent);
-    expect(parts).toEqual(['（第 1/3 天）', '（第 2/3 天）', '（第 3/3 天）']);
+    // 0.8.21（总监 m02593）：时间列那份用紧凑文案「第n/m天」。
+    expect(parts).toEqual(['第1/3天', '第2/3天', '第3/3天']);
     // 0.7.17（总监 m00333）：标注搬进时间列，排在时间文字之后。
     // 0.7.21（总监 m02610）：标注渲染两份、CSS 按 520px 断点二选一——时间列那份
     // （`--time`，窄屏显示）在时间文字之后；名称行那份（`--name`，宽屏显示）回到 main 里。
@@ -120,8 +121,8 @@ describe('⑬ 日程视图跨天事件「（第 n/m 天）」', () => {
     });
     const rows = [...node.querySelectorAll('.agenda__event')];
     expect(rows.map((r) => r.querySelector('.agenda__event-daypart--time').textContent)).toEqual([
-      '（第 1/2 天）',
-      '（第 2/2 天）',
+      '第1/2天',
+      '第2/2天',
     ]);
     for (const [i, row] of rows.entries()) {
       expect(row.getAttribute('aria-label')).toContain(`（第 ${i + 1}/2 天）`);
@@ -141,7 +142,7 @@ describe('⑬ 日程视图跨天事件「（第 n/m 天）」', () => {
     });
     // 0.7.21（总监 m02610）：每行渲染两份标注，按 `--time` 取一份。
     const parts = [...node.querySelectorAll('.agenda__event-daypart--time')].map((n) => n.textContent);
-    expect(parts).toEqual(['（第 1/4 天）', '（第 2/4 天）', '（第 3/4 天）', '（第 4/4 天）']);
+    expect(parts).toEqual(['第1/4天', '第2/4天', '第3/4天', '第4/4天']);
   });
 
   it('i18n：agenda.event.dayPart 存在且用全角括号（0.2.11 C8 起为「第 n/m 天」）', () => {
@@ -210,11 +211,11 @@ describe('⑮ 天数降序置顶（day 降序 → 开始时间 → 标题）', (
     // 8/16 起五天条与 8/17 起三天条在 8/17、8/18 都覆盖：长条永远在上
     for (const d of [17, 18]) {
       const chips = [...cellOf(d).querySelectorAll('.chip')];
-      expect(chips[0].title).toBe('五天展');
-      expect(chips[1].title).toBe('三天会');
+      expect(chips[0].getAttribute('aria-label')).toContain('五天展');
+      expect(chips[1].getAttribute('aria-label')).toContain('三天会');
     }
     // 8/18 的单日事件排在两个跨天体之后
-    const titles = [...cellOf(18).querySelectorAll('.chip')].map((c) => c.title);
+    const titles = [...cellOf(18).querySelectorAll('.chip')].map((c) => (c.getAttribute('aria-label') || '').split('，')[0]);
     expect(titles).toEqual(['五天展', '三天会', '单日会议']);
   });
 
@@ -227,7 +228,7 @@ describe('⑮ 天数降序置顶（day 降序 → 开始时间 → 标题）', (
       actions: VIEW_ACTIONS,
     });
     const col = node.querySelectorAll('.timegrid__allday-col')[2]; // Tue 18
-    expect([...col.querySelectorAll('.allday-chip')].map((c) => c.title)).toEqual([
+    expect([...col.querySelectorAll('.allday-chip')].map((c) => (c.getAttribute('aria-label') || '').split('，')[0]).filter(Boolean)).toEqual([
       '五天展',
       '三天会',
       '单日全天',

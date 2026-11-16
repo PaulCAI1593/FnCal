@@ -215,7 +215,7 @@ describe('C9 周/四天/天视图：视图边界截断处也加箭头', () => {
     });
     const cols = [...node.querySelectorAll('.timegrid__allday-col')];
     const chipOf = (col, title) =>
-      [...col.querySelectorAll('.allday-chip')].find((c) => c.title === title && !c.classList.contains('allday-chip--placeholder'));
+      [...col.querySelectorAll('.allday-chip')].find((c) => (c.getAttribute('aria-label') || '').includes(title) && !c.classList.contains('allday-chip--placeholder'));
 
     // 25 日：A 在本日之前就已开始 → 左边界截断 → before，无 after
     //        B 恰好从 25 日开始 → 不是截断，两个箭头都没有
@@ -248,7 +248,7 @@ describe('C9 周/四天/天视图：视图边界截断处也加箭头', () => {
       actions: VIEW_ACTIONS,
     });
     const cols = [...node.querySelectorAll('.timegrid__allday-col')];
-    const first = [...cols[0].querySelectorAll('.allday-chip')].find((c) => c.title === '跨屏长会');
+    const first = [...cols[0].querySelectorAll('.allday-chip')].find((c) => (c.getAttribute('aria-label') || '').includes('跨屏长会'));
     expect(first.classList.contains('chip--cont-before')).toBe(true);
     expect(viewsCss).toMatch(/\.allday-chip\.chip--cont-before/);
     expect(READ('src/js/views/timegrid.js')).toContain('segmentEnds(');
@@ -517,12 +517,12 @@ describe('C8 日程视图「（第 n/m 天）」', () => {
       now: cursor,
       actions: VIEW_ACTIONS,
     });
-    // 0.7.21（总监 m02610）：每行渲染两份标注——时间列里那份（≤520px 显示）与
-    // 名称行右侧那份（>520px 显示）。这里只数同一天的顺序，两份文案必须一致。
+    // 0.8.21（总监 m02593）：时间列那份（≤520px 显示）用紧凑文案，名称行那份（>520px
+    // 显示）仍用完整文案；顺序按天对得上。
     const timeParts = [...node.querySelectorAll('.agenda__event-daypart--time')].map((n) => n.textContent);
     const nameParts = [...node.querySelectorAll('.agenda__event-daypart--name')].map((n) => n.textContent);
-    expect(timeParts).toEqual(['（第 1/3 天）', '（第 2/3 天）', '（第 3/3 天）']);
-    expect(nameParts).toEqual(timeParts);
+    expect(timeParts).toEqual(['第1/3天', '第2/3天', '第3/3天']);
+    expect(nameParts).toEqual(['（第 1/3 天）', '（第 2/3 天）', '（第 3/3 天）']);
   });
 });
 

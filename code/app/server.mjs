@@ -33,6 +33,7 @@ import { createAdminApi } from './api/admin.mjs';
 import { createDataApi } from './api/data.mjs';
 import { createCalendarsApi } from './api/calendars.mjs';
 import { createTagsApi } from './api/tags.mjs';
+import { createAnnualApi } from './api/annual.mjs';
 import { createTagStore } from './lib/tags.mjs';
 import { createAiApi } from './api/ai.mjs';
 import { createAiRest } from './api/ai-rest.mjs';
@@ -86,8 +87,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 节气又被挡掉了一点，节日也是」）——承载盒补 1px 保护边、上下各留 1px、字体就绪后
 // 重新量宽。纯前端，无接口与数据变化。
 // 0.7.9：月格「今天」胶囊贴右、全天任务 emoji 被前导挤掉、平板周视图名称只显示
-// emoji、跨天定时事件进时间轴、平板多日条名称跨格——纯前端，无接口与数据变化。
-export const VERSION = '0.7.26';
+// 0.8.28 的 MCP 年度总结；0.8.29 只给桌面卡片摘要接口加四个只读标签字段（tagEmoji / tagGroupId / tagGroupName / tagGroupIndex），
+// 不新增正文，busy 时一律 null。
+export const VERSION = '0.8.29';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -444,6 +446,8 @@ export async function createApp(
   // 0.7.1（K）：KV 保存事件/任务时把标签名写进 CATEGORIES、emoji 写进标题，需要注册表。
   const kvApi = createKvApi({ store, tags: tagStore });
   const tagsApi = createTagsApi({ tags: tagStore });
+  // 0.8.0：年度总结聚合（只读）。网页版与 MCP 共用 lib/annual-review.mjs 一份统计。
+  const annualApi = createAnnualApi({ store, tags: tagStore, auth });
   const calendarsApi = createCalendarsApi({
     store,
     logger,
@@ -483,15 +487,47 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
       entryPortTemplate: config.entryPortTemplate,
     };
   };
+  // 0.4.26（S13–S15）：审批页只读用户的主题色与明暗两个字段，用来给服务端
+  // 渲染的 HTML 注入同一套 accent 变量与 data-theme。读失败/无设置一律回落
+  // 默认色 + 跟随系统，不阻塞页面（S15）。
+  // 0.8.0：年度总结卡片也用它取「重点色」，MCP 与网页共用同一份设置。
+  const readAccent = async (userId) => {
+    try {
+      const settings = await runWithContext({ userId }, () => store.readUserData('settings'));
+      const accentColor = settings && typeof settings.accentColor === 'string' ? settings.accentColor : DEFAULT_ACCENT;
+      const theme = settings && (settings.theme === 'dark' || settings.theme === 'light') ? settings.theme : 'system';
+      // 0.8.28（总监 m01069 ①）：年度总结还要「一周从哪天开始」与「侧栏关掉了哪些日历」——
+      // 与网页 `api/annual.mjs:readSettings` 读**同一份 settings**。不补这两个字段时
+      // `ai-service.annualReview` 读到的 `weekStartsOn` 恒 undefined → 卡片恒按周日开头。
+      const weekStartsOn = settings && settings.weekStartsOn === 1 ? 1 : 0;
+      const visibleCalendarIds = settings && Array.isArray(settings.visibleCalendarIds)
+        ? settings.visibleCalendarIds.filter((id) => typeof id === 'string' && id !== '')
+        : [];
+      return { accentColor, theme, weekStartsOn, visibleCalendarIds };
+    } catch (err) {
+      logger.warn('审批页读取主题设置失败，回落默认主题', { error: String(err && err.message ? err.message : err) });
+      return { accentColor: DEFAULT_ACCENT, theme: 'system', weekStartsOn: 0, visibleCalendarIds: [] };
+    }
+  };
   // 0.3.0 P3：AI 服务层与限流桶由 REST 与 MCP **共用**——「同一凭据的 REST + MCP
   // 合起来算 60/60s」，且授权/掩码/窗界只有 `lib/ai-service.mjs` 一处实现。
-  const aiService = createAiService({ aiStore, health: healthState, trash: aiTrash, tags: tagStore });
+  const aiService = createAiService({ aiStore, health: healthState, trash: aiTrash, tags: tagStore, readAccent });
   const aiRateLimiter = createAiRateLimiter();
   const aiRest = createAiRest({ aiStore, aiService, audit, logger, health: healthState, limiter: aiRateLimiter });
   // 0.6.2（M5 §F）：桌面卡片只读摘要认会话 Cookie（跟着 App 的登录态走），不再单独发令牌；
   // widget-store 只保留按用户读日历数据的能力。
   const widgetStore = createWidgetStore({ store, logger });
-  const widgetRest = createWidgetRest({ widgetStore, auth, audit, logger, version: config.version });
+  // 0.8.29（M5 §F）：卡片要画分类，摘要里追加四个只读标签字段。标签注册表按用户隔离，
+  // 所以把 tagStore 与 aiStore（提供用户上下文）一起交给 widget-rest，由它每请求读一次。
+  const widgetRest = createWidgetRest({
+    widgetStore,
+    auth,
+    audit,
+    logger,
+    version: config.version,
+    tagStore,
+    aiStore,
+  });
   // 0.6.1：把接入来源交给 auth（「我的安全」→ 登录设备与接入）。0.6.2 起只剩 MCP 一类。
   authStores.aiStore = aiStore;
   // 0.4.22（M4 §S2–S3）：无弹窗客户端的一次性审批链接；MCP 生成、审批页消费，同一个内存表。
@@ -502,20 +538,6 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   // 0.5.8（M5 §2）：审批回执三层共用一张进程内表——审批页写（L1 推送源）、
   // MCP 侧推送/等待/搭车读。只在内存，保留 24 小时，不落盘、不含令牌。
   const approvalReceipts = createApprovalReceipts({ logger });
-  // 0.4.26（S13–S15）：审批页只读用户的主题色与明暗两个字段，用来给服务端
-  // 渲染的 HTML 注入同一套 accent 变量与 data-theme。读失败/无设置一律回落
-  // 默认色 + 跟随系统，不阻塞页面（S15）。
-  const readAccent = async (userId) => {
-    try {
-      const settings = await runWithContext({ userId }, () => store.readUserData('settings'));
-      const accentColor = settings && typeof settings.accentColor === 'string' ? settings.accentColor : DEFAULT_ACCENT;
-      const theme = settings && (settings.theme === 'dark' || settings.theme === 'light') ? settings.theme : 'system';
-      return { accentColor, theme };
-    } catch (err) {
-      logger.warn('审批页读取主题设置失败，回落默认主题', { error: String(err && err.message ? err.message : err) });
-      return { accentColor: DEFAULT_ACCENT, theme: 'system' };
-    }
-  };
   const approvalPage = createApprovalPage({
     aiStore,
     aiService,
@@ -547,6 +569,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     data: dataApi,
     calendars: calendarsApi,
     tags: tagsApi,
+    annual: annualApi,
     ai: aiApi,
     aiRest,
     widgetRest,

@@ -98,8 +98,10 @@ describe('0.2.4 ⑮ 账号菜单「立即同步」', () => {
     expect(syncAt).toBe(shortcutsAt + 1);
     expect(syncAt).toBeGreaterThan(securityAt);
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位置固定在「立即同步」之后、「登出」之前。
-    expect(labels[syncAt + 1]).toContain('检查更新');
-    expect(labels[syncAt + 2]).toContain('登出');
+    // 0.8.0：新增「年度总结」，夹在「立即同步」与「检查更新」之间。
+    expect(labels[syncAt + 1]).toContain('年度总结');
+    expect(labels[syncAt + 2]).toContain('检查更新');
+    expect(labels[syncAt + 3]).toContain('登出');
     expect(labels.some((l) => l.includes('账号安全'))).toBe(false);
 
     app.destroy();
@@ -117,8 +119,9 @@ describe('0.2.4 ⑮ 账号菜单「立即同步」', () => {
     expect(labels2[syncAt2 - 3]).toContain('我的账号');
     expect(labels2[syncAt2 - 2]).toContain('我的安全');
     expect(labels2[syncAt2 - 1]).toContain('快捷键');
-    expect(labels2[syncAt2 + 1]).toContain('检查更新');
-    expect(labels2[syncAt2 + 2]).toContain('登出');
+    expect(labels2[syncAt2 + 1]).toContain('年度总结');
+    expect(labels2[syncAt2 + 2]).toContain('检查更新');
+    expect(labels2[syncAt2 + 3]).toContain('登出');
     expect(labels2.some((l) => l.includes('账号安全'))).toBe(false);
     expect(labels2.some((l) => l.includes('安全设置'))).toBe(false);
   });

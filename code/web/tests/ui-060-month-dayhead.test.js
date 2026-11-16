@@ -185,7 +185,8 @@ describe('0.5.10 S1：≤520 农历与日号同一行；节日只留名字', () 
         dayLunarText(day, { short: true }),
       );
       // 完整农历名留在 title（视觉只有短名）
-      expect(lunar.title).toBe(dayLunarFullText(day));
+      expect(lunar.querySelector('.month__lunar-text').textContent).toBe(dayLunarText(day, { short: true }));
+    expect(lunar.hasAttribute('title')).toBe(false);
       expect(head.lastElementChild).toBe(head.querySelector('.month__daynum'));
       // 桌面的独立农历行在紧凑档不再创建：格子直接是 dayhead → events
       expect(cell.querySelector(':scope > .month__lunar')).toBeNull();
@@ -204,7 +205,7 @@ describe('0.5.10 S1：≤520 农历与日号同一行；节日只留名字', () 
       expect(label.querySelector('.month__holiday-icon')).toBeNull();
       const name = label.querySelector('.month__holiday-name');
       expect(name.textContent).toBe('国庆');
-      expect(label.title).toBe('国庆节');
+      expect(label.getAttribute('aria-label')).toContain('国庆节');
       expect(label.getAttribute('aria-label')).toContain('国庆节');
       // 有节日就不渲染农历（同位置让给节日名）
       expect(head.querySelector('.month__lunar')).toBeNull();

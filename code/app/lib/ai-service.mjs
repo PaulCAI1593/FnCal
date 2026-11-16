@@ -34,6 +34,9 @@ import {
 } from './ai-grants.mjs';
 import { tagErrorOf, tagProposalCard } from './ai-store.mjs';
 import { busyIntervals, dateDigitsInZone, eventFromIcs, eventToIcs, eventsOf, matchesTimeRange, proposalFieldsOfIcs, uidOf } from './ical.mjs';
+// 0.8.0（任务书 §十）：年度总结与网页共用同一份统计与文案。
+import { annualSummarySentence, buildAnnualReviewData } from './annual-review.mjs';
+import { collectAnnualEvents, loadExpander, yearRange, YEAR_MAX, YEAR_MIN } from './annual-collect.mjs';
 import {
   applyTagToSummary,
   categoryTagName,
@@ -216,6 +219,8 @@ export function createAiService({
   health = null,
   // 0.7.0：标签注册表（AI 侧读写同一份；未装配时 create/update 的 tag 入参直接报参数错误）。
   tags: tagStore = null,
+  // 0.8.0：读用户的主题色（年度总结卡片的重点色）；未装配时回落默认色。
+  readAccent = null,
   now = () => Date.now(),
 } = {}) {
   if (!aiStore) throw new Error('createAiService 需要 aiStore');
@@ -240,6 +245,100 @@ export function createAiService({
     }
     if (settings && settings.enabled === false) return { ok: false, reason: 'disabled' };
     return { ok: true };
+  }
+
+  /**
+   * 0.8.28（总监 m01069）：年度总结要用、且**网页侧读同一份 settings** 的三项。
+   *
+   * - `weekStartsOn`：0 = 周日开头，1 = 周一开头；
+   * - `visibleCalendarIds`：侧栏的显式可见清单（非空则只认这份，空则看每个日历自己的 `visible`）；
+   * - `accentColor`：卡片重点色。
+   *
+   * 读不到/未装配 `readAccent` 一律回落「周日开头 + 无显式清单 + 默认色」，不抛错。
+   */
+  async function annualUserSettings(ctx) {
+    const fallback = { accentColor: null, weekStartsOn: 0, visibleCalendarIds: [] };
+    if (typeof readAccent !== 'function') return fallback;
+    try {
+      const settings = await readAccent(ctx.userId);
+      if (!settings) return fallback;
+      return {
+        accentColor: typeof settings.accentColor === 'string' && settings.accentColor ? settings.accentColor : null,
+        weekStartsOn: settings.weekStartsOn === 1 ? 1 : 0,
+        visibleCalendarIds: Array.isArray(settings.visibleCalendarIds)
+          ? settings.visibleCalendarIds.filter((id) => typeof id === 'string' && id !== '')
+          : [],
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * 与网页 `store.isCalendarVisible` **同一条**规则（0.8.28）：显式清单非空 → 只认清单；
+   * 空 → 看日历自己的开关（`visible !== false`）。
+   */
+  function calendarVisibleFor(meta, visibleCalendarIds) {
+    const picked = Array.isArray(visibleCalendarIds) ? visibleCalendarIds : [];
+    const id = meta && meta.id ? String(meta.id) : '';
+    if (picked.length) return picked.includes(id);
+    return !meta || meta.visible !== false;
+  }
+
+  /* ---------------------------------- 0.8.28：年度总结的点名日历（总监 m01288） */
+
+  /** `calendars` 最多 20 个（与 `list_events` 的 `tags` 同一个上限口径）。 */
+  const ANNUAL_CALENDAR_MAX = 20;
+
+  /**
+   * 取出调用方点名的日历名称/id（`calendars` 数组优先，兼容单个 `calendar` 字符串）。
+   * 只保留非空字符串；去首尾空白。参数没给 → 空数组（走默认口径）。
+   */
+  function requestedCalendarNames({ calendars, calendar } = {}) {
+    const raw = calendars !== undefined && calendars !== null ? calendars : calendar;
+    if (raw === undefined || raw === null) return [];
+    const list = Array.isArray(raw) ? raw : [raw];
+    const names = [];
+    for (const item of list) {
+      if (typeof item !== 'string') continue;
+      const name = item.trim();
+      if (name) names.push(name);
+    }
+    return names;
+  }
+
+  /**
+   * 按「id 精确 → displayName 精确 → displayName 去空白/忽略大小写」解析点名日历。
+   * 同名多个日历**全部计入**；一个都解析不到 → 记进 `missing`（不区分「不存在」与「无权限」）。
+   */
+  function resolveRequestedCalendars(readable, names) {
+    if (names.length > ANNUAL_CALENDAR_MAX) {
+      throw invalidError('calendars', `最多 ${ANNUAL_CALENDAR_MAX} 个日历`);
+    }
+    const picked = [];
+    const seen = new Set();
+    const missing = [];
+    for (const name of names) {
+      const lower = name.trim().toLowerCase();
+      const byId = readable.filter((meta) => String(meta.id) === name);
+      // `listCalendars` 对外统一用 `name`（= displayName || name || id），这里跟着它比。
+      const byExactName = byId.length
+        ? byId
+        : readable.filter((meta) => String(meta.name || '') === name);
+      const matched = byExactName.length
+        ? byExactName
+        : readable.filter((meta) => String(meta.name || '').trim().toLowerCase() === lower);
+      if (!matched.length) {
+        missing.push(name);
+        continue;
+      }
+      for (const meta of matched) {
+        if (seen.has(meta.id)) continue;
+        seen.add(meta.id);
+        picked.push(meta);
+      }
+    }
+    return { picked, missing };
   }
 
   /* --------------------------------------------------------------- 读事件 */
@@ -652,7 +751,8 @@ export function createAiService({
 
   /* --------------------------------------------------------------- 日历 / 范围 */
 
-  async function listCalendars(ctx) {
+  async function listCalendars(ctx, settings = null) {
+    const resolved = settings || await annualUserSettings(ctx);
     const metas = await aiStore.listCalendarMetasFor(ctx.userId);
     const calendars = [];
     for (const meta of Array.isArray(metas) ? metas : []) {
@@ -662,6 +762,10 @@ export function createAiService({
         name: meta.displayName || meta.name || meta.id,
         color: meta.color || null,
         access: grantLevel(ctx.credential, meta.id),
+        // 0.8.28（总监 m01069 ②）：`list_calendars` 仍返回全部可读日历，
+        // 只多一个只读布尔 —— 该日历在网页侧栏是否**显示**（用户关掉的为 false）。
+        // 授权仍是 hidden 优先：这里不会让 hidden 日历出现。
+        visible: calendarVisibleFor(meta, resolved.visibleCalendarIds),
       });
     }
     return calendars;
@@ -1189,6 +1293,127 @@ export function createAiService({
     if (saved && saved.missing) return { missing: true };
     return { proposal: proposalView(saved, ctx.nowMs) };
   }
+  /**
+   * 0.8.0（任务书 §十）：年度总结数据（MCP `generate_annual_review` 用）。
+   * 只统计凭据可读的日历；范围收在凭据时间窗与目标年份的交集里。
+   * 返回 `{ model, range, clipped }`；`clipped` = 年份范围被时间窗裁过（要在返回文案里说）。
+   */
+  async function annualReview(ctx, { year, calendars: calendarsArg, calendar: calendarArg } = {}) {
+    const nowMs = typeof ctx.nowMs === 'number' ? ctx.nowMs : now();
+    const currentYear = new Date(nowMs).getFullYear();
+    let targetYear = currentYear;
+    if (year !== undefined && year !== null && String(year).trim() !== '') {
+      const parsed = Number(String(year).trim());
+      if (!Number.isInteger(parsed) || parsed < YEAR_MIN || parsed > YEAR_MAX) {
+        throw invalidError('year', `年份需在 ${YEAR_MIN}–${YEAR_MAX} 之间`);
+      }
+      targetYear = parsed;
+    }
+    const yearBounds = yearRange(targetYear);
+    const bounds = windowBounds(ctx.credential, nowMs);
+    const from = Math.max(yearBounds.from, bounds.startMs);
+    const to = Math.min(yearBounds.to, bounds.endMs);
+    const clipped = from > yearBounds.from || to < yearBounds.to;
+
+    // 0.8.28（总监 m01069 ②）：MCP 的年度总结与网页接口同口径——只统计「显示中」的日历。
+    // 网页侧 `web/src/js/annual-summary.js` 只把当前开启的日历传给 `/api/v1/annual-summary`；
+    // 这里按同一条规则（显式清单优先，否则看每个日历的 visible）在统计前过滤。
+    const settings = await annualUserSettings(ctx);
+    const readableCalendars = await listCalendars(ctx, settings);
+    // 0.8.28（总监 m01288）：调用方点名日历 → 统计范围 = 点名 ∩ 凭据可读，**点名优先于网页开关**。
+    // 没点名 → 走默认口径（可读 ∩ 开关）。点名里有解析不到的 → 结构化失败、零渲染。
+    const requested = requestedCalendarNames({ calendars: calendarsArg, calendar: calendarArg });
+    let calendars;
+    let scopedToNamed = false;
+    if (requested.length) {
+      const { picked, missing } = resolveRequestedCalendars(readableCalendars, requested);
+      if (missing.length) {
+        const available = readableCalendars.map((meta) => String(meta.name || meta.id));
+        const names = missing.map((name) => `「${name}」`).join('');
+        throw Object.assign(
+          new Error(`没找到这个日历${names}。可用日历：${available.length ? available.join('、') : '（暂无）'}`),
+          { code: 'calendar_not_found', field: 'calendars', missing, available },
+        );
+      }
+      calendars = picked;
+      scopedToNamed = true;
+    } else {
+      calendars = readableCalendars.filter((meta) => meta.visible);
+    }
+    const calendarIds = calendars.map((meta) => meta.id);
+    let events = [];
+    if (calendarIds.length && from < to) {
+      const expander = await loadExpander();
+      const collected = await collectAnnualEvents({
+        calendarIds,
+        listObjects: (calendarId) => aiStore.listObjectsFor(ctx.userId, calendarId),
+        expand: (event, rangeFrom, rangeTo) => (typeof expander === 'function'
+          ? expander(event, rangeFrom, rangeTo)
+          : []),
+        from,
+        to,
+      });
+      events = collected.events;
+    }
+
+    // 标签解析与网页 `tagForRecord` 同序：先 tagId，再 categories[0] 按名称查。
+    // 分组名与组序决定条形图的组色（设计稿 §六），所以直接读注册表（含 groups）。
+    const registry = tagStore
+      ? await aiStore.withUser(ctx.userId, () => tagStore.list())
+      : { tags: [] };
+    const groupById = new Map();
+    (Array.isArray(registry.groups) ? registry.groups : []).forEach((group, index) => {
+      groupById.set(group.id, {
+        name: group.name || '',
+        order: Number.isInteger(group.order) ? group.order : index,
+      });
+    });
+    const shapeTag = (tag) => {
+      const group = groupById.get(tag.groupId) || null;
+      return {
+        name: tag.name,
+        emoji: tag.emoji || '',
+        group: group ? group.name : '',
+        groupOrder: group ? group.order : -1,
+      };
+    };
+    const byId = new Map();
+    const byName = new Map();
+    for (const tag of Array.isArray(registry.tags) ? registry.tags : []) {
+      byId.set(tag.id, tag);
+      if (tag.name) byName.set(tag.name, tag);
+    }
+    const tagOf = (record) => {
+      if (!record) return null;
+      if (record.tagId && byId.has(record.tagId)) return shapeTag(byId.get(record.tagId));
+      const first = Array.isArray(record.categories) ? record.categories[0] : null;
+      if (first && byName.has(first)) return shapeTag(byName.get(first));
+      return null;
+    };
+
+    // 0.8.28（总监 m01069 ①）：重点色与「一周从哪天开始」都取自同一份 settings（已在上方读过）。
+    const accent = settings.accentColor;
+    const weekStartsOn = settings.weekStartsOn;
+
+    const model = buildAnnualReviewData({
+      events,
+      calendars,
+      tagOf,
+      groups: [...groupById.values()].map((group) => ({ name: group.name, order: group.order })),
+      year: targetYear,
+      now: nowMs,
+      accent: accent || undefined,
+      weekStartsOn,
+    });
+    return {
+      model,
+      range: { from, to },
+      clipped,
+      // 点名时把要写进文案的日历名带上（多个用「、」连接）；没点名就是空数组。
+      scopedCalendars: scopedToNamed ? calendars.map((meta) => String(meta.name || meta.id)) : [],
+    };
+  }
+
   return {
     availability,
     listCalendars,
@@ -1201,6 +1426,7 @@ export function createAiService({
     effectiveRange,
     targetCalendars,
     listEvents,
+    annualReview,
     locateEvent,
     getEvent,
     freeBusy,

@@ -61,6 +61,20 @@ export function resetAgendaPaging() {
 /** 0.5.6（C）：下拉多远才加载（px）。 */
 export const PULL_THRESHOLD = 70;
 
+/**
+ * 0.8.19（用户 01:30）：aria-label 第三段——日历名。
+ * 查不到（无 store / 无 calendarId / 日历不存在 / 名字为空）返回空串，整段省略。
+ */
+function calendarNameOf(store, calendarId) {
+  const cal =
+    store && typeof store.getCalendar === 'function' && calendarId
+      ? store.getCalendar(calendarId)
+      : null;
+  if (!cal) return '';
+  const name = typeof cal.displayName === 'string' ? cal.displayName : cal.name;
+  return typeof name === 'string' ? name.trim() : '';
+}
+
 export function renderAgenda(ctx) {
   const { store, cursor, now, actions } = ctx;
   const anchorDay = startOfDay(cursor);
@@ -217,7 +231,7 @@ export function renderAgenda(ctx) {
               'div',
               {
                 class: `agenda__date-holiday${isTerm ? ' agenda__date-holiday--term' : ''}`,
-                title: holidayName,
+                // 0.8.20（用户 01:53）：不设原生 title——可见文字与它相同，悬停会弹同名灰框。
                 'aria-label': `${t(isTerm ? 'agenda.solarTerm.kindTerm' : 'agenda.holiday.kindHoliday')}：${holidayName}`,
               },
               [
@@ -534,19 +548,26 @@ function defaultTime(day) {
   return d.getTime();
 }
 
-/** The row's time column: "9 AM-10:30 AM", or "9 AM-Sep 5, 8 AM" when the
- *  event runs on past the row's day. Without the date, an event saved as
- *  9 AM to 8 AM the next morning (how the editor reads an end time earlier
- *  than the start — see timeOrderProblem in modal.js) shows as a backwards
- *  range, and nothing on the row says otherwise. The date is named only when
- *  the end is past the midnight that closes the row's day — the same
- *  half-open test that files the event under the next day — so "9 PM-12 AM"
- *  stays as everyone reads it. Date-then-time for the far endpoint follows
- *  the details card and invitation emails. The end's date and time are
- *  joined with no-break spaces so that, in the fixed-width column, a long
- *  label wraps after the dash and never inside "Sep 5".
- *  0.7.17（总监 m01561）：区间分隔符统一为半角 `-`、两侧无空格。 */
-function rowTimeRange(start, end, dayStart, hour12) {
+/** The row's visible time column: a range like "9 AM-10:30 AM", clamped to the
+ *  midnight that closes the row's day when the event runs on past it — so a
+ *  cross-midnight event reads "10 PM-12 AM" on its first day and
+ *  "12 AM-4 AM" on the next, and no row ever prints a date (the date column
+ *  already says which day it is). The end's real date and time live in
+ *  rowTimeRangeFull, which is what the row's aria-label reads.
+ *  0.7.17（总监 m01561）：区间分隔符统一为半角 `-`、两侧无空格。
+ *  0.8.25（用户 m01149 / m01150，总监 m03090）：桌面档与手机档统一按日界截断。 */
+export function rowTimeRange(start, end, dayStart, hour12) {
+  // 0.8.25（用户 m01149 / m01150，总监 m03090）：桌面档与手机档同一口径——跨过
+  // 本行午夜时结束按日界截到 00:00，可见时间列永不出现日期（日期由日期列表达）。
+  const opts = { hour12 };
+  const nextMidnight = addDays(new Date(dayStart), 1).getTime();
+  const shownEnd = end > nextMidnight ? nextMidnight : end;
+  return formatTimeRange(new Date(start), new Date(shownEnd), opts);
+}
+
+/** 读屏用的真实完整区间：跨天时保留结束日期。可见文本截到 00:00，但读屏不能
+ *  因此少念真实结束时间（0.8.25，总监 m03090）。 */
+export function rowTimeRangeFull(start, end, dayStart, hour12) {
   const opts = { hour12 };
   const nextMidnight = addDays(new Date(dayStart), 1).getTime();
   if (end <= nextMidnight) return formatTimeRange(new Date(start), new Date(end), opts);
@@ -566,20 +587,18 @@ function isCompactAgenda() {
 
 /**
  * 0.5.9（F2）：手机日程时间列的**短格式 24 小时制区间**，拆成两个不可断的片段：
- * 开始片段自带结尾的「-」，结束时（跨过本行午夜时还带日期）在第二片段。
+ * 开始片段自带结尾的「-」，结束时刻在第二片段（都已按日界截断，不带日期）。
  * 时间列只有 68px（≤360），12 小时制「上午10:00-上午11:00」会在「上午」中间
  * 断行；短格式单行放得下，放不下时靠 flex-wrap **整段**换到第二行，不会在词内断开。
  * 0.7.17（总监 m01561）：分隔符随全局改半角 `-`。
  */
-function compactRangeParts(start, end, dayStart) {
-  const startText = formatTimeShort24(new Date(start));
-  const nextMidnight = addDays(new Date(dayStart), 1).getTime();
-  if (end <= nextMidnight) {
-    return { start: `${startText}-`, end: formatTimeShort24(new Date(end)) };
-  }
-  const e = new Date(end);
-  const endDate = `${MONTHS_SHORT[e.getMonth()]}${e.getDate()}日`;
-  return { start: `${startText}-`, end: `${endDate} ${formatTimeShort24(e)}` };
+function compactRangeParts(displayStart, displayEnd) {
+  // 0.8.21（总监 m02540，用户 m01007）：手机时间列只显示当天可见的小时段，
+  // 跨夜在日界截到 00:00，绝不出现「7月2日」这类日期——日期由日期列表达。
+  return {
+    start: `${formatTimeShort24(new Date(displayStart))}-`,
+    end: formatTimeShort24(new Date(displayEnd)),
+  };
 }
 
 /**
@@ -593,6 +612,14 @@ function coveredDays(event) {
   const first = startOfDay(new Date(event.start));
   const last = startOfDay(new Date(Math.max(event.start, event.end - 1)));
   return Math.max(1, diffCalendarDays(first, last) + 1);
+}
+
+/** 0.8.21（总监 m02593）：手机时间列 44px 用的紧凑标注文案（「第2/3天」）。 */
+export function compactDayPartText(event, dayStart) {
+  const total = coveredDays(event);
+  if (total < 2) return '';
+  const n = diffCalendarDays(startOfDay(new Date(event.start)), startOfDay(new Date(dayStart))) + 1;
+  return t('agenda.event.dayPartCompact', { n, m: total });
 }
 
 /** 「（天 n/m）」标注；单日事件返回空串（不显示）。n = 当天距事件起始的自然日差 +1。 */
@@ -611,9 +638,23 @@ function buildRow(event, dayStart, ctx) {
   // still says when the thing actually finishes. On its first day this is just
   // event.start, so nothing changes there.
   const shownStart = Math.max(event.start, dayStart);
-  const timeText = event.allDay ? t('agenda.event.allDay') : rowTimeRange(shownStart, event.end, dayStart, hour12);
+  // 0.8.25（用户 m01149 / m01150，总监 m03090）：整天都在事件内的中间日没有小时段可写，
+  // 桌面档与手机档一样只写「全天」（`00:00-00:00` 会误导）。
+  const nextMidnight = addDays(new Date(dayStart), 1).getTime();
+  const middleDay = !event.allDay && event.start < dayStart && event.end > nextMidnight;
+  const timeText =
+    event.allDay || middleDay
+      ? t('agenda.event.allDay')
+      : rowTimeRange(shownStart, event.end, dayStart, hour12);
+  // 读屏保留真实完整区间（含真实跨天结束时间，可带日期）；可见文本才截到日界。
+  const ariaTimeText = event.allDay
+    ? t('agenda.event.allDay')
+    : rowTimeRangeFull(shownStart, event.end, dayStart, hour12);
   // 0.2.9（用户 13）：跨天事件在覆盖的每一天都标出「第几天 / 共几天」。
   const dayPart = dayPartText(event, dayStart);
+  // 0.8.21（用户 m01014，总监 m02593）：可见的时间列只有 44px，`（第 2/3 天）` 放不下，
+  // 改紧凑文案「第2/3天」（CSS 9px）；读屏仍读 `dayPart` 的完整文案。
+  const dayPartCompact = dayPart ? compactDayPartText(event, dayStart) : '';
 
   // 0.7.21（总监 m02610，用户「电脑端不要这么放；手机端宽度不够才是放在这里」）：
   // 标注渲染两份、由 CSS 按 520px 断点二选一显示——宽屏回名称行右侧（
@@ -621,7 +662,11 @@ function buildRow(event, dayStart, ctx) {
   // 时间文字下面（`.agenda__event-daypart--time`），左缘与时间文字对齐。
   // 读屏不重复播报：两份标 `aria-hidden`，第几天只在行的 `aria-label` 里念一次。
   const dayPartNode = dayPart
-    ? el('span', { class: 'agenda__event-daypart agenda__event-daypart--time', text: dayPart, 'aria-hidden': 'true' })
+    ? el('span', {
+        class: 'agenda__event-daypart agenda__event-daypart--time',
+        text: dayPartCompact,
+        'aria-hidden': 'true',
+      })
     : null;
   const dayPartNameNode = dayPart
     ? el('span', { class: 'agenda__event-daypart agenda__event-daypart--name', text: dayPart, 'aria-hidden': 'true' })
@@ -636,9 +681,15 @@ function buildRow(event, dayStart, ctx) {
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: `ev:${event.id}` },
-    title: event.title || t('agenda.event.untitled'),
     // 读屏也听得到第几天；标注里只有 n/m，不重复标题。
-    'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}，${timeText}${dayPart ? '，' + dayPart : ''}${location ? '，' + location : ''}`,
+    // 0.8.19（用户 01:30）：三段「标题，时间，日历名」；日历名查不到整段省略。
+    'aria-label': [
+      `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}`,
+      `${ariaTimeText}${dayPart ? '，' + dayPart : ''}${location ? '，' + location : ''}`,
+      calendarNameOf(ctx.store, event.calendarId),
+    ]
+      .filter(Boolean)
+      .join('，'),
   });
   // 标题与「（天 n/m）」并列占第一行；地址（若有）独占第二行。
   // 0.7.1（用户）：列表行只显示「emoji 名称」，标签名不进 DOM。
@@ -669,14 +720,50 @@ function buildRow(event, dayStart, ctx) {
   // 0.7.21（总监 m02610）：两份标注节点在函数上方构造，这里只决定时间列结构。
   let timeNode;
   if (isCompactAgenda() && !event.allDay) {
-    const parts = compactRangeParts(shownStart, event.end, dayStart);
-    const compactChildren = [
-      el('span', { class: 'agenda__event-time-start', text: parts.start }),
-      el('span', { class: 'agenda__event-time-end', text: parts.end }),
-    ];
-    // 窄屏紧凑时间折行时，标注排在两个时间片段之后、独占一行（CSS flex-basis）。
-    if (dayPartNode) compactChildren.push(dayPartNode);
-    timeNode = el('span', { class: 'agenda__event-time agenda__event-time--compact' }, compactChildren);
+    // 0.8.21（用户 m00745 / m01007，总监 m02540）：手机档定时行改竖向——开始一行、
+    // 短竖线、结束一行，时间列 44px（≤360 为 36px），把 60px 让给名称与地点。
+    // 跨夜按当天日界截：第一天 `22:00 / 00:00`，后续天 `00:00 / 04:00`；整天都在事件内
+    // 的中间日没有小时段可写，只写「全天」单行、不加竖线（`00:00-00:00` 会误导）。
+    const first = event.start >= dayStart;
+    const last = event.end <= nextMidnight;
+    const middle = !first && !last;
+    const displayStart = first ? event.start : dayStart;
+    const displayEnd = last ? event.end : nextMidnight;
+    if (middle) {
+      // 0.8.22（总监 m02747）：中间日与全天事件一样带一天标注——同一事件滚下来
+      // 第 1/2/4 天有标注、中间日没有，看起来像漏了。没有结束行，竖线（挂在
+      // `--end::before`）自然不画。
+      const middleChildren = [
+        el('span', { class: 'agenda__event-time-start', text: t('agenda.event.allDay') }),
+      ];
+      if (dayPartNode) middleChildren.push(dayPartNode);
+      timeNode = el(
+        'span',
+        { class: 'agenda__event-time agenda__event-time--compact agenda__event-time--stack' },
+        middleChildren,
+      );
+    } else {
+      const parts = compactRangeParts(displayStart, displayEnd);
+      // 0.8.24（用户 m01077「时间的竖线应该居中与:和:之间」）：开始行拆成
+      // 「时 / : / 分」三段，短竖线挂在冒号 `::after` 上、正对冒号中心；结束行仍整段文本。
+      const startText = parts.start.replace(/-$/, '');
+      const colonAt = startText.indexOf(':');
+      const compactChildren = [
+        el('span', { class: 'agenda__event-time-start' }, [
+          el('span', { class: 'agenda__event-time-h', text: startText.slice(0, colonAt) }),
+          el('span', { class: 'agenda__event-time-colon', text: ':' }),
+          el('span', { class: 'agenda__event-time-min', text: startText.slice(colonAt + 1) }),
+        ]),
+        el('span', { class: 'agenda__event-time-end', text: parts.end }),
+      ];
+      // 0.8.21（总监 m02593）：跨天标注留在时间列，排在结束行下面（紧凑文案、9px）。
+      if (dayPartNode) compactChildren.push(dayPartNode);
+      timeNode = el(
+        'span',
+        { class: 'agenda__event-time agenda__event-time--compact agenda__event-time--stack' },
+        compactChildren,
+      );
+    }
   } else if (dayPartNode) {
     timeNode = el('span', { class: 'agenda__event-time agenda__event-time--stacked' }, [
       el('span', { class: 'agenda__event-time-text', text: timeText }),
@@ -729,7 +816,6 @@ function buildHolidayRow(item, ctx) {
       tabindex: '0',
       role: 'button',
       dataset: { focusKey: item.id },
-      title: item.title,
       'aria-label': `${kind}：${item.title}`,
     },
     [
@@ -758,8 +844,14 @@ function buildTaskRow(task, ctx) {
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: `task:${task.id}` },
-    title: task.title || t('agenda.task.untitled'),
-    'aria-label': `${t('agenda.task.ariaPrefix')}${task.title || t('agenda.event.untitledAria')}，${timeText}${task.done ? t('agenda.task.doneSuffix') : ''}`,
+    // 0.8.19（用户 01:30）：三段「标题，时间，日历名」；查不到日历名整段省略。
+    'aria-label': [
+      `${t('agenda.task.ariaPrefix')}${task.title || t('agenda.event.untitledAria')}${task.done ? t('agenda.task.doneSuffix') : ''}`,
+      timeText,
+      calendarNameOf(ctx.store, task.calendarId),
+    ]
+      .filter(Boolean)
+      .join('，'),
   });
 
   const check = el('button', {

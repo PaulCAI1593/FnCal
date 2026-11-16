@@ -87,7 +87,8 @@ describe('0.6.15 快捷键入口（头像菜单）', () => {
   it('普通用户：菜单项在「我的安全」之后、「立即同步」之前，且带图标', () => {
     mount();
     const labels = openMenu().map((node) => node.textContent.trim());
-    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '检查更新', '登出']);
+    // 0.8.0：新增「年度总结」，位置在「立即同步」之后、「检查更新」之前。
+    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     const item = itemByText('快捷键');
     expect(item).toBeTruthy();
     // 不新画 SVG：复用现有图标集里的 `grid`。
@@ -155,7 +156,7 @@ describe('0.6.15 快捷键入口（头像菜单）', () => {
   it('管理员入口位置相同（安全设置之后、「立即同步」之前）', () => {
     mount({ username: 'x', role: 'admin' });
     const labels = openMenu().map((node) => node.textContent.trim());
-    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '检查更新', '登出']);
+    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     expect(labels.indexOf('快捷键')).toBe(labels.indexOf('安全设置') + 1);
     expect(labels.indexOf('立即同步')).toBe(labels.indexOf('快捷键') + 1);
   });

@@ -87,7 +87,7 @@ const dateHeads = (node) =>
     holiday: d.querySelector('.agenda__date-holiday')
       ? {
           text: d.querySelector('.agenda__date-holiday').textContent,
-          title: d.querySelector('.agenda__date-holiday').getAttribute('title'),
+          title: d.querySelector('.agenda__date-holiday').getAttribute('aria-label'),
           afterDow: d.querySelector('.agenda__date-holiday').previousElementSibling ===
             d.querySelector('.agenda__date-dow'),
         }
@@ -165,20 +165,24 @@ describe('0.5.11 S1：≤520 恢复节日旗子并保留完整节日名', () => 
 });
 
 describe('0.5.10 S6：日程日期头下加节日', () => {
-  it('有节日的日期头在「周X · M月」下方显示全名 + title；无节日的日期头没有该行', () => {
+  it('有节日的日期头在「周X · M月」下方显示全名；无节日的日期头没有该行', () => {
     // 日程只列有内容的日期；10-01 放一条事件让这一天的日期头出现。
     const { node } = renderAgenda(
       makeCtx([holiday('国庆节', CURSOR), timed('评审', CURSOR, 10)]),
     );
     const heads = dateHeads(node);
     const first = heads.find((h) => h.num === '1');
-    expect(first.holiday).toEqual({ text: '国庆节', title: '国庆节', afterDow: true });
+    expect(first.holiday.text).toBe('国庆节');
+    expect(first.holiday.title).toContain('国庆节');
+    expect(first.holiday.afterDow).toBe(true);
     const second = heads.find((h) => h.num === '2');
     expect(second).toBeUndefined();
     // 日期头顺序：日号 → 周X · M月 → 节日
     // 0.6.11 起：日期列是「图标 + 名字」，类名带节气修饰符。
     expect(agendaJs).toMatch(/class: `agenda__date-holiday\$\{isTerm \?/);
-    expect(agendaJs).toMatch(/title: holidayName/);
+    // 0.8.20: this holiday row has no native title either; the name lives in aria-label.
+    expect(agendaJs).not.toContain('title: holidayName');
+    expect(agendaJs).toContain('agenda.holiday.kindHoliday');
   });
 
   it('列表里不再有节日行（不重复），普通事件仍照常列出', () => {

@@ -45,8 +45,11 @@ export function createFloatingLayer(menu, trigger, options = {}) {
     const width = Math.max(Math.min(rect.width, usable), Math.min(minWidth, usable));
     const left = Math.min(Math.max(rect.left, VIEWPORT_MARGIN), vp.width - VIEWPORT_MARGIN - width);
 
-    // 先解除高度限制量一次自然高度（同一帧内改回，用户看不到中间态）。
-    menu.style.maxHeight = 'none';
+    // 0.7.27（用户报「滚轮划不动」）：不能先把 max-height 改成 none 再量。
+    // 那一下会让菜单短暂不再溢出，浏览器把 scrollTop 夹成 0；等 max-height 恢复时
+    // 滚动位置已经丢了。滚轮每滚一下都会触发 scroll → 重新定位 → 再夹回 0，
+    // 表现就是「滚不动、thumb 一直贴顶」。
+    // `scrollHeight` 本身就是内容总高，不受 max-height 裁剪影响，直接读即可。
     const natural = menu.scrollHeight || 0;
 
     const spaceBelow = vp.top + vp.height - (rect.bottom + offset) - VIEWPORT_MARGIN;
@@ -76,7 +79,10 @@ export function createFloatingLayer(menu, trigger, options = {}) {
     });
   }
 
-  function onReflow() {
+  function onReflow(event) {
+    // 菜单自己内部滚动不需要重新定位：位置是 fixed，内容滚动不改变外框。
+    // 跳过还能少一帧无谓的排版，滚轮更顺。
+    if (event && event.target === menu) return;
     schedule();
   }
 

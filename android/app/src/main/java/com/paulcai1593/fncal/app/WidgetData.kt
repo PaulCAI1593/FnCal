@@ -10,7 +10,16 @@ import java.util.HashMap
 import java.util.Locale
 import java.util.TimeZone
 
-/** 一条来自 `/api/widget/v1/summary` 的日程（字段与 0.6.0 接口白名单一致）。 */
+/**
+ * 一条来自 `/api/widget/v1/summary` 的日程（字段与 0.6.0 接口白名单一致）。
+ *
+ * 0.4.1 起多读四个**可选**字段（服务端 0.8.29 的白名单）：
+ * `tagEmoji`（标签 emoji）、`tagGroupId`、`tagGroupName`（分组名）、
+ * `tagGroupIndex`（分组在设置里的顺序，从 0 开始）。
+ * 不传分组色：客户端按下标从分组十色板取色，与年度总结同板同序。
+ * 服务端还没给这些字段时全部为默认值，统计卡自动降级到「日历名 / 日历色 / 名称首字」，
+ * 渲染器不需要分支判断；接口补上后就自动用真数据。
+ */
 data class WidgetEvent(
     val id: String,
     val summary: String,
@@ -19,6 +28,11 @@ data class WidgetEvent(
     val allDay: Boolean,
     val color: Int?,
     val location: String?,
+    val calendarId: String? = null,
+    val tagEmoji: String? = null,
+    val tagGroupId: String? = null,
+    val tagGroupName: String? = null,
+    val tagGroupIndex: Int = -1,
 )
 
 /**
@@ -31,7 +45,15 @@ data class WidgetSnapshot(
     val events: List<WidgetEvent>,
     /** 0.3.4 §8：0 = 周日为一周之始，1 = 周一。由网页设置 `cal:settings` 带来。 */
     val weekStartsOn: Int = 0,
+    /** 0.4.1：日历 id → 显示名，给分类卡降级时当分类名用。 */
+    val calendarNames: Map<String, String> = emptyMap(),
 ) {
+    /** 日历名，没有就回退 id（再没有就是空串）。 */
+    fun calendarName(id: String?): String {
+        if (id.isNullOrEmpty()) return ""
+        return calendarNames[id] ?: id
+    }
+
     /**
      * 与某一天相交的事件：`start < dayEnd && end > dayStart`。
      * 全天事件排在最前，其余按开始时间。
@@ -50,6 +72,7 @@ data class WidgetSnapshot(
             return try {
                 val root = JSONObject(raw)
                 val colors = HashMap<String, Int>()
+                val names = HashMap<String, String>()
                 val calendarArray = root.optJSONArray("calendars")
                 if (calendarArray != null) {
                     for (i in 0 until calendarArray.length()) {
@@ -57,6 +80,8 @@ data class WidgetSnapshot(
                         val id = cal.optString("id", "")
                         val color = colorOf(cal.optString("color", ""))
                         if (id.isNotEmpty() && color != null) colors[id] = color
+                        val name = cal.optString("name", "").ifBlank { cal.optString("displayName", "") }
+                        if (id.isNotEmpty() && name.isNotBlank()) names[id] = name
                     }
                 }
                 val events = ArrayList<WidgetEvent>()
@@ -77,6 +102,11 @@ data class WidgetSnapshot(
                             allDay = item.optBoolean("allDay", false),
                             color = color,
                             location = item.optString("location", "").ifBlank { null },
+                            calendarId = calendarId.ifBlank { null },
+                            tagEmoji = item.optString("tagEmoji", "").ifBlank { null },
+                            tagGroupId = item.optString("tagGroupId", "").ifBlank { null },
+                            tagGroupName = item.optString("tagGroupName", "").ifBlank { null },
+                            tagGroupIndex = item.optInt("tagGroupIndex", -1),
                         )
                     )
                 }
@@ -86,6 +116,7 @@ data class WidgetSnapshot(
                     toDate = root.optString("to", "").ifBlank { null },
                     events = events,
                     weekStartsOn = CalKit.normalizedWeekStart(weekStartsOn),
+                    calendarNames = names,
                 )
             } catch (e: Exception) {
                 null

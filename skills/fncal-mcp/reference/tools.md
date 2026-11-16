@@ -128,6 +128,29 @@ Same not-found answer for: hidden calendar, outside the window, no such uid, ano
 - Free time only, computed across every readable+visible calendar. No titles, no calendar ids of busy blocks — that is deliberate.
 - At most 200 slots are returned; if you got 200, narrow the range instead of assuming that is all.
 
+## generate_annual_review
+
+| arg | type | notes |
+|---|---|---|
+| `year` | number | year to summarise, e.g. `2026` (1970–2100); omitted = the current year |
+
+The reply has **two content parts**: one text summary, then the card image.
+
+```json
+{ "content": [
+  { "type": "text",
+    "text": "2026 年度总结：共 128 条日程、5 个日历、9 个分类，最忙的是 6 月（17 条）\n保存方式：把上面这张图片存到本地即可（网页版也可在「头像菜单 → 年度总结」里保存）。" },
+  { "type": "image", "data": "<base64 PNG>", "mimeType": "image/png" } ] }
+```
+
+- Read-only: it writes nothing, creates no proposal, and needs only `read` on the calendars it counts.
+- Counts only calendars this credential can see — invisible calendars contribute nothing, not even to the totals or the number of calendars.
+- The range is the credential's time window intersected with `year`. When the window clips the year, the text says so (「统计范围已收在你的凭据时间窗内，年份之外的日程不会计入。」). A year entirely outside the window returns the empty card, not an error.
+- Empty data still renders a card: empty state, `今年还没有日程，明年继续记录`, ring centre `0`, no month-emoji row. Do not report that as a failure.
+- The card is a 1080×1440 PNG built from the same layout and the same numbers as the web card (`GET /api/annual-summary`), so the image matches what the user sees in FnCal.
+- If the server cannot render PNG (no vendored canvas, no card fonts, or a title contains a glyph the fonts lack), the reply degrades: the text part gains a leading sentence naming the cause and the second part is the **SVG markup** instead of an image. Save it as `.svg` and open or convert it; nothing is dropped silently.
+- Show the image to the user and keep the summary sentence. Do not restate every number in prose.
+
 ## create_event
 
 | arg | type | notes |

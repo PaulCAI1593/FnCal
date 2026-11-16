@@ -93,7 +93,8 @@ describe('0.2.38 日程视图：标题下的地址小字', () => {
     // 0.7.21（总监 m02610）：宽屏标注回名称行右侧（第二份，`--name`），标题与地址仍在。
     expect(kids).toEqual(['agenda__event-title', 'agenda__event-daypart', 'agenda__event-location']);
     expect(row.querySelector('.agenda__event-main .agenda__event-daypart--name').textContent).toBe('（第 1/3 天）');
-    expect(row.querySelector('.agenda__event-time .agenda__event-daypart--time').textContent).toBe('（第 1/3 天）');
+    // 0.8.21（总监 m02593）：时间列那份是紧凑文案「第1/3天」。
+    expect(row.querySelector('.agenda__event-time .agenda__event-daypart--time').textContent).toBe('第1/3天');
     expect(row.querySelector('.agenda__event-location').textContent).toBe('上海当代艺术博物馆');
   });
 

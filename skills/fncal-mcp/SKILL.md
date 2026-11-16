@@ -1,8 +1,8 @@
 ---
 name: fncal-mcp
-description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.7.13
-fncalMinVersion: 0.7.13
+description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. It can also generate the year's annual review card as a 1080×1440 PNG (generate_annual_review, read-only). Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
+version: 0.8.29
+fncalMinVersion: 0.8.29
 user-invocable: true
 license: MIT
 ---
@@ -64,6 +64,20 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 - `hidden` — **the calendar does not exist for this credential.** It is absent from `list_calendars`, absent from event lists, and asking for one of its events returns the same "not found" answer as a genuinely unknown uid. Do not treat that as an error to work around, and do not ask the user "is there a calendar I can't see?" — the correct behaviour is that it is not there.
 - A credential with `write` on nothing **does not have the write tools at all**: `tools/list` simply will not contain `create_event`, `update_event`, `delete_event`. If you cannot find them, the credential is read-only; do not retry, do not guess other names.
 
+**Visibility vs. permission** (0.8.28) — two different filters, and permission always wins:
+- **Not granted = does not exist.** A calendar outside the credential's grants never appears in `list_calendars`, never enters event lists, and is never counted by `generate_annual_review`. Do not mention that it exists, and do not report a count of "calendars you cannot see".
+- **Granted but hidden in the app.** The user can switch a calendar off in FnCal's sidebar. `list_calendars` then returns that calendar with `visible: false`: it stays readable, and reads/writes on it behave normally, but `generate_annual_review` leaves it out (same scope as the web card). Say nothing about it unless the user asks why their card is smaller — then point at the sidebar switch, not at permissions.
+- `generate_annual_review` also follows the user's week start (Sunday or Monday) from the same setting as the calendar view.
+
+**Annual review, scoped to named calendars** (0.8.28). `generate_annual_review` takes an optional `calendars` list (names or ids, up to 20; a single `calendar` string also works) and the usual `year`. A named calendar wins over the sidebar switch: if the user names it, it is counted even when hidden. A name that is neither found nor granted fails with `calendar_not_found` and no card is drawn; the message lists the calendars you can use and never distinguishes "does not exist" from "not permitted". Say nothing about the ones that were filtered out by the switch.
+
+Use it like this:
+- "我只要『工作』日历的年度总结" → `generate_annual_review({ calendars: ['工作'] })`
+- "2025 年的年度总结" → `generate_annual_review({ year: 2025 })`
+- "2025 年『工作』日历的年度总结" → `generate_annual_review({ year: 2025, calendars: ['工作'] })`
+
+A name can be used directly when you just saw it; if you are not sure of the spelling, call `list_calendars` first and copy its `displayName`. When you pass `calendars`, the text answer starts with "本次只统计：工作" — keep that line, it tells the user the card is partial on purpose.
+
 **Time window** (default: past 7 days, future 90 days)
 - Events outside the window are also "not found" — same answer as hidden. An old event you know exists may simply be out of the window.
 - Writes are restricted to the window too, and say so instead of hiding it: an out-of-window write returns `这个时间在你的凭据时间窗外：请在 FnCal 里放宽这个凭据的时间窗，或换一个窗口内的时间。` Do not retry the same time; widen the window (the user) or pick a time inside it.
@@ -105,10 +119,11 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 
 | Tool | Kind | Required args |
 |---|---|---|
-| `list_calendars` | read | — |
+| `list_calendars` | read | — (each calendar carries `access` and `visible`) |
 | `list_events` | read | — (`calendar`, `from`, `to` optional) |
 | `get_event` | read | `uid` |
 | `find_free_slots` | read | — (`from`, `to`, `minMinutes` optional) |
+| `generate_annual_review` | read | — (`year` optional; returns a 1080×1440 PNG card plus a one-line summary; counts only readable **and** visible calendars, week start from the user's setting) |
 | `list_tags` | read | — (returns `id`, `name`, `emoji`, `group`, `count`) |
 | `create_tag` | tag write (proposal or direct — §2) | `emoji` (1 grapheme), `name` (1–12 characters), `groupId` optional |
 | `update_tag` | tag write (proposal or direct — §2) | `tag` (id or name); `emoji` / `name` / `groupId` optional |

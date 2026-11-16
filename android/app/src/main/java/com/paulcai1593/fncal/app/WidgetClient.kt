@@ -24,7 +24,7 @@ import javax.net.ssl.X509TrustManager
 object WidgetClient {
 
     private const val TIMEOUT_MS = 10_000
-    private const val VERSION = "0.3.8"
+    private const val VERSION = "0.4.1"
 
     sealed class Result {
         data class Ok(val json: String, val etag: String?) : Result()
@@ -101,7 +101,16 @@ object WidgetClient {
      * JSON 解析失败都返回 null：调用方保留上次的值，这次请求失败**不得**让整次
      * 卡片刷新失败。所以它不走 [Result]，也从不抛异常。
      */
-    fun weekStartsOn(context: Context): Int? {
+    /**
+     * 0.4.1：一次读完卡片需要的两条网页设置——「每周开始日」与主题色。
+     *
+     * 值取自 `GET /api/v1/kv/cal:settings` 的 `value.weekStartsOn`（0/1）与
+     * `value.accentColor`（`#rrggbb`）。任一字段缺失或格式不对时该字段为 null，
+     * 调用方保留上次的值；请求失败整条返回 null，**不得**让卡片刷新失败。
+     */
+    data class CardSettings(val weekStartsOn: Int?, val accentColor: String?)
+
+    fun cardSettings(context: Context): CardSettings? {
         val base = ShellPrefs.baseUrl(context) ?: return null
         val cookie = sessionCookie(context)
         if (cookie.isEmpty()) return null
@@ -111,14 +120,21 @@ object WidgetClient {
             connection = prepare(context, url, cookie)
             if (connection.responseCode != 200) return null
             val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val raw = JSONObject(body).optJSONObject("value")?.optInt("weekStartsOn", -1)
-            if (raw == 0 || raw == 1) raw else null
+            val value = JSONObject(body).optJSONObject("value")
+            val raw = value?.optInt("weekStartsOn", -1)
+            val week = if (raw == 0 || raw == 1) raw else null
+            val accent = value?.optString("accentColor", "")?.trim()?.takeIf {
+                Regex("^#[0-9a-fA-F]{6}$").matches(it)
+            }
+            CardSettings(week, accent)
         } catch (e: Exception) {
             null
         } finally {
             connection?.disconnect()
         }
     }
+
+    fun weekStartsOn(context: Context): Int? = cardSettings(context)?.weekStartsOn
 
     /** 建连与公共头：Cookie、UA、Accept，以及「用户允许自签证书」时的放行。 */
     private fun prepare(context: Context, url: String, cookie: String): HttpURLConnection {

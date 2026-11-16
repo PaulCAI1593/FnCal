@@ -14,13 +14,30 @@ import androidx.core.content.ContextCompat
 import java.util.Calendar
 import kotlin.math.round
 
-/** 0.3.3 的五款桌面卡片。每款只决定画法，数据都来自同一份摘要缓存。 */
+/**
+ * 0.4.1 的九款桌面卡片。每款只决定画法，数据都来自同一份摘要缓存。
+ *
+ * 绘制本体在 [WidgetCards041]（设计定稿 0.4.1：白卡、九款、统计四款），
+ * 本类保留尺寸档位与旧的 0.3.x 画法一轮，作为回退参考；`render()` 已全部走新画法。
+ */
 enum class WidgetKind {
     MINI_MONTH,
     DAY_AGENDA,
     MONTH,
     FOUR_DAY,
     AGENDA_LIST,
+
+    /** 0.4.1：当月热度（2×2 → 4×2）。 */
+    MONTH_HEAT,
+
+    /** 0.4.1：当月分类（2×2 → 4×2）。 */
+    MONTH_CATEGORY,
+
+    /** 0.4.1：一周节奏（2×2 → 4×2）。 */
+    WEEK_RHYTHM,
+
+    /** 0.4.1：时段分析（2×2 → 4×2）。 */
+    HOURS,
 }
 
 /**
@@ -78,9 +95,6 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         val width = widthPx.coerceAtLeast(1)
         val height = heightPx.coerceAtLeast(1)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val sketch = Sketch(Canvas(bitmap), width.toFloat(), height.toFloat(), tierOf(width, height))
-        sketch.background()
-
         val snapshot = WidgetSnapshot.parse(
             WidgetPrefs.cache(context),
             WidgetPrefs.weekStartsOn(context),
@@ -88,20 +102,8 @@ class WidgetRenderer(private val context: Context, private val kind: WidgetKind)
         // 0.6.2 §F：卡片跟随 App 登录态。未登录、或会话被撤销（401 → unauthorized）时
         // 不再画旧日程，避免把过期数据当成现在的安排。
         val signedIn = WidgetClient.hasSession(context)
-        val revoked = WidgetPrefs.lastError(context) == "unauthorized"
-        if (!signedIn || revoked || snapshot == null) {
-            sketch.placeholder()
-            return bitmap
-        }
-
-        when (kind) {
-            WidgetKind.MINI_MONTH -> sketch.miniMonth(snapshot)
-            WidgetKind.DAY_AGENDA -> sketch.dayAgenda(snapshot)
-            WidgetKind.MONTH -> sketch.month(snapshot)
-            WidgetKind.FOUR_DAY -> sketch.fourDay(snapshot)
-            WidgetKind.AGENDA_LIST -> sketch.agendaList(snapshot)
-        }
-        sketch.staleFooter()
+        // 0.4.1：九款画法统一在 WidgetCards041，本类只负责取缓存与登录态。
+        WidgetCards041(context, kind).draw(Canvas(bitmap), width, height, snapshot, signedIn)
         return bitmap
     }
 

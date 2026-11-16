@@ -98,6 +98,18 @@ export const zhCN = {
   'menu.syncing': '同步中…',
   // 0.4.14（M22 §1，用户 2026-11-04）：头像菜单「检查更新」，位置在「立即同步」之后。
   'menu.checkUpdate': '检查更新',
+  // 0.8.0（任务书 §八）：头像菜单「年度总结」，位置在「立即同步」与「检查更新」之间。
+  'menu.annualSummary': '年度总结',
+  'annual.title': '年度总结',
+  'annual.loading': '正在统计…',
+  'annual.save': '保存图片',
+  'annual.close': '关闭',
+  'annual.saved': '已保存图片',
+  'annual.saveFailed': '保存失败，请重试',
+  'annual.loadFailed': '统计失败，请重试',
+  'annual.unauthorized': '登录状态已失效，请重新登录',
+  'annual.previewAlt': '年度总结卡片预览',
+  'annual.previewHint': '图片按 1080×1440 保存，预览按屏宽缩放',
   // 0.3.8（v1.1 安全界面接线，M12 §1.2）：头像菜单的两枚安全入口。
   'menu.mySecurity': '我的安全',
   'menu.securitySettings': '安全设置',
@@ -518,6 +530,9 @@ export const zhCN = {
   // 0.2.9（用户 13）：跨天事件在日程列表里标「第几天 / 共几天」——只对跨天事件显示。
   // 0.2.11（C8）：文案由「（天 3/3）」改为「（第 3/3 天）」。
   'agenda.event.dayPart': '（第 {n}/{m} 天）',
+  // 0.8.21（用户 m01014，总监 m02593）：手机时间列只有 44px，全角括号放不下——
+  // 可见文案改紧凑版「第2/3天」（9px），读屏仍用上一行带括号的完整文案。
+  'agenda.event.dayPartCompact': '第{n}/{m}天',
   // 0.2.9（用户 16）：日程视图的「加载更多」分页。
   'agenda.loadMore': '加载更多',
   'agenda.loading': '加载中…',

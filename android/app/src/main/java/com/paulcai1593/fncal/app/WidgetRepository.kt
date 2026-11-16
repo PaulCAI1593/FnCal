@@ -49,9 +49,12 @@ object WidgetRepository {
                 false
             }
         }
-        // 0.3.4 §8：顺带同步「每周开始日」。这条请求失败只是保留上次的值，
-        // 不影响上面的取数结果，也不会让卡片显示错误。
-        WidgetClient.weekStartsOn(context)?.let { WidgetPrefs.saveWeekStartsOn(context, it) }
+        // 0.3.4 §8：顺带同步「每周开始日」；0.4.1 起再同步主题色（九款卡片都读它）。
+        // 这条请求失败只是保留上次的值，不影响上面的取数结果，也不会让卡片显示错误。
+        WidgetClient.cardSettings(context)?.let { settings ->
+            settings.weekStartsOn?.let { WidgetPrefs.saveWeekStartsOn(context, it) }
+            settings.accentColor?.let { WidgetPrefs.saveAccentColor(context, it) }
+        }
         return ok
     }
 }

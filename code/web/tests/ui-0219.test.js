@@ -800,7 +800,20 @@ describe('0.2.19 D10 + 0.2.20 E10 「还有 N 个」悬停浮层（1 秒、圆�
     expect(pop.querySelectorAll('.month__more-row')).toHaveLength(2);
   });
 
-  it('行文本是「HH:mm 标题」，圆点按 0.7.8 口径隐藏、长标题省略', () => {
+  it('「还有 N 个」按钮没有原生 title：悬停只出浮层，不弹同名灰框', () => {
+    const node = renderMonthWithLayout(hiddenFixture());
+    const more = moreButton(node);
+    expect(more.hasAttribute('title')).toBe(false);
+    expect(more.getAttribute('aria-label')).toBe('还有 2 个');
+    expect(more.dataset.fullText).toBe('还有 2 个');
+    // 格子内元素（chip / 多日条 / 日号 / 农历 / 任务行）都不再带 title。
+    expect(node.querySelectorAll('.month__cell [title]')).toHaveLength(0);
+    hover(more);
+    vi.advanceTimersByTime(1000);
+    expect(popover()).toBeTruthy();
+  });
+
+  it('行文本是「HH:mm 标题」，无圆点、3px 色条、长标题省略', () => {
     const node = renderMonthWithLayout(hiddenFixture());
     hover(moreButton(node));
     vi.advanceTimersByTime(1000);
@@ -809,14 +822,12 @@ describe('0.2.19 D10 + 0.2.20 E10 「还有 N 个」悬停浮层（1 秒、圆�
     expect(row.querySelector('.month__more-time').textContent).toBe('19:00');
     expect(row.querySelector('.month__more-title').textContent).toBe('台球');
     expect(row.textContent).toBe('19:00台球');
-    // 0.2.20（E10）：竖条改 8px 圆点（与月度 chip 的点同款），标题仍省略。
-    // 0.7.8（用户：月格统一「左竖条 + 透明底」，全天为实色块）：圆点一律不画——
-    // 浮层行仍复用同一个节点，但 CSS `display: none`，行里只剩时间 + 标题。
-    const dot = row.querySelector('.chip__dot');
-    expect(dot).toBeTruthy();
-    expect(row.firstElementChild).toBe(dot);
-    expect(rule(viewsCss, '.chip__dot')).toContain('display: none');
-    expect(rule(viewsCss, '.chip__dot')).not.toContain('width: 8px');
+    // 0.8.18（用户 01:04）：浮层行与格内 chip 同格式——圆点彻底删除，左侧改 3px 日历色条。
+    expect(row.querySelector('.chip__dot')).toBeNull();
+    expect(row.firstElementChild).toBe(row.querySelector('.month__more-time'));
+    expect(rule(viewsCss, '.month__more-row')).toContain('color-mix(');
+    expect(rule(viewsCss, '.month__more-row')).toContain('border-radius: var(--r-xs)');
+    expect(rule(viewsCss, '.month__more-row::after')).toContain('width: 3px');
     expect(rule(viewsCss, '.month__more-row')).not.toContain('box-shadow: inset 3px 0 0');
     expect(rule(viewsCss, '.month__more-title')).toContain('text-overflow: ellipsis');
     // 0.2.24（H6）：容器改可交互（持续区 = 按钮 ∪ 浮层），行不再各自接管指针事件
@@ -929,6 +940,122 @@ describe('0.2.19 D10 + 0.2.20 E10 「还有 N 个」悬停浮层（1 秒、圆�
     more.dispatchEvent(enter);
     vi.advanceTimersByTime(3000);
     expect(popover()).toBeNull();
+  });
+
+  /* 0.8.18（用户 01:07）：触屏轻触弹浮层、长按 500ms 进日视图、长按后吞 click。 */
+
+  const pointerAt = (el, type, { x = 30, y = 40, pointerType = 'touch' } = {}) => {
+    const ev = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+    Object.defineProperty(ev, 'pointerType', { value: pointerType });
+    el.dispatchEvent(ev);
+    return ev;
+  };
+
+  const tap = (el) => {
+    pointerAt(el, 'pointerdown');
+    vi.advanceTimersByTime(80);
+    pointerAt(el, 'pointerup');
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  };
+
+  const renderTouch = (events = hiddenFixture()) => {
+    const gotos = [];
+    const { node, afterMount } = renderMonth({
+      store: rangeStore(events),
+      settings: { ...SETTINGS, weekStartsOn: 0, hour12: false },
+      cursor: new Date(2026, 7, 18),
+      miniCursor: new Date(2026, 7, 18),
+      now: new Date(2026, 7, 18),
+      actions: { ...VIEW_ACTIONS, gotoDayView: (day) => gotos.push(day) },
+    });
+    document.body.append(node);
+    const restore = fakeLayout();
+    try {
+      afterMount();
+    } finally {
+      restore();
+    }
+    return { node, gotos };
+  };
+
+  it('触屏轻触「还有 N 个」弹浮层、不进日视图（抬起 click 被吞）', () => {
+    const { node, gotos } = renderTouch();
+    tap(moreButton(node));
+    expect(popover()).toBeTruthy();
+    expect(popover().querySelectorAll('.month__more-row')).toHaveLength(2);
+    expect(gotos).toHaveLength(0);
+  });
+
+  it('触屏长按 500ms 进日视图 1 次、不弹浮层；抬起不再触发', () => {
+    const { node, gotos } = renderTouch();
+    const more = moreButton(node);
+    pointerAt(more, 'pointerdown');
+    vi.advanceTimersByTime(500);
+    expect(gotos).toHaveLength(1);
+    expect(popover()).toBeNull();
+    pointerAt(more, 'pointerup');
+    more.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(gotos).toHaveLength(1);
+    expect(popover()).toBeNull();
+  });
+
+  it('触屏再次轻触同一按钮收起浮层', () => {
+    const { node } = renderTouch();
+    const more = moreButton(node);
+    tap(more);
+    expect(popover()).toBeTruthy();
+    tap(more);
+    expect(popover()).toBeNull();
+  });
+
+  it('浮层打开后点外部收起', () => {
+    const { node } = renderTouch();
+    tap(moreButton(node));
+    expect(popover()).toBeTruthy();
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(popover()).toBeNull();
+  });
+
+  const stubRects = (buttonRect, popoverRect) => {
+    const proto = window.HTMLElement.prototype;
+    const real = proto.getBoundingClientRect;
+    const box = (a) => ({ ...a, x: a.left, y: a.top, right: a.left + a.width, bottom: a.top + a.height });
+    proto.getBoundingClientRect = function () {
+      if (this.classList && this.classList.contains('month__more-popover')) return box(popoverRect);
+      if (this.classList && this.classList.contains('month__more')) return box(buttonRect);
+      return real.call(this);
+    };
+    return { restore: () => { proto.getBoundingClientRect = real; } };
+  };
+
+  it('触屏浮层定位：下方放得下 = 按钮底 + 6', () => {
+    const { node } = renderTouch();
+    const stub = stubRects(
+      { left: 100, top: 200, width: 60, height: 20 },
+      { left: 0, top: 0, width: 140, height: 80 },
+    );
+    try {
+      tap(moreButton(node));
+      expect(popover().style.top).toBe('226px');
+      expect(popover().style.left).toBe('100px');
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('触屏浮层定位：下方放不下翻到上方且不越界', () => {
+    const { node } = renderTouch();
+    const stub = stubRects(
+      { left: 100, top: 700, width: 60, height: 20 },
+      { left: 0, top: 0, width: 140, height: 80 },
+    );
+    try {
+      tap(moreButton(node));
+      expect(popover().style.top).toBe('614px');
+      expect(parseFloat(popover().style.top)).toBeGreaterThanOrEqual(8);
+    } finally {
+      stub.restore();
+    }
   });
 });
 

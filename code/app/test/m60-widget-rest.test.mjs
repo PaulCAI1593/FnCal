@@ -203,7 +203,11 @@ try {
   ok('递归 id 带 #', recurrence.every((event) => String(event.id).includes('#')), JSON.stringify(recurrence.map((e) => e.id)));
 
   const single = body.events.find((event) => event.summary === '产品评审');
-  eq('事件字段白名单', ['id', 'summary', 'start', 'end', 'allDay', 'calendarId', 'color', 'location'], Object.keys(single));
+  // 0.8.29：白名单 8 项 → 12 项（四个标签字段只读追加，见 product/widget-api-0.8.29-字段契约.md）
+  eq('事件字段白名单', [
+    'id', 'summary', 'start', 'end', 'allDay', 'calendarId', 'color', 'location',
+    'tagEmoji', 'tagGroupId', 'tagGroupName', 'tagGroupIndex',
+  ], Object.keys(single));
   eq('地点保留', 'Room-A', single.location);
   eq('描述不外泄', false, summary.text.includes('SECRET-DESC'));
   eq('参与人不外泄', false, summary.text.includes('someone@example.com'));
@@ -242,6 +246,134 @@ try {
   eq('非法 privacy → 400', 400, badPrivacy.status);
   eq('非法 privacy code', 'invalid', badPrivacy.body.code);
 
+  /* ------------------------------------------------ 0.8.29：标签四个字段 */
+  // 契约见 product/widget-api-0.8.29-字段契约.md，八条情形逐条验。
+  const workGroup = await raw('/api/v1/tag-groups', {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { name: '工作项' },
+  });
+  eq('标签：新建分组 201', 201, workGroup.status);
+  const workGroupId = workGroup.body.group.id;
+
+  const meetTag = await raw('/api/v1/tags', {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf,
+    body: { name: '会议', emoji: '💼', groupId: workGroupId },
+  });
+  eq('标签：新建带图标标签 201', 201, meetTag.status);
+  const meetTagId = meetTag.body.tag.id;
+
+  const plainTag = await raw('/api/v1/tags', {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { name: '无分组标签', emoji: '📌' },
+  });
+  eq('标签：新建默认分组标签 201', 201, plainTag.status);
+  const plainTagId = plainTag.body.tag.id;
+
+  const noEmojiTag = await raw('/api/v1/tags', {
+    method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { name: '无图标', groupId: workGroupId },
+  });
+  eq('标签：新建无图标标签 201', 201, noEmojiTag.status);
+  const noEmojiTagId = noEmojiTag.body.tag.id;
+
+  // 把「工作项」排到 0、「未分组」排到 1：index 必须按 order 算，不是数组顺序。
+  const reorder = await raw('/api/v1/tags/order', {
+    method: 'PATCH', cookie: admin.cookie, csrf: admin.csrf,
+    body: { groups: [{ id: workGroupId, order: 0 }, { id: 'grp_default', order: 1 }], tags: [] },
+  });
+  eq('标签：分组排序 200', 200, reorder.status);
+
+  writeObject(userId, mainId, 'ev-tag-meet', icsEvent({
+    uid: 'ev-tag-meet',
+    summary: '带标签会议',
+    start: dayMs(9) + 9 * 3600 * 1000,
+    end: dayMs(9) + 10 * 3600 * 1000,
+    extra: [`X-FNCAL-TAG:${meetTagId}`],
+  }));
+  writeObject(userId, mainId, 'ev-tag-plain', icsEvent({
+    uid: 'ev-tag-plain',
+    summary: '未分组标签事件',
+    start: dayMs(9) + 11 * 3600 * 1000,
+    end: dayMs(9) + 12 * 3600 * 1000,
+    extra: [`X-FNCAL-TAG:${plainTagId}`],
+  }));
+  writeObject(userId, mainId, 'ev-tag-noemoji', icsEvent({
+    uid: 'ev-tag-noemoji',
+    summary: '无图标标签事件',
+    start: dayMs(9) + 13 * 3600 * 1000,
+    end: dayMs(9) + 14 * 3600 * 1000,
+    extra: [`X-FNCAL-TAG:${noEmojiTagId}`],
+  }));
+  // 情形 4：事件带旧 tagId（标签已删），同时带 CATEGORIES 文本，证明不回落文本猜标签。
+  writeObject(userId, mainId, 'ev-tag-gone', icsEvent({
+    uid: 'ev-tag-gone',
+    summary: '已删标签事件',
+    start: dayMs(9) + 15 * 3600 * 1000,
+    end: dayMs(9) + 16 * 3600 * 1000,
+    extra: ['X-FNCAL-TAG:tag_deleted_0001', 'CATEGORIES:会议'],
+  }));
+
+  const taggedRes = await raw(summaryPath, { cookie: admin.cookie });
+  eq('标签：摘要 200', 200, taggedRes.status);
+  const pick = (label) => taggedRes.body.events.find((event) => event.summary === label) || {};
+
+  const meetRow = pick('带标签会议');
+  eq('情形1 有标签有分组：tagEmoji', '💼', meetRow.tagEmoji);
+  eq('情形1 有标签有分组：tagGroupId', workGroupId, meetRow.tagGroupId);
+  eq('情形1 有标签有分组：tagGroupName', '工作项', meetRow.tagGroupName);
+  eq('情形1 有标签有分组：tagGroupIndex 按 order（工作项排 0）', 0, meetRow.tagGroupIndex);
+
+  const plainRow = pick('未分组标签事件');
+  eq('情形2 grp_default：tagEmoji', '📌', plainRow.tagEmoji);
+  eq('情形2 grp_default：tagGroupId 是真实默认组', 'grp_default', plainRow.tagGroupId);
+  eq('情形2 grp_default：tagGroupName 是「未分组」', '未分组', plainRow.tagGroupName);
+  eq('情形2 grp_default：tagGroupIndex 1', 1, plainRow.tagGroupIndex);
+
+  const noEmojiRow = pick('无图标标签事件');
+  eq('情形6 标签无 emoji：tagEmoji null', null, noEmojiRow.tagEmoji);
+  eq('情形6 标签无 emoji：分组照给 id', workGroupId, noEmojiRow.tagGroupId);
+  eq('情形6 标签无 emoji：分组照给 index', 0, noEmojiRow.tagGroupIndex);
+
+  const noTagRow = pick('产品评审');
+  eq('情形3 无标签：四字段全 null', [null, null, null, null],
+    [noTagRow.tagEmoji, noTagRow.tagGroupId, noTagRow.tagGroupName, noTagRow.tagGroupIndex]);
+
+  const goneRow = pick('已删标签事件');
+  eq('情形4 标签已删：四字段全 null（不回落 CATEGORIES）', [null, null, null, null],
+    [goneRow.tagEmoji, goneRow.tagGroupId, goneRow.tagGroupName, goneRow.tagGroupIndex]);
+  eq('情形4 标签已删：不回退成分类文本', false, String(goneRow.tagGroupName).includes('会议'));
+
+  // 情形 5：标签在、分组已删。API 的 removeGroup 会把标签移回默认组，造不出悬空 groupId，
+  // 因此直接改盘模拟旧数据。
+  const kvPath = path.join(userDir(userId), '.data', 'kv.json');
+  const kv = JSON.parse(fs.readFileSync(kvPath, 'utf8'));
+  const tagState = kv['cal:default:tags'];
+  ok('标签注册表在盘上', tagState && Array.isArray(tagState.tags), JSON.stringify(Object.keys(kv)));
+  tagState.tags.push({
+    id: 'tag_orphan', emoji: '🧪', name: '孤儿标签', groupId: 'grp_removed', order: 99, createdAt: new Date().toISOString(),
+  });
+  fs.writeFileSync(kvPath, JSON.stringify(kv));
+  writeObject(userId, mainId, 'ev-tag-orphan', icsEvent({
+    uid: 'ev-tag-orphan',
+    summary: '分组已删事件',
+    start: dayMs(10) + 9 * 3600 * 1000,
+    end: dayMs(10) + 10 * 3600 * 1000,
+    extra: ['X-FNCAL-TAG:tag_orphan'],
+  }));
+  const orphanRes = await raw(summaryPath, { cookie: admin.cookie });
+  eq('情形5 摘要 200', 200, orphanRes.status);
+  const orphanRow = orphanRes.body.events.find((event) => event.summary === '分组已删事件') || {};
+  // 存储层（migrateTagState）会把指向不存在分组的标签挂回 grp_default，
+  // 所以端到端看不到「悬空 groupId」；这里断言它被恢复成真实默认组，
+  // 契约第 5 条的「三字段 null」由后面的直接注入桩验证（见情形5b）。
+  eq('情形5 悬空分组被存储层挂回未分组', ['grp_default', '未分组'], [orphanRow.tagGroupId, orphanRow.tagGroupName]);
+  eq('情形5 挂回后 tagEmoji 照给', '🧪', orphanRow.tagEmoji);
+
+  // 情形 7：busy 时四字段也全 null（分类会泄漏内容类型）。
+  const busyTagged = await raw(`${summaryPath}&privacy=busy`, { cookie: admin.cookie });
+  eq('情形7 busy 摘要 200', 200, busyTagged.status);
+  ok('情形7 busy：四标签字段全 null', busyTagged.body.events.every((event) => event.tagEmoji === null
+    && event.tagGroupId === null && event.tagGroupName === null && event.tagGroupIndex === null),
+  JSON.stringify(busyTagged.body.events.slice(0, 3)));
+  ok('情形7 busy：事件仍被裁成「忙」', busyTagged.body.events.some((event) => event.summary === '忙'));
+
   /* ------------------------------------------------------------- 限流 */
   let okCount = 0;
   let limited = null;
@@ -254,7 +386,7 @@ try {
     limited = res;
     break;
   }
-  ok('前 60 次内仍正常（本用例前面已用掉几次）', okCount >= 50 && okCount <= 60, String(okCount));
+  ok('前 60 次内仍正常（本用例前面已用掉几次，含 0.8.29 标签用例）', okCount >= 30 && okCount <= 60, String(okCount));
   eq('超额 → 429', 429, limited && limited.status);
   eq('429 code', 'rate_limited', limited && limited.body.code);
   ok('429 带 Retry-After', Number(limited && limited.headers.get('retry-after')) > 0, limited && limited.headers.get('retry-after'));
@@ -319,6 +451,57 @@ try {
   const stubBody = JSON.parse(response.text);
   eq('桩：500 条上限', 500, stubBody.events.length);
   eq('桩：truncated', true, stubBody.truncated);
+  // 情形 8：注册表为空 / 未注入 tagStore —— 四字段全 null，接口不 500。
+  eq('情形8 注册表为空：接口 200', 200, response.status);
+  ok('情形8 注册表为空：四字段全 null', stubBody.events.every((event) => event.tagEmoji === null
+    && event.tagGroupId === null && event.tagGroupName === null && event.tagGroupIndex === null));
+  ok('情形8 注册表为空：没有丢既有字段',
+    stubBody.events.every((event) => Object.keys(event).length === 12), JSON.stringify(Object.keys(stubBody.events[0])));
+
+  /* 情形 5b：分组已删 —— 直接注入注册表。
+     存储层 migrateTagState 会把指向不存在分组的标签挂回 grp_default，
+     端到端造不出悬空 groupId，这里用桩把契约第 5 条的分支钉住。 */
+  const orphanRest = createWidgetRest({
+    widgetStore: {
+      listCalendarMetas: async () => [{ id: 'stub-cal', displayName: '桩日历', color: '#123456' }],
+      listObjects: async () => [{
+        uid: 'ev-orphan-stub',
+        content: icsEvent({
+          uid: 'ev-orphan-stub',
+          summary: '悬空组事件',
+          start: dayMs(6) + 9 * 3600 * 1000,
+          end: dayMs(6) + 10 * 3600 * 1000,
+          extra: ['X-FNCAL-TAG:tag_orphan'],
+        }),
+      }],
+    },
+    tagStore: {
+      list: async () => ({
+        groups: [{ id: 'grp_default', name: '未分组', order: 0 }],
+        tags: [{ id: 'tag_orphan', emoji: '🧪', name: '孤儿标签', groupId: 'grp_removed', order: 0 }],
+      }),
+    },
+    auth: {
+      requireSession: async () => ({ ok: true, identity: { account: { id: 'stub-user' }, sid: 'stub-sid' } }),
+    },
+    audit: { write() {} },
+    version: 'test',
+  });
+  const orphanResponse = { status: 0, text: '' };
+  await orphanRest.handleRead(fakeReq, {
+    writeHead(status) {
+      orphanResponse.status = status;
+    },
+    end(payload) {
+      orphanResponse.text = payload ? String(payload) : '';
+    },
+  }, new URL('http://x/api/widget/v1/summary'));
+  const orphanStubBody = JSON.parse(orphanResponse.text);
+  eq('情形5b 悬空分组：摘要 200', 200, orphanResponse.status);
+  const orphanStubRow = (orphanStubBody.events || [])[0] || {};
+  eq('情形5b 悬空分组：tagEmoji 照给', '🧪', orphanStubRow.tagEmoji);
+  eq('情形5b 悬空分组：分组三字段全 null', [null, null, null],
+    [orphanStubRow.tagGroupId, orphanStubRow.tagGroupName, orphanStubRow.tagGroupIndex]);
 } catch (err) {
   failed += 1;
   console.log(`FAIL 未捕获异常：${err && err.stack ? err.stack : err}`);

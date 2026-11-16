@@ -157,7 +157,7 @@ describe('1-2 节假日并入日号行', () => {
     );
     const label = cell.querySelector('.month__holiday');
     expect(label.classList.contains('is-othermonth')).toBe(true);
-    expect(label.getAttribute('title')).toContain('一个很长很长的节日名称');
+    expect(label.getAttribute('aria-label')).toContain('一个很长很长的节日名称');
     const css = rule(viewsCss, '.month__holiday-name');
     expect(css).toContain('text-overflow: ellipsis');
     expect(rule(viewsCss, '.month__holiday')).toContain('font-size: 10px');
@@ -298,8 +298,8 @@ describe('1-16 整周泳道（月视图）', () => {
     // 第二周行（8/23–8/29）：A 恒在第 1 带、B 恒在第 2 带
     for (const d of [23, 24, 25, 26]) {
       const chips = [...cellOf(d).querySelectorAll('.month__events .chip')];
-      const aIdx = chips.findIndex((c) => c.title === 'A 长会');
-      const bIdx = chips.findIndex((c) => c.title === 'B 短会');
+      const aIdx = chips.findIndex((c) => (c.getAttribute('aria-label') || '').includes('A 长会'));
+      const bIdx = chips.findIndex((c) => (c.getAttribute('aria-label') || '').includes('B 短会'));
       expect(aIdx, `8/${d} A 位置`).toBe(0);
       if (bIdx !== -1) expect(bIdx, `8/${d} B 位置`).toBe(1);
     }
@@ -311,7 +311,7 @@ describe('1-16 整周泳道（月视图）', () => {
     // 8/27 只有 B：第 1 带是占位，B 仍在第 2 带
     const c27 = [...cellOf(27).querySelectorAll('.month__events > *')];
     expect(c27[0].classList.contains('month__lane-gap')).toBe(true);
-    expect(c27[1].title).toBe('B 短会');
+    expect(c27[1].getAttribute('aria-label')).toContain('B 短会');
   });
 
   it('泳道辅助函数与比较器共用一份（event-layout.js 导出）', () => {
@@ -340,7 +340,7 @@ describe('1-16 整周泳道（周/四日视图全天行）', () => {
     const titlesOf = (col) =>
       [...col.querySelectorAll('.allday-chip')]
         .filter((c) => !c.classList.contains('allday-chip--placeholder'))
-        .map((c) => c.title);
+        .map((c) => (c.getAttribute('aria-label') || '').replace(/，全天$/, ''));
     expect(titlesOf(cols[0])).toEqual(['A 长会', 'B 短会']);
     expect(titlesOf(cols[1])).toEqual(['A 长会', 'B 短会']);
     // A 已结束的一列：第一带是占位，B 仍在第二带（不跳带）
@@ -619,7 +619,7 @@ describe('1-14 加载更多「到底」判定排除节假日', () => {
     const head = node.querySelector('.agenda__date-holiday');
     expect(head).toBeTruthy();
     expect(head.textContent).toBe('国庆节');
-    expect(head.getAttribute('title')).toBe('国庆节');
+    expect(head.getAttribute('aria-label')).toContain('国庆节');
     expect(node.textContent).toContain('真实事件');
   });
 

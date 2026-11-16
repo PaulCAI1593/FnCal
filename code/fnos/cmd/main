@@ -3,7 +3,7 @@
 #
 # 约定：
 #   - 只使用 fnOS 注入的 TRIM_* 环境变量，不硬编码安装卷路径。
-#   - 服务以 config/privilege 声明的 caldav 用户运行（run-as=package），由本脚本
+#   - 服务以 config/privilege 声明的 fncal 用户运行（run-as=package），由本脚本
 #     root 身份调用时用 runuser 降权；非 root 环境（本机调试）直接以当前用户运行。
 #   - 依赖 install_dep_apps=nodejs_v22：优先用 PATH 里的 node，其次从应用安装位置
 #     推导同卷安装的 nodejs_v22/target/bin/node。

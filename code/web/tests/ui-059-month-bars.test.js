@@ -231,14 +231,18 @@ describe('0.5.9 S4：大屏看得见的信息，手机也要看得见（不许�
     expect(agendaBlock).toMatch(/\.agenda__event-main {\s*grid-template-columns:\s*minmax\(0, 1fr\);/);
     // 0.7.21（总监 m02610）：旧的「标注放标题下面 grid-row: 2」作废；窄屏隐藏名称行那份，
     // 时间列那份（`--time`）显示，左缘与时间文字对齐。
+    // 0.8.21（总监 m02593）：标注留在时间列（紧凑文案 9px），名称行那份仍隐藏。
     expect(agendaBlock).toMatch(/\.agenda__event-main > \.agenda__event-daypart--name {\s*display:\s*none;/);
+    expect(viewsCss).toMatch(/\.agenda__event-daypart--time {[\s\S]{0,200}font-size:\s*9px;/);
     expect(viewsCss).toMatch(/\.agenda__event-daypart--time {\s*display:\s*none;/);
-    expect(viewsCss).toMatch(/\.agenda__event-daypart--time {\s*display:\s*inline;[\s\S]{0,80}align-self:\s*flex-start;/);
+    // 0.8.21（总监 m02593）：标注留在时间列，用紧凑文案与 9px。
+    expect(viewsCss).toMatch(/\.agenda__event-daypart--time {\s*display:\s*inline;/);
     expect(agendaBlock).not.toMatch(/\.agenda__event-daypart {[^}]*grid-row:\s*2/);
     expect(agendaBlock).toMatch(/\.agenda__event-title {[^}]*-webkit-line-clamp:\s*2/);
     const tiny = mediaBlock(viewsCss, '@media (max-width: 360px) {', '.agenda__event-time');
     expect(tiny).toMatch(/\.agenda__day {\s*grid-template-columns:\s*60px minmax\(0, 1fr\)/);
-    expect(tiny).toMatch(/\.agenda__event-time {\s*width:\s*68px/);
+    // 0.8.21（用户 m00745）：≤360 同日竖向列 36px；跨夜/带「第 n/m 天」的宽行仍 68px。
+    expect(tiny).toMatch(/\.agenda__event-time {\s*width:\s*36px/);
   });
 });
 
@@ -253,17 +257,17 @@ describe('0.5.9（F1/F2）：手机档时间显示不被切字、不在词内断
     expect(dateUtilsJs).toMatch(/export function formatTime\(date, \{ hour12 = true \} = \{\}\)/);
   });
 
-  it('月视图 chip：≤520 用短格式，完整 12 小时文案保留在 title 与 aria-label', () => {
+  it('月视图 chip：≤520 用短格式，完整 12 小时文案保留在 aria-label（不再写原生 title）', () => {
     expect(monthJs).toContain('formatTimeShort24(shownStartDate)');
     expect(monthJs).toMatch(
       /const timeText = compactChip && !event\.allDay \? formatTimeShort24\(shownStartDate\) : timeTextFull;/,
     );
-    // 完整文案仍走 formatTime，并进 aria-label 与 title
+    // 完整文案仍走 formatTime，并进 aria-label；0.8.18 起不再写原生 title
     expect(monthJs).toMatch(
       /const timeTextFull = event\.allDay\s*\?\s*''\s*:\s*formatTime\(shownStartDate, \{ hour12: ctx\.settings\.hour12 \}\);/,
     );
-    expect(monthJs).toMatch(/'aria-label':[^\n]*formatTime\(shownStartDate, \{ hour12: ctx\.settings\.hour12 \}\)/);
-    expect(monthJs).toMatch(/title: compactChip && !event\.allDay \? `\$\{chipTitle\}，\$\{timeTextFull\}` : chipTitle/);
+    expect(monthJs).toMatch(/'aria-label': \[[\s\S]{0,600}?formatTime\(shownStartDate, \{ hour12: ctx\.settings\.hour12 \}\)/);
+    expect(monthJs).not.toContain('title: compactChip && !event.allDay');
     // chip__time 渲染的是上面的 timeText，不再内联 formatTime
     expect(monthJs).toMatch(/class: 'chip__time',\s*text: timeText,/);
   });
@@ -279,11 +283,18 @@ describe('0.5.9（F1/F2）：手机档时间显示不被切字、不在词内断
 
   it('日程时间列：≤520 用短格式区间，两个片段各自 nowrap、放不下整段换行', () => {
     expect(agendaJs).toContain('formatTimeShort24');
-    expect(agendaJs).toMatch(/function compactRangeParts\(start, end, dayStart\)/);
+    expect(agendaJs).toMatch(/function compactRangeParts\(displayStart, displayEnd\)/);
     // 0.7.17（总监 m01561）：区间分隔符统一为半角 `-`、两侧无空格。
-    expect(agendaJs).toMatch(/return \{ start: `\$\{startText\}-`, end: formatTimeShort24\(new Date\(end\)\) \};/);
-    expect(agendaJs).toMatch(/class: 'agenda__event-time agenda__event-time--compact'/);
-    expect(agendaJs).toMatch(/class: 'agenda__event-time-start', text: parts\.start/);
+    // 0.8.21（总监 m02540）：只返回 { start, end }，跨夜在日界截到 00:00，不再拼日期。
+    expect(agendaJs).toMatch(/function compactRangeParts\(displayStart, displayEnd\)/);
+    expect(agendaJs).toMatch(/end: formatTimeShort24\(new Date\(displayEnd\)\)/);
+    // 0.8.21（总监 m02540）：定时行统一竖向，只有 `--stack` 一个分支（宽列 `--wide` 已删）。
+    expect(agendaJs).toMatch(/class: 'agenda__event-time agenda__event-time--compact agenda__event-time--stack'/);
+    expect(agendaJs).not.toContain('agenda__event-time--wide');
+    // 0.8.24（用户 m01077）：开始时间拆「时 / : / 分」，竖线挂在冒号上。
+    expect(agendaJs).toMatch(/const startText = parts\.start\.replace\(\/-\$\/, ''\);/);
+    expect(agendaJs).toMatch(/class: 'agenda__event-time-start' \}, \[/);
+    expect(agendaJs).toMatch(/class: 'agenda__event-time-colon', text: ':'/);
     expect(agendaJs).toMatch(/class: 'agenda__event-time-end', text: parts\.end/);
     const css = agendaBlock.match(/\.agenda__event-time--compact \{([^}]*)\}/);
     expect(css).not.toBeNull();
@@ -291,7 +302,8 @@ describe('0.5.9（F1/F2）：手机档时间显示不被切字、不在词内断
     expect(css[1]).toMatch(/flex-wrap:\s*wrap;/);
     expect(agendaBlock).toMatch(/\.agenda__event-time--compact > span \{\s*white-space:\s*nowrap;/);
     // 完整 12 小时文案仍进 aria-label
-    expect(agendaJs).toMatch(/'aria-label':[^\n]*\$\{timeText\}/);
+    // 0.8.25（总监 m03093）：可见时间按日界截断，读屏仍用真实完整区间（ariaTimeText）。
+    expect(agendaJs).toMatch(/'aria-label': \[[\s\S]{0,600}?\$\{ariaTimeText\}/);
   });
 
   it('>520 桌面/平板不进手机档：两条短格式路径都由 isCompact 判定守护', () => {

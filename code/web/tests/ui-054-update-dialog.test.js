@@ -127,15 +127,17 @@ describe('0.4.14 检查更新：菜单顺序与入口', () => {
     return document.querySelector('.popover');
   };
 
-  it('管理员与普通用户：`立即同步` 的下一项是 `检查更新`，再下一项是 `登出`', () => {
+  it('管理员与普通用户：`立即同步` 之后依次是 `年度总结`、`检查更新`、`登出`', () => {
     const root = document.createElement('div');
     document.body.append(root);
     app = createApp(root, { store: makeStore(), user: { username: 'x', role: 'admin' } });
     openMenu();
     const labels = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
     const syncAt = labels.findIndex((l) => l.includes('立即同步'));
-    expect(labels[syncAt + 1]).toContain('检查更新');
-    expect(labels[syncAt + 2]).toContain('登出');
+    // 0.8.0：新增「年度总结」，夹在「立即同步」与「检查更新」之间。
+    expect(labels[syncAt + 1]).toContain('年度总结');
+    expect(labels[syncAt + 2]).toContain('检查更新');
+    expect(labels[syncAt + 3]).toContain('登出');
     app.destroy();
     document.body.replaceChildren();
     const root2 = document.createElement('div');
@@ -144,8 +146,9 @@ describe('0.4.14 检查更新：菜单顺序与入口', () => {
     openMenu();
     const labels2 = [...document.querySelectorAll('.popover .menu-item')].map((b) => b.textContent);
     const syncAt2 = labels2.findIndex((l) => l.includes('立即同步'));
-    expect(labels2[syncAt2 + 1]).toContain('检查更新');
-    expect(labels2[syncAt2 + 2]).toContain('登出');
+    expect(labels2[syncAt2 + 1]).toContain('年度总结');
+    expect(labels2[syncAt2 + 2]).toContain('检查更新');
+    expect(labels2[syncAt2 + 3]).toContain('登出');
   });
 });
 

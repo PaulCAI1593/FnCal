@@ -134,6 +134,58 @@ function linkHoverFor(accent, isDark) {
     : ensureContrast(darken(accent, 0.12), '#ffffff', 4.5);
 }
 
+function rgbToHsl(rgb) {
+  const r = rgb[0] / 255;
+  const g = rgb[1] / 255;
+  const b = rgb[2] / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (!d) return [0, 0, l];
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+  else if (max === g) h = ((b - r) / d + 2) * 60;
+  else h = ((r - g) / d + 4) * 60;
+  return [h, s, l];
+}
+
+function hslToHex(h, s, l) {
+  const hue = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  let rgb;
+  if (hue < 60) rgb = [c, x, 0];
+  else if (hue < 120) rgb = [x, c, 0];
+  else if (hue < 180) rgb = [0, c, x];
+  else if (hue < 240) rgb = [0, x, c];
+  else if (hue < 300) rgb = [x, 0, c];
+  else rgb = [c, 0, x];
+  return rgbToHex([(rgb[0] + m) * 255, (rgb[1] + m) * 255, (rgb[2] + m) * 255]);
+}
+
+/**
+ * 0.6.9（D，用户口径「节气颜色用主题色的反色」）：主题色的互补色——
+ * 色相转 180°、饱和度不变；亮度只按对比度兜底（每次 0.02 往远离底色亮度的方向走）。
+ * 与 `web/public/accent-prepaint.js` 的 `complementInk` 同一算法（m55 逐字段比对）。
+ */
+function complementInk(hex, surface, minContrast) {
+  const wanted = typeof minContrast === 'number' ? minContrast : 4.5;
+  const hsl = rgbToHsl(hexToRgb(hex));
+  const h = (hsl[0] + 180) % 360;
+  const s = hsl[1];
+  let l = hsl[2];
+  let out = hslToHex(h, s, l);
+  const onLight = luminance(surface) >= 0.5;
+  for (let i = 0; i < 50 && contrast(out, surface) < wanted; i += 1) {
+    l = Math.max(0, Math.min(1, onLight ? l - 0.02 : l + 0.02));
+    out = hslToHex(h, s, l);
+  }
+  return out;
+}
+
 export function palette(hex, mode) {
   const base = normalize(hex);
   const isDark = mode === 'dark';
@@ -159,6 +211,8 @@ export function palette(hex, mode) {
       '--accent-ink-on-soft': isDark ? lighten(accent, 0.12) : accent,
       '--ring': `color-mix(in srgb, ${accent} 45%, transparent)`,
       '--today': accent,
+      // 0.6.9：节气文字色 = 主题色互补色（与 prepaint 的 complementInk 同算法）。
+      '--term-ink': complementInk(accent, bg, 4.5),
     },
   };
 }

@@ -153,4 +153,26 @@
     <string name="widget_future_week">未来 7 天</string>
     <string name="widget_today_header">今天 · %1$s</string>
     <string name="widget_week_none">未来 7 天没有日程</string>
+    <!-- 0.4.1 九款卡片（设计定稿：design/widget-design/设计结论.md） -->
+    <string name="widget_month_heat_label">FnCal 当月热度</string>
+    <string name="widget_month_category_label">FnCal 当月分类</string>
+    <string name="widget_week_rhythm_label">FnCal 一周节奏</string>
+    <string name="widget_hours_label">FnCal 时段分析</string>
+    <string name="widget_agenda_list_title">日程列表</string>
+    <string name="widget_week_rhythm_title">一周节奏</string>
+    <string name="widget_hours_title">时段分析</string>
+    <string name="widget_all_day_short">全天</string>
+    <string name="widget_count_items">共 %1$d 条</string>
+    <string name="widget_more_rows">还有 %1$d 条</string>
+    <string name="widget_busy_days">%1$d 天有事</string>
+    <string name="widget_days_items">%1$d 天 · %2$d 条</string>
+    <string name="widget_four_day_range">%1$d 天 · %2$d 条</string>
+    <string name="widget_heat_suffix"> · 热度</string>
+    <string name="widget_heat_meta">%1$d 条 · %2$d 天有事</string>
+    <string name="widget_category_suffix"> · 分类</string>
+    <string name="widget_category_meta">%1$d 条 · %2$d 组</string>
+    <string name="widget_week_peak">最多 %1$s · %2$d 条</string>
+    <string name="widget_hours_peak">峰值 %1$d 点 · %2$d 条</string>
+    <string name="widget_legend_less">少</string>
+    <string name="widget_legend_more">多</string>
 </resources>

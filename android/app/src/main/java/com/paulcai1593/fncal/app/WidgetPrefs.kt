@@ -2,6 +2,8 @@ package com.paulcai1593.fncal.app
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Color
+import androidx.core.content.ContextCompat
 
 /**
  * 0.3.0 桌面卡片的本地缓存（范围文档 A2）。
@@ -19,6 +21,7 @@ object WidgetPrefs {
     private const val KEY_UPDATED = "last_updated"
     private const val KEY_ERROR = "last_error"
     private const val KEY_WEEK_START = "week_starts_on"
+    private const val KEY_ACCENT = "accent_color"
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
@@ -40,6 +43,28 @@ object WidgetPrefs {
 
     fun saveWeekStartsOn(context: Context, value: Int) {
         prefs(context).edit().putInt(KEY_WEEK_START, if (value == 1) 1 else 0).apply()
+    }
+
+    /**
+     * 0.4.1：网页设置里的主题色（`settings.accentColor`，形如 `#2f5e9e`）。
+     *
+     * 卡片只用它算「主题墨色」（`WidgetTokens.accentInk`），日历九色与分组十色不跟它走。
+     * 没写过、或值不是 `#rrggbb` 时退回资源里的默认强调色，卡片仍可画。
+     */
+    fun accentColor(context: Context): Int {
+        val raw = prefs(context).getString(KEY_ACCENT, null)?.trim()
+        if (raw.isNullOrEmpty()) return ContextCompat.getColor(context, R.color.accent)
+        return try {
+            Color.parseColor(raw)
+        } catch (e: IllegalArgumentException) {
+            ContextCompat.getColor(context, R.color.accent)
+        }
+    }
+
+    fun saveAccentColor(context: Context, value: String) {
+        val raw = value.trim()
+        if (raw.isEmpty()) return
+        prefs(context).edit().putString(KEY_ACCENT, raw).apply()
     }
 
     /** 200：换掉缓存与 ETag，并记下本次成功时间。 */

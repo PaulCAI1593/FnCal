@@ -87,10 +87,8 @@ describe('agenda view — multi-day events', () => {
     };
     const { node } = renderAgenda(makeCtx([deploy]));
     expect(readList(node)).toEqual([
-      // The end is named with its date on the day the event starts: it is
-      // past the midnight that closes the 18th, so a bare "1:30 AM" would
-      // read as a range running backwards.
-      { day: 18, rows: [['下午11:00-8月19日 上午1:30', 'Late night deploy']] },
+      // 0.8.25（总监 m03093）：跨天行的可见时间按当天日界截到 00:00，不印日期。
+      { day: 18, rows: [['下午11:00-上午12:00', 'Late night deploy']] },
       // Present from midnight on the 19th — the original 11 PM start would file
       // a row under the 19th claiming it begins the night before. The end is
       // on this row's own day, so it needs no date.
@@ -98,11 +96,9 @@ describe('agenda view — multi-day events', () => {
     ]);
   });
 
-  it('names the end date of an event saved as 9 AM to 8 AM the next morning', () => {
-    // The editor reads an end time earlier than the start on the same date as
-    // the next morning (timeOrderProblem in modal.js). The reported reading
-    // of the result — "List view shows 09:00-08:00" — is what the date is
-    // here to prevent.
+  it('stops a cross-midnight event at the day boundary, without naming the end date', () => {
+    // 0.8.25（总监 m03093）：用户 m01149 截图桌面出现「15:45-10月25日 03:45」。
+    // 现在可见文本一律按当天日界截到 00:00，日期只留在 aria-label 里。
     const ev = {
       id: 'e',
       title: 'Overnight',
@@ -114,12 +110,12 @@ describe('agenda view — multi-day events', () => {
     };
     const { node } = renderAgenda(makeCtx([ev]));
     expect(readList(node)).toEqual([
-      { day: 18, rows: [['上午9:00-8月19日 上午8:00', 'Overnight']] },
+      { day: 18, rows: [['上午9:00-上午12:00', 'Overnight']] },
       { day: 19, rows: [['上午12:00-上午8:00', 'Overnight']] },
     ]);
   });
 
-  it('keeps naming the end date on a middle day of a longer timed event', () => {
+  it('shows 全天 on a middle day of a longer timed event', () => {
     const ev = {
       id: 'e',
       title: 'Hackathon',
@@ -131,13 +127,14 @@ describe('agenda view — multi-day events', () => {
     };
     const { node } = renderAgenda(makeCtx([ev]));
     expect(readList(node)).toEqual([
-      { day: 18, rows: [['上午9:00-8月20日 上午8:00', 'Hackathon']] },
-      { day: 19, rows: [['上午12:00-8月20日 上午8:00', 'Hackathon']] },
+      // 中间日没有任何小时段可写：00:00-00:00 会误导，所以写「全天」（0.8.25）。
+      { day: 18, rows: [['上午9:00-上午12:00', 'Hackathon']] },
+      { day: 19, rows: [['全天', 'Hackathon']] },
       { day: 20, rows: [['上午12:00-上午8:00', 'Hackathon']] },
     ]);
   });
 
-  it('names the end date on a 24-hour clock too', () => {
+  it('stops at the day boundary on a 24-hour clock too', () => {
     const ev = {
       id: 'e',
       title: 'Overnight',
@@ -148,10 +145,10 @@ describe('agenda view — multi-day events', () => {
       reminders: [],
     };
     const { node } = renderAgenda(makeCtx([ev], [], { hour12: false }));
-    expect(readList(node)[0].rows).toEqual([['09:00-8月19日 08:00', 'Overnight']]);
+    expect(readList(node)[0].rows).toEqual([['09:00-00:00', 'Overnight']]);
   });
 
-  it('joins the end date and its time with no-break spaces so the label wraps only at the dash', () => {
+  it('shows the day-boundary time with no date and keeps the day part', () => {
     const ev = {
       id: 'e',
       title: 'Overnight',
@@ -162,17 +159,15 @@ describe('agenda view — multi-day events', () => {
       reminders: [],
     };
     const { node } = renderAgenda(makeCtx([ev]));
-    // The fixed-width time column cannot hold "10:30 PM-Aug 19, 1:30 AM" on
-    // one line; the only plain spaces are the ones around the dash.
+    // 0.8.25（总监 m03093）：可见时间只到当天日界，没有日期，也没有多余的空白。
     // 0.7.17（总监 m00333）：跨天标注搬进时间列，时间列文本尾部带「（第 1/2 天）」。
     // 这里只断言时间本身，取时间列的 `.agenda__event-time-text`；标注单独断言。
     const timeEl = node.querySelector('.agenda__event-time');
     const textEl = timeEl.querySelector('.agenda__event-time-text') || timeEl;
-    expect(textEl.textContent).toBe(
-      '下午10:30-8月19日 上午1:30',
-    );
-    // 0.7.21（总监 m02610）：标注渲染两份，时间列那份带 `--time`。
-    expect(timeEl.querySelector('.agenda__event-daypart--time').textContent).toBe('（第 1/2 天）');
+    expect(textEl.textContent).toBe('下午10:30-上午12:00');
+    // 0.8.21（总监 m02593）：时间列（窄屏显示）用紧凑文案「第1/2天」，名称行仍用完整文案。
+    expect(timeEl.querySelector('.agenda__event-daypart--time').textContent).toBe('第1/2天');
+    expect(node.querySelector('.agenda__event-main .agenda__event-daypart--name').textContent).toBe('（第 1/2 天）');
   });
 
   // 0.7.17（总监 m00333）：非全天跨天行的标注挂时间列，时间在上、标注在下。

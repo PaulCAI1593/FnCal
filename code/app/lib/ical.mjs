@@ -1170,6 +1170,17 @@ export async function eventFromIcs(text) {
   return model;
 }
 
+/** 0.8.29：只取首个 VEVENT 的标签 id（摘要接口用，省一次完整解析）。 */
+export function tagIdOfIcs(text) {
+  if (typeof text !== 'string' || !text.trim()) return '';
+  try {
+    const block = childComponents(calendarTree(text), 'VEVENT')[0] || null;
+    return tagIdOf(block);
+  } catch {
+    return '';
+  }
+}
+
 /** Export a store.js-shaped task as a VTODO resource. */
 export function taskToIcs(task = {}) {
   const uid = uidFor(task);

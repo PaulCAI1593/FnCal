@@ -171,7 +171,7 @@ describe('⑫ 月视图多日全天条连续填色', () => {
     }
     for (const seg of segs) {
       expect(seg.getAttribute('aria-label')).toContain('多日评审');
-      expect(seg.getAttribute('title')).toBe('多日评审');
+      expect(seg.getAttribute('aria-label')).toContain('多日评审');
     }
   });
 

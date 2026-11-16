@@ -94,7 +94,8 @@ describe('0.6.11 日程列表日期列：节日 / 节气各一套颜色与图标
     const head = dayHead(node, 22);
     const line = head.querySelector('.agenda__date-holiday');
     expect(line.classList.contains('agenda__date-holiday--term')).toBe(true);
-    expect(line.getAttribute('title')).toBe('小雪');
+    // 0.8.20：原生 title 已删，名称只靠可见文字与 aria-label。
+    expect(line.hasAttribute('title')).toBe(false);
     expect(line.getAttribute('aria-label')).toBe('节气：小雪');
     expect(line.querySelector('.agenda__date-holiday-name').textContent).toBe('小雪');
     const iconEl = line.querySelector('.agenda__date-holiday-icon');
@@ -110,7 +111,7 @@ describe('0.6.11 日程列表日期列：节日 / 节气各一套颜色与图标
     const head = dayHead(node, 1);
     const line = head.querySelector('.agenda__date-holiday');
     expect(line.classList.contains('agenda__date-holiday--term')).toBe(false);
-    expect(line.getAttribute('title')).toBe('国庆节');
+    expect(line.hasAttribute('title')).toBe(false);
     expect(line.getAttribute('aria-label')).toBe('公共假日：国庆节');
     const iconEl = line.querySelector('.agenda__date-holiday-icon');
     expect(iconEl.innerHTML).toContain('<svg');

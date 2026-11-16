@@ -107,7 +107,7 @@ describe('0.3.8 头像菜单：两枚安全入口', () => {
     const labels = openMenu().map((node) => node.textContent);
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
     // 0.6.15（用户）：快捷键从设置页签搬到菜单，位置在安全入口之后、「立即同步」之前。
-    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '检查更新', '登出']);
+    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     expect(labels.some((label) => label.includes('我的安全'))).toBe(false);
   });
 
@@ -118,7 +118,7 @@ describe('0.3.8 头像菜单：两枚安全入口', () => {
     const labels = openMenu().map((node) => node.textContent);
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
     // 0.6.15（用户）：快捷键对所有登录用户可见，夹在安全入口与「立即同步」之间。
-    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '检查更新', '登出']);
+    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     expect(labels.some((label) => label.includes('安全设置'))).toBe(false);
     // 「不留空位」：每一项都有文字（没有只占位的空菜单项）。
     expect(menuItems().every((node) => node.textContent.trim().length > 0)).toBe(true);

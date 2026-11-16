@@ -1033,6 +1033,20 @@ export function resizedEdges(edge, snappedMin, startMin, endMin) {
   };
 }
 
+/**
+ * 0.8.19（用户 01:30）：aria-label 第三段——日历名。
+ * 查不到（无 store / 无 calendarId / 日历不存在 / 名字为空）返回空串，整段省略。
+ */
+function calendarNameOf(store, calendarId) {
+  const cal =
+    store && typeof store.getCalendar === 'function' && calendarId
+      ? store.getCalendar(calendarId)
+      : null;
+  if (!cal) return '';
+  const name = typeof cal.displayName === 'string' ? cal.displayName : cal.name;
+  return typeof name === 'string' ? name.trim() : '';
+}
+
 export function renderTimeGrid(days, ctx) {
   const { store, settings, now, actions } = ctx;
   const hour12 = settings.hour12;
@@ -1490,8 +1504,14 @@ function buildTimedEvent(event, colIndex, colCount, dayStart, dayEnd, ctx, grid)
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: `ev:${source.id}`, hasLoc: alloc.loc > 0 ? '1' : '0' },
-    title: source.title || t('agenda.event.untitled'),
-    'aria-label': `${source.title || t('agenda.event.untitledAria')}，${formatTimeRange(new Date(source.start), new Date(source.end), { hour12: ctx.settings.hour12 })}${location ? '，' + location : ''}`,
+    // 0.8.19（用户 01:30）：三段「标题，时间，日历名」；查不到日历名整段省略。
+    'aria-label': [
+      `${source.title || t('agenda.event.untitledAria')}`,
+      `${formatTimeRange(new Date(source.start), new Date(source.end), { hour12: ctx.settings.hour12 })}${location ? '，' + location : ''}`,
+      calendarNameOf(ctx.store, source.calendarId),
+    ]
+      .filter(Boolean)
+      .join('，'),
   });
 
   // 没有行数就不生成节点（不靠 CSS 隐藏）。
@@ -1857,8 +1877,14 @@ function buildAllDayChip(event, ctx, day, bounds, slot = null) {
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: `ev:${event.id}` },
-    title: event.title || t('agenda.event.untitled'),
-    'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${t('agenda.event.allDaySuffix')}`,
+    // 0.8.19（用户 01:30）：三段「标题，全天，日历名」；查不到日历名整段省略。
+    'aria-label': [
+      `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}`,
+      t('editor.allDay'),
+      calendarNameOf(ctx.store, event.calendarId),
+    ]
+      .filter(Boolean)
+      .join('，'),
   });
   if (event.ooo && showLabel) node.append(el('span', { class: 'allday-chip__icon', html: icon('plane', { size: 'sm' }) }));
   // 0.7.1（用户）：全天/多日条同样 `emoji + 名称`；延续段（showTitle=false）
@@ -2059,7 +2085,6 @@ function buildOverlayChip(item, ctx) {
       tabindex: '0',
       role: 'button',
       dataset: { focusKey: item.id },
-      title: item.title,
       'aria-label': `${kind}：${item.title}`,
     },
     [
@@ -2088,8 +2113,14 @@ function buildTaskChip(task, ctx) {
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: `task:${task.id}` },
-    title: task.title || t('agenda.task.untitled'),
-    'aria-label': `${t('agenda.task.ariaPrefix')}${task.title || t('agenda.event.untitledAria')}${task.done ? t('agenda.task.doneSuffix') : ''}`,
+    // 0.8.19（用户 01:30）：三段「标题，时间（或全天），日历名」；日历名查不到整段省略。
+    'aria-label': [
+      `${t('agenda.task.ariaPrefix')}${task.title || t('agenda.event.untitledAria')}${task.done ? t('agenda.task.doneSuffix') : ''}`,
+      task.allDay === false ? formatTime(new Date(task.due), { hour12: ctx.settings.hour12 }) : t('editor.allDay'),
+      calendarNameOf(ctx.store, task.calendarId),
+    ]
+      .filter(Boolean)
+      .join('，'),
   });
   const check = el('button', {
     class: `chip__check${task.done ? ' is-checked' : ''}`,

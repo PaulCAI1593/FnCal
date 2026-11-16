@@ -13,13 +13,17 @@
 //   - `privacy=busy`（可选，默认 full）：summary 固定「忙」、location 为 null；
 //   - 隐藏日历（`visible === false` 或 `davAccess === 'hidden'`）连条目都不返回；
 //   - 只返回 id/summary/start/end/allDay/calendarId/color/location 这几个字段；
+//     0.8.29（M5 §F，总监 m01916 契约）再追加四个只读标签字段，供卡片画分类：
+//     tagEmoji / tagGroupId / tagGroupName / tagGroupIndex（分组序号从 0 起）。
+//     分组色不传——客户端按 tagGroupIndex 从分组十色板取色，与年度总结同板同序。
+//     `privacy=busy` 时四个字段一律 null（emoji 会泄漏内容）。
 //   - 事件上限 500，超出时 `truncated: true`；
 //   - ETag = sha256(响应体去 generatedAt) 前 32 位；`Cache-Control: no-store`；
 //     命中 If-None-Match 回 304。
 
 import crypto from 'node:crypto';
 import { createAiRateLimiter } from '../lib/ai-rate-limit.mjs';
-import { eventsOf, expandToIcs } from '../lib/ical.mjs';
+import { eventsOf, expandToIcs, tagIdOfIcs } from '../lib/ical.mjs';
 import { WIDGET_RATE_LIMIT_DEFAULT } from '../lib/widget-store.mjs';
 
 const READ_PREFIX = '/api/widget/v1';
@@ -29,6 +33,72 @@ const DEFAULT_RANGE_DAYS = 45;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const PRIVACY_MODES = Object.freeze(['full', 'busy']);
+
+// 0.8.29（总监 m01916 契约）：单条事件的白名单字段，顺序即响应里的键序。
+// 前八项是 0.6.x 就有的；后四项是 0.8.29 追加的只读标签字段。
+const EVENT_FIELDS = Object.freeze([
+  'id', 'summary', 'start', 'end', 'allDay', 'calendarId', 'color', 'location',
+  'tagEmoji', 'tagGroupId', 'tagGroupName', 'tagGroupIndex',
+]);
+
+// 0.8.29：标签查不到（含标签已删）与无标签时给出的四个空值。
+const NO_TAG_FIELDS = Object.freeze({
+  tagEmoji: null,
+  tagGroupId: null,
+  tagGroupName: null,
+  tagGroupIndex: null,
+});
+
+/**
+ * 0.8.29：把注册表压成两张 Map，按请求建一次。
+ * - `tagById`：标签 id → `{ emoji, groupId }`
+ * - `groupById`：分组 id → `{ name, index }`，`index` 是按 `order` 升序（同 order 按 id 升序）后的下标，从 0 起。
+ * 客户端按 `tagGroupIndex` 从分组十色板取色，所以顺序必须由服务端定死。
+ */
+function buildTagMaps(registry) {
+  const tags = Array.isArray(registry && registry.tags) ? registry.tags : [];
+  const groups = Array.isArray(registry && registry.groups) ? registry.groups : [];
+
+  const ordered = groups
+    .map((group, position) => ({ group, position }))
+    .sort((left, right) => {
+      const leftOrder = Number.isInteger(left.group.order) ? left.group.order : left.position;
+      const rightOrder = Number.isInteger(right.group.order) ? right.group.order : right.position;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      return String(left.group.id || '').localeCompare(String(right.group.id || ''));
+    });
+
+  const groupById = new Map();
+  ordered.forEach((entry, index) => {
+    groupById.set(entry.group.id, { name: entry.group.name || '', index });
+  });
+
+  const tagById = new Map();
+  for (const tag of tags) {
+    if (!tag || !tag.id) continue;
+    tagById.set(tag.id, { emoji: typeof tag.emoji === 'string' ? tag.emoji : '', groupId: tag.groupId || '' });
+  }
+  return { tagById, groupById };
+}
+
+/**
+ * 0.8.29 契约的降级顺序（见 `product/widget-api-0.8.29-字段契约.md`）：
+ * ① 无 tagId → 四 null；② tagId 查不到（标签已删）→ 四 null（不用 CATEGORIES 猜）；
+ * ③ 标签无 emoji → 只有 tagEmoji 为 null；④ 分组缺失或已删 → 分组三项 null，emoji 照给。
+ */
+function tagFieldsOf(tagId, { tagById, groupById }) {
+  const key = typeof tagId === 'string' ? tagId.trim() : '';
+  if (!key) return NO_TAG_FIELDS;
+  const tag = tagById.get(key);
+  if (!tag) return NO_TAG_FIELDS;
+  const group = tag.groupId ? groupById.get(tag.groupId) : null;
+  return {
+    tagEmoji: tag.emoji ? tag.emoji : null,
+    tagGroupId: group ? tag.groupId : null,
+    tagGroupName: group && group.name ? group.name : null,
+    tagGroupIndex: group ? group.index : null,
+  };
+}
 
 function json(res, status, body, extraHeaders = {}) {
   const payload = Buffer.from(JSON.stringify(body), 'utf8');
@@ -77,6 +147,9 @@ export function createWidgetRest({
   version = '',
   now = () => Date.now(),
   limiter = null,
+  // 0.8.29：标签注册表。标签存储按登录用户隔离，借 aiStore.withUser 提供用户上下文。
+  tagStore = null,
+  aiStore = null,
 }) {
   if (!widgetStore) throw new Error('createWidgetRest 需要 widgetStore');
   if (!auth || typeof auth.requireSession !== 'function') throw new Error('createWidgetRest 需要 auth.requireSession');
@@ -97,11 +170,20 @@ export function createWidgetRest({
     }
   }
 
+  // 0.8.29：每个请求只读一次标签注册表（同一次摘要里可能几百条事件，不能逐条读）。
+  async function readTagRegistry(userId) {
+    if (!tagStore || typeof tagStore.list !== 'function') return { tags: [], groups: [] };
+    const read = () => tagStore.list();
+    if (aiStore && typeof aiStore.withUser === 'function') return aiStore.withUser(userId, read);
+    return read();
+  }
+
   async function collect(userId, fromMs, toMs) {
     const metas = await widgetStore.listCalendarMetas(userId);
     const calendars = [];
     const events = [];
     let truncated = false;
+    const tagMaps = buildTagMaps(await readTagRegistry(userId));
 
     for (const meta of Array.isArray(metas) ? metas : []) {
       if (!meta || !meta.id) continue;
@@ -141,6 +223,8 @@ export function createWidgetRest({
           }
           const id = multi ? `${object.uid}#${isoOf(event.start)}` : String(object.uid || '');
           const location = event.location || (master && master.location) || null;
+          // 0.8.29：标签挂在原始事件上（展开出的 occurrence 不带 X-FNCAL-TAG）。
+          const tagFields = tagFieldsOf(tagIdOfIcs(object.content), tagMaps);
           events.push({
             id,
             summary: event.title || (master && master.title) || '',
@@ -150,6 +234,10 @@ export function createWidgetRest({
             calendarId: meta.id,
             color: meta.color || null,
             location: location || null,
+            tagEmoji: tagFields.tagEmoji,
+            tagGroupId: tagFields.tagGroupId,
+            tagGroupName: tagFields.tagGroupName,
+            tagGroupIndex: tagFields.tagGroupIndex,
           });
         }
         if (truncated) break;
@@ -166,7 +254,7 @@ export function createWidgetRest({
   async function buildSummary(userId, privacy, fromMs, toMs) {
     const collected = await collect(userId, fromMs, toMs);
     const masked = collected.events.map((event) => (privacy === 'busy'
-      ? { ...event, summary: '忙', location: null }
+      ? { ...event, summary: '忙', location: null, ...NO_TAG_FIELDS }
       : event));
     const payload = {
       ok: true,

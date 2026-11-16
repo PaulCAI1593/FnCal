@@ -5,6 +5,7 @@
  */
 import { el, clear } from './dom.js';
 import { shouldFallbackToggle } from './brand-toggle.js';
+import { versionedAsset } from './build-info.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
 import { signOut, userInitial } from './auth.js';
@@ -1352,7 +1353,7 @@ export function createApp(root, { store, user }) {
             pointerup: onBrandPointerUp,
           },
         },
-        [el('img', { src: './icon-192.png', alt: '', width: '30', height: '30' })],
+        [el('img', { src: versionedAsset('./icon-192.png'), alt: '', width: '30', height: '30' })],
       )),
       el('span', { class: 'brand-name', text: t('app.name') }),
     ]),
@@ -2038,6 +2039,23 @@ export function createApp(root, { store, user }) {
             if (syncing) return;
             closeUserMenu();
             void syncNow();
+          },
+        },
+      }),
+      // 0.8.0（任务书 §八，用户 2026-11-14）：「年度总结」在「立即同步」与「检查更新」之间。
+      // 0.8.6（用户 2026-11-15）：入口换专属图标（三柱 + 上升箭头），不再与「快捷键」共用四宫格。
+      el('button', {
+        class: 'menu-item popover__annual',
+        type: 'button',
+        html: icon('annual-review', { size: 'sm' }) + `<span>${t('menu.annualSummary')}</span>`,
+        on: {
+          click: () => {
+            closeUserMenu();
+            void import('./annual-summary.js')
+              // 0.8.4：年份从 `state.cursor` 取（cursor 不在 store 上），
+              // 否则 annual-summary 会退回系统当前年，用户 2025 里点出来还是 2026。
+              .then((mod) => mod.openAnnualSummary({ store, year: state.cursor.getFullYear() }))
+              .catch(() => toast(t('common.loadFailed'), { variant: 'danger' }));
           },
         },
       }),

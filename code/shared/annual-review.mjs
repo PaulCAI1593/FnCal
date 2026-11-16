@@ -1,0 +1,1831 @@
+/**
+ * 年度总结：统计 + 卡片布局 + 绘制（单一数据源，0.8.0）。
+ *
+ *   浏览器（src/js/lib/annual-review.js）与后端（app/lib/annual-review.mjs）
+ *   都由 `code/scripts/sync-annual.mjs` 从本文件生成，逐字一致。
+ *
+ * 三层，互不越界：
+ *   1. buildAnnualReviewData() —— 纯统计，产出数字与文案（唯一口径）。
+ *   2. buildAnnualCardLayout() —— 数字 → 布局元素数组（1080×1440 坐标系）。
+ *   3. paintAnnualCard()       —— 布局元素 → Canvas2D（浏览器 canvas / @napi-rs/canvas 通用）。
+ *   SVG 导出复用第 2 层，不另外算一遍。
+ *
+ * 统计口径（与任务书一致）：
+ *   - 每个日程实例按「开始时间」归属年份，跨年不拆分；
+ *   - 重复事件由调用方先展开成实例（前端 expandOccurrences）再传进来；
+ *   - 无标签的实例记「未分类」，用通用日历 emoji，不与真实标签混排。
+ *
+ * 许可：本文件为项目自有代码（MIT，见仓库 LICENSE）。
+ */
+import { encodeQr, paintQr } from './qr.mjs';
+import { EMOJI_TEXTURES, emojiTextureKey } from './emoji-textures.mjs';
+
+export { EMOJI_TEXTURES, emojiTextureKey };
+
+/**
+ * 把贴图模块解码成绘制用的图片表（键 = 首码点十六进制）。
+ * Node 侧传 `async (url) => new Image(..., { src: Buffer } )` 之类的加载器；浏览器侧传 `new Image()` 解码。
+ * 解码不了的贴图跳过，绘制时自动退回字体字形。
+ */
+export async function loadEmojiImages(loadOne) {
+  const images = new Map();
+  await Promise.all(Object.entries(EMOJI_TEXTURES).map(async ([key, url]) => {
+    try {
+      const image = await loadOne(url);
+      if (image) images.set(key, image);
+    } catch {
+      /* 单张贴图解不出来不影响整卡 */
+    }
+  }));
+  return images;
+}
+
+export const CARD_WIDTH = 1080;
+export const CARD_HEIGHT = 1440;
+
+export const BRAND_GRADIENT = Object.freeze({ from: '#1e72d6', to: '#01b597' });
+export const QR_URL = 'https://paulcai1593.github.io/FnCal/';
+
+// 卡片重点色 = 设置里的主题色（用户 2026-11-14 口径）。读不到或非法 → 深蓝。
+export const DEFAULT_ACCENT = '#2f5e9e';
+const ACCENT_RE = /^#[0-9a-f]{6}$/i;
+
+/** 与 `web/src/js/accent-theme.js` 的 normalizeAccent 同一规则：6 位 HEX，小写。 */
+export function normalizeAccentColor(value) {
+  const raw = String(value == null ? '' : value).trim();
+  return ACCENT_RE.test(raw) ? raw.toLowerCase() : DEFAULT_ACCENT;
+}
+
+const INK = '#14161c';
+// v14 mock 口径（design/annual-card-mock/mock-a2.html）
+const INK2 = '#5b6472';
+const INK3 = '#616b79';
+const HAIR = '#eceef2';
+const CARD_FILL = 'rgba(255,255,255,0.88)';
+const CARD_SHADOWS = Object.freeze([
+  { color: 'rgba(6,42,66,0.10)', blur: 6, dy: 2 },
+  { color: 'rgba(6,42,66,0.20)', blur: 40, dy: 18 },
+]);
+/** 年份外 / 0 条日程格的底色（mock `#e2e8f0`）。 */
+const HEAT_EMPTY = '#d6e1ed';
+const BAR_TRACK = '#eef1f5';
+
+const FONT_STACK =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Sans SC', 'Noto Color Emoji', sans-serif";
+
+const UNCATEGORIZED = { name: '未分类', emoji: '📅' };
+const UNGROUPED_NAME = '未分组';
+/** 有标签但标签没归组（用户 04:41）：单独一项，棕灰 #6b5f52；无标签日程根本不计入分类统计。 */
+export const UNGROUPED_COLOR = '#6b5f52';
+const OTHER_LABEL = '其他';
+const FALLBACK_COLOR = '#c9ced8';
+
+/**
+ * 「未分类」= 蓝青 #4f8aa8（用户 2026-11-15 04:25 与「工作」对调颜色；取消 04:23 的蓝灰候选）。
+ * 历史值留档：#d3a35f（04:17 沙金）→ #b07a2e（04:20 加深沙金）→ #7d93ab（04:23 蓝灰，未采用）。
+ */
+export const UNCAT_COLOR = '#4f8aa8'; // 历史常量：04:40 起「未分类」已取消（无标签不进分类统计），不再参与绘制，仅留兼容。
+/** 聚合桶「其他」（分类 >10、日历 >5）= 中性灰 #98a2b3（用户 04:23 恢复原灰，只给聚合桶用）。 */
+export const OTHER_COLOR = '#98a2b3';
+/** 兼容旧名：分类聚合桶「其他」的颜色（= OTHER_COLOR）。 */
+const OTHER_CAT_COLOR = OTHER_COLOR;
+
+/**
+ * 分组色板（0.8.13，用户选定「候选 B」十色换版）：10 色循环，组序 1 起，第 11 组回第 1 色。
+ * **顺序是「最远点」排出来的，不要改成色相升序**：相邻两项 ΔE 最小 29.8、前 5 色两两最小 21.9；
+ * 改升序会变成相邻近似（玫红 → 珊瑚只差 12.9）。未分组 `#6b5f52`、「其他」`#98a2b3`、
+ * 未分类 `#4f8aa8` 都不进轮换。
+ * 实测：十色两两 ΔE 最小 12.8（#a890d4 / #da8dc8）；每色对日历九色最小 13.0；
+ * 每色对未分类/其他/未分组最小 12.6；每色对卡底 #f0f5fa 对比 2.02–2.58:1。
+ */
+export const WORK_COLOR = '#b07a2e';
+export const GROUP_PALETTE = Object.freeze([
+  '#da7f92', '#5ab669', '#59b8dd', '#bf9759', '#a890d4',
+  '#f28a6e', '#60bead', '#b4b135', '#6da0e6', '#da8dc8',
+]);
+
+/**
+ * 组序归一（总监 2026-11-15 04:30）：tag store 的 `group.order` 从 0 起，
+ * 展示与配色一律换成从 1 起；读不到分组 → -1（进「未分类」）。
+ * 第一组 order=0 → 1，绝不能再被当成未分类。
+ */
+export function normalizeGroupOrder(raw) {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n + 1 : -1;
+}
+
+/** 组序 → 组色（10 色循环，第 11 组回第 1 色）。组序**从 1 开始**（取设置里的分组顺序）：
+ *  颜色一律取 `GROUP_PALETTE`（0.8.13 起为候选 B 十色），未知组 / 未归组回 `UNGROUPED_COLOR`，
+ *  不参与轮换。「其他」灰 `#98a2b3` 与未分类 `#4f8aa8` 也都不进轮换。 */
+export function groupColorOf(order) {
+  const index = Number(order);
+  if (!Number.isInteger(index) || index < 1) return UNGROUPED_COLOR;
+  return GROUP_PALETTE[(index - 1) % GROUP_PALETTE.length];
+}
+
+/* ---- 颜色工具 ---------------------------------------------------------- */
+
+function hexToRgb(hex) {
+  const value = String(hex || '').replace('#', '');
+  const full = value.length === 3 ? value.split('').map((c) => c + c).join('') : value;
+  const num = Number.parseInt(full.slice(0, 6), 16);
+  if (!Number.isFinite(num)) return { r: 138, g: 147, b: 163 };
+  return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+}
+
+function rgbToHex({ r, g, b }) {
+  const part = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  return `#${part(r)}${part(g)}${part(b)}`;
+}
+
+/** 白色底上的半透明色 → 实际显示色（用于算文字对比）。 */
+function overWhite(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return rgbToHex({ r: 255 - (255 - r) * alpha, g: 255 - (255 - g) * alpha, b: 255 - (255 - b) * alpha });
+}
+
+/**
+ * 热度格的实际填色：日历色按档混白，但必须与空格拉开 ≥1.15:1。
+ * 暖色（橙黄）混到 0.35 档会接近白，与空格糊成一片，此时只把这一格往黑收一点。
+ */
+function heatBandColor(color, alpha) {
+  let hex = overWhite(color, alpha);
+  let guard = 0;
+  while (contrastRatio(hex, HEAT_EMPTY) < 1.15 && guard < 12) {
+    hex = darkenHex(hex, 0.06);
+    guard += 1;
+  }
+  return hex;
+}
+
+function relativeLuminance(hex) {
+  const { r, g, b } = hexToRgb(hex);
+  const lin = (v) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** 两色对比度（WCAG 2.1，1–21）。 */
+function contrastRatio(a, b) {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** 该底色上用深字还是白字：逐格比较两种字的对比度，取高者（不用亮度阈值）。 */
+function inkOn(hex) {
+  return contrastRatio(INK, hex) >= contrastRatio('#ffffff', hex) ? INK : '#ffffff';
+}
+
+/** 每个通道按 p 向黑混合（定稿 §8 的 `darken()`）。 */
+function darkenHex(hex, p) {
+  const { r, g, b } = hexToRgb(hex);
+  const mix = (v) => Math.round(v * (1 - p));
+  return rgbToHex({ r: mix(r), g: mix(g), b: mix(b) });
+}
+
+/** 每个通道按 p 向白混合（定稿 §8 的 `tint()`）。 */
+export function tintHex(hex, p) {
+  const { r, g, b } = hexToRgb(hex);
+  const mix = (v) => Math.round(v + (255 - v) * p);
+  return rgbToHex({ r: mix(r), g: mix(g), b: mix(b) });
+}
+
+/**
+ * 主题色保底（定稿 §8）：读到 `settings.accentColor` 后，白卡上只要相对亮度 > .18
+ * 就继续向黑混 18%，最多 10 次，保证标题等文字对比 ≥ 4.5:1。
+ * 网页与服务端必须用同一段算法（本函数就是唯一实现）。
+ */
+export function accentInk(value) {
+  let hex = normalizeAccentColor(value);
+  let guard = 0;
+  // 卡底最浅一档是 #e8eef7（88% 白叠渐变）；亮度判据之外再按真实对比度收一次，
+  // 否则 #b45309 这类中深色对最浅卡底只有 4.31:1。
+  while ((relativeLuminance(hex) > 0.18 || contrastRatio(hex, '#e8eef7') < 4.5) && guard < 20) {
+    hex = darkenHex(hex, 0.12);
+    guard += 1;
+  }
+  return hex;
+}
+
+/**
+ * 月度格文字色：先用 inkOn；若深字仍不足 4.5:1，改用更深的 #0B0D12（约 4.9:1），
+ * 只影响个别边界格，其余格保持 #14161C。
+ */
+function monthInk(hex) {
+  const ink = inkOn(hex);
+  if (ink !== INK) return ink;
+  if (contrastRatio(INK, hex) >= 4.5) return INK;
+  return '#0B0D12';
+}
+
+/* ---- 1. 统计 ----------------------------------------------------------- */
+
+const MONTH_NAMES = ['1 月', '2 月', '3 月', '4 月', '5 月', '6 月', '7 月', '8 月', '9 月', '10 月', '11 月', '12 月'];
+
+/**
+ * 透明度：按当月总量相对最大月线性映射 0.14 → 0.85，取到 0.01。
+ * 同一日历颜色下数量不同即深浅不同；最淡档 0.14 仍留足文字对比。
+ */
+function alphaBand(total, max) {
+  if (!total) return 0;
+  if (!max) return 0.14;
+  const ratio = Math.max(0, Math.min(1, total / max));
+  return Math.round((0.14 + 0.71 * ratio) * 100) / 100;
+}
+
+/**
+ * 日热度图深浅：4 档（定稿 §3，0.8.27 口径）——0 条不画色（布局层给 HEAT_EMPTY），
+ * 1 条 .56 / 2 条 .78 / 3 条 1（原色）/ 4 条以上 1 + 再压深 12%（见 heatCellFill）。
+ * 最浅档 .56 不能更低：橙色 #f59e0b 在 .56 对空格 #d6e1ed 只有 1.16:1，再低就糊。
+ * 0.8.26 用户 m01310「透明度从 50-100，区别大一点」：由 [0,.56,.71,.85,1] 拉开到本档差。
+ */
+function dayAlphaBand(total) {
+  if (!total) return 0;
+  const steps = [0, 0.56, 0.78, 1, 1];
+  return steps[Math.min(Math.round(total), 4)] || 1;
+}
+
+/** 空格色（定稿 §3，2026-11-15 定）：非本年格位空开不画，本年 0 条画这个色。 */
+export const HEAT_EMPTY_COLOR = HEAT_EMPTY;
+
+/**
+ * 热度格最终填色（唯一实现，布局、自检表、单测都用它）：
+ * 0 条 → 空格色；否则日历色按 4 档混白（4 条以上再压深 12%），并兜底保证与空格 ≥1.15:1。
+ *
+ * 0.8.9：`accent` 必须由调用方传入（默认 `DEFAULT_ACCENT`）。旧版在这里引用
+ * 布局内的局部 `ACCENT`，模块作用域取不到 → 「日历已删、日程还在」时
+ * `calendarColor` 为空就抛 `ReferenceError: ACCENT is not defined`，整张卡渲染失败。
+ */
+export function heatCellFill(color, total, accent = DEFAULT_ACCENT) {
+  if (!total) return HEAT_EMPTY;
+  const tier = Math.min(Math.round(total), 4);
+  const hex = heatBandColor(color || accent, dayAlphaBand(total));
+  // 0.8.26 用户 m01310：4 条以上再压深 12%，与「3 条 = 原色」拉开一档。
+  return tier === 4 ? darkenHex(hex, 0.12) : hex;
+}
+
+/** 本地日期 → `YYYY-MM-DD`。 */
+function isoDateOf(date) {
+  return `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, '0')}-${`${date.getDate()}`.padStart(2, '0')}`;
+}
+
+/** `YYYY-MM-DD` → `5 月 12 日`（卡片文案）。 */
+function dayLabel(iso) {
+  const [, month, day] = String(iso || '').split('-').map((part) => Number(part));
+  if (!month || !day) return '';
+  return `${month} 月 ${day} 日`;
+}
+
+/** 粗估字宽：布局要算右对齐/居中的位置，但布局层拿不到 canvas 度量。 */
+function charWidth(ch, size) {
+  const code = ch.codePointAt(0) || 0;
+  if (code >= 0x2e80 || code >= 0x1f000) return size;
+  if (ch === ' ') return size * 0.28;
+  if (code >= 48 && code <= 57) return size * 0.56;
+  if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) return size * 0.58;
+  return size * 0.5;
+}
+
+function textWidth(value, size) {
+  let sum = 0;
+  for (const ch of String(value)) sum += charWidth(ch, size);
+  return sum;
+}
+
+function nameOfTag(tag) {
+  if (!tag) return UNCATEGORIZED.name;
+  const name = String(tag.name || '').trim();
+  if (name) return name;
+  return UNCATEGORIZED.name;
+}
+
+function emojiOfTag(tag) {
+  if (!tag) return UNCATEGORIZED.emoji;
+  const emoji = String(tag.emoji || '').trim();
+  return emoji || UNCATEGORIZED.emoji;
+}
+
+/**
+ * 最大余数法分配百分比（0.8.16，总监 00:48）：每项保留一位小数，合计必须正好 100.0%。
+ * 逐项 `Math.round` 会让 6 等分各 16.7% 合计 100.2%；这里先按 0.1% 向下取整，
+ * 再把剩下的 0.1% 依次给余数最大的项（余数相同给条数多的，再相同按原顺序）。
+ * 返回数组，单位是百分数（如 16.7），与 `percent` 字段一致。
+ */
+export function largestRemainderPercents(counts, total) {
+  const sum = Number(total) || 0;
+  const values = Array.from(counts, (count) => Math.max(0, Number(count) || 0));
+  if (!sum || !values.length) return values.map(() => 0);
+  // 以 0.1% 为单位：合计 1000 份。
+  const exact = values.map((count) => (count / sum) * 1000);
+  const tenths = exact.map((value) => Math.floor(value));
+  let rest = 1000 - tenths.reduce((acc, value) => acc + value, 0);
+  const order = values
+    .map((count, index) => ({ index, remainder: exact[index] - tenths[index], count }))
+    .sort((a, b) => b.remainder - a.remainder || b.count - a.count || a.index - b.index);
+  let cursor = 0;
+  while (rest > 0 && order.length) {
+    tenths[order[cursor % order.length].index] += 1;
+    rest -= 1;
+    cursor += 1;
+  }
+  return tenths.map((value) => value / 10);
+}
+
+/**
+ * 「最长一次」的文案候选（0.8.14，总监 00:17）：不足 60 分钟写「N 分钟」，
+ * ≥ 60 分钟写「H 小时 M 分」（整点省略 M 分）——不再把 30 分钟 round 成 1 小时。
+ * 返回按信息量递减排序的候选；布局用真实字体量宽，挑第一个放得下的：
+ * 先省分钟（`H 小时，日期`），再不够才省日期。
+ */
+export function longestDurationTexts(minutes, dateLabel) {
+  const total = Math.max(1, Math.round(Number(minutes) || 0));
+  const date = String(dateLabel || '').trim();
+  const withDate = (value) => (date ? `${value}，${date}` : value);
+  const texts = [];
+  if (total < 60) {
+    texts.push(withDate(`最长一次 ${total} 分钟`), `最长一次 ${total} 分钟`);
+  } else {
+    const hours = Math.floor(total / 60);
+    const mins = total % 60;
+    texts.push(withDate(mins ? `最长一次 ${hours} 小时 ${mins} 分` : `最长一次 ${hours} 小时`));
+    if (mins) texts.push(withDate(`最长一次 ${hours} 小时`));
+    texts.push(`最长一次 ${hours} 小时`);
+  }
+  return [...new Set(texts)];
+}
+
+/** 任一 emoji（含带变体选择符的写法）；按 Unicode 属性判定，不用固定白名单。 */
+const PICTOGRAPHIC_RE = /\p{Extended_Pictographic}/u;
+
+/**
+ * 一条日程最多 1 个 emoji（0.8.3 用户口径）：标题里已有 emoji 就用标题自己的，
+ * 不再前置标签 emoji；标题没有 emoji 才前置标签 emoji，没有标签用 📅。
+ * 卡片上任何「emoji + 名称」的组合都走这里，不要在各处手写拼接。
+ */
+export function emojiTitle(emoji, title) {
+  const text = String(title == null ? '' : title).trim();
+  if (!text) return '';
+  // 比较前去掉变体选择符 FE0F：`✈️` 与 `✈` 视为同一个 emoji。
+  if (PICTOGRAPHIC_RE.test(text.replace(/\uFE0F/g, ''))) return text;
+  return `${emoji || UNCATEGORIZED.emoji} ${text}`;
+}
+
+/**
+ * 标签 → 分组（名称 + 组序）。`tagOf` 由调用方按标签注册表补齐；
+ * 读不到分组时归「未分类」、组序 -1（图例末位，石板灰）。
+ */
+function groupOfTag(tag) {
+  // 无标签（标签选择器里的「无标签」）：不进分类统计，order = -2 作为排除哨兵。
+  if (!tag) return { name: '', order: -2, untagged: true };
+  const name = String(tag.group || tag.groupName || '').trim();
+  const raw = Number(tag.groupOrder);
+  const order = Number.isInteger(raw) && raw >= 0 ? raw : -1;
+  // 有标签但没归组 → 「未分组」：照常统计，单独一项。
+  if (!name || order < 0) return { name: UNGROUPED_NAME, order: -1, ungrouped: true };
+  return { name, order };
+}
+
+/**
+ * 统计一年（v14 口径：任务书 §14.6）。
+ * @param {object}   input
+ * @param {Array}    input.events    日程实例（重复事件应先展开），字段 start/end/allDay/title/calendarId/tagId/categories
+ * @param {Array}    input.calendars [{ id, name, color }]，color 为十六进制，顺序即并列时的优先顺序
+ * @param {Function} input.tagOf      (record) => { name, emoji, group?, groupOrder? } | null
+ * @param {number}   input.year       四位年份
+ * @param {Date|number} [input.now]   生成时间（只记录，不画在卡片上）
+ * @param {number}   [input.weekStartsOn] 0 = 周日开头，1 = 周一开头（取设置）
+ */
+export function buildAnnualReviewData({
+  events = [], calendars = [], tagOf = () => null, groups = [], year, now = Date.now(), accent = DEFAULT_ACCENT, weekStartsOn = 1,
+} = {}) {
+  const y = Number(year);
+  const accentColor = normalizeAccentColor(accent);
+  const from = new Date(y, 0, 1, 0, 0, 0, 0).getTime();
+  const to = new Date(y + 1, 0, 1, 0, 0, 0, 0).getTime();
+
+  const calIndex = new Map();
+  const calInfo = new Map();
+  calendars.forEach((cal, index) => {
+    calIndex.set(cal.id, index);
+    calInfo.set(cal.id, cal);
+  });
+
+  const months = MONTH_NAMES.map((_, i) => ({
+    month: i + 1,
+    total: 0,
+    calCounts: new Map(),
+    catCounts: new Map(),
+  }));
+  const calCounts = new Map();
+  const catCounts = new Map(); // name → { count, emoji, calCounts: Map }
+  const dayCalCounts = new Map();
+  const dayCats = new Map(); // dayIndex → Set<分类名>
+  const weekday = new Array(7).fill(0); // 周一 … 周日
+  const hourBuckets = new Array(24).fill(0);
+  const DAY_MS = 86400000;
+  const dayCount = Math.round((to - from) / DAY_MS);
+  let total = 0;
+  let totalMinutes = 0;
+  let taggedTotal = 0;
+  let longest = null;
+
+  for (const record of events) {
+    const start = Number(record && record.start);
+    if (!Number.isFinite(start) || start < from || start >= to) continue;
+    total += 1;
+    const when = new Date(start);
+    const bucket = months[when.getMonth()];
+    bucket.total += 1;
+
+    const calId = typeof record.calendarId === 'string' && record.calendarId
+      ? record.calendarId
+      : calendars[0] ? calendars[0].id : '';
+    bucket.calCounts.set(calId, (bucket.calCounts.get(calId) || 0) + 1);
+    calCounts.set(calId, (calCounts.get(calId) || 0) + 1);
+
+    // 日桶：按本地自然日归属（跨年事件已在上面被年份过滤掉）
+    const dayStart = new Date(when.getFullYear(), when.getMonth(), when.getDate()).getTime();
+    const dayIndex = Math.round((dayStart - from) / DAY_MS);
+    if (dayIndex >= 0 && dayIndex < dayCount) {
+      let perDay = dayCalCounts.get(dayIndex);
+      if (!perDay) {
+        perDay = new Map();
+        dayCalCounts.set(dayIndex, perDay);
+      }
+      perDay.set(calId, (perDay.get(calId) || 0) + 1);
+    }
+
+    weekday[(when.getDay() + 6) % 7] += 1;
+
+    // 时段分布 = 「占用小时」（用户 2026-11-15 03:22/03:24 口径）：
+    //   排除：全天日程；跨度 ≥ 24 小时的多日定时日程；end 缺失或 end ≤ start。
+    //   计入：对每个 [h:00, h+1:00) 算与本日程的重叠分钟，≥30 分钟（含等号）→ 该小时 +1。
+    //   兜底：一格都不满 30 分钟（如 10:10–10:20）时，至少给开始所在小时 +1，不让它从曲线消失。
+    const end = Number(record && record.end);
+    const spanMs = end - start;
+    if (!record.allDay && Number.isFinite(end) && spanMs > 0 && spanMs < DAY_MS) {
+      const cursor = new Date(start);
+      cursor.setMinutes(0, 0, 0);
+      let counted = 0;
+      while (cursor.getTime() < end) {
+        const cellStart = cursor.getTime();
+        const overlapMinutes = (Math.min(end, cellStart + 3600000) - Math.max(start, cellStart)) / 60000;
+        if (overlapMinutes >= 30) {
+          hourBuckets[cursor.getHours()] += 1;
+          counted += 1;
+        }
+        cursor.setHours(cursor.getHours() + 1);
+      }
+      if (!counted) hourBuckets[when.getHours()] += 1;
+    }
+
+    // 全年时长只累加非全天日程的 end − start（全天日程计入条数但不计入分钟）。
+    // 「最长一次」的口径（任务书 §16.1）：只在单日定时日程里挑——全天日程不入选，
+    // 跨度 ≥ 24 小时的多日定时日程（如 18:00 起、3 天后结束 = 58 小时）不入选，
+    // 跨天但不足 24 小时的仍入选（18:00 → 次日 04:00 = 10 小时）。
+    if (!record.allDay && Number.isFinite(end) && end > start) {
+      const minutes = Math.round((end - start) / 60000);
+      totalMinutes += minutes;
+      if (minutes < 24 * 60 && (!longest || minutes > longest.minutes)) {
+        longest = { minutes, date: isoDateOf(when), record };
+      }
+    }
+
+    const tag = tagOf(record);
+    if (!tag) {
+      // 04:41 口径：无标签日程不计入分类分布（条形/图例/百分比都不出现）
+      continue;
+    }
+    taggedTotal += 1;
+    const catName = nameOfTag(tag);
+    const catEmoji = emojiOfTag(tag);
+    const group = groupOfTag(tag);
+    bucket.catCounts.set(catName, (bucket.catCounts.get(catName) || 0) + 1);
+    const prev = catCounts.get(catName) || {
+      count: 0, emoji: catEmoji, calCounts: new Map(), group: group.name, groupOrder: group.order,
+    };
+    prev.count += 1;
+    if (!prev.emoji) prev.emoji = catEmoji;
+    if (prev.groupOrder < 0 && group.order >= 0) {
+      prev.group = group.name;
+      prev.groupOrder = group.order;
+    }
+    prev.calCounts.set(calId, (prev.calCounts.get(calId) || 0) + 1);
+    catCounts.set(catName, prev);
+
+    if (dayIndex >= 0 && dayIndex < dayCount) {
+      let cats = dayCats.get(dayIndex);
+      if (!cats) {
+        cats = new Set();
+        dayCats.set(dayIndex, cats);
+      }
+      cats.add(catName);
+    }
+  }
+
+  const maxMonthly = months.reduce((max, m) => Math.max(max, m.total), 0);
+  const maxDaily = [...dayCalCounts.values()].reduce((max, perDay) => {
+    const sum = [...perDay.values()].reduce((acc, n) => acc + n, 0);
+    return Math.max(max, sum);
+  }, 0);
+
+  /** 某日历集合里条数最多的那个日历（并列取日历顺序靠前者）。 */
+  const championCal = (counts) => {
+    let champId = '';
+    let champCount = 0;
+    for (const [id, count] of counts) {
+      const prevIndex = championCalIndexOr(champId);
+      const nextIndex = calIndex.get(id) ?? Infinity;
+      if (count > champCount || (count === champCount && nextIndex < prevIndex)) {
+        champId = id;
+        champCount = count;
+      }
+    }
+    const cal = champId ? calInfo.get(champId) : null;
+    return { id: champId, count: champCount, color: cal && cal.color ? String(cal.color) : '' };
+  };
+  function championCalIndexOr(id) {
+    return id ? (calIndex.get(id) ?? Infinity) : Infinity;
+  }
+
+  // 全年每一天：条数 + 该日事件数最多的日历颜色（并列取日历顺序靠前者）
+  const days = [];
+  for (let index = 0; index < dayCount; index += 1) {
+    const perDay = dayCalCounts.get(index);
+    let dayTotal = 0;
+    if (perDay) for (const count of perDay.values()) dayTotal += count;
+    const champ = perDay ? championCal(perDay) : { color: '' };
+    const date = new Date(from + index * DAY_MS);
+    days.push({
+      index,
+      date: isoDateOf(date),
+      total: dayTotal,
+      calendarColor: dayTotal ? champ.color : '',
+      color: dayTotal ? champ.color : '',
+      alpha: dayTotal ? dayAlphaBand(dayTotal, maxDaily) : 0,
+    });
+  }
+
+  const monthRows = months.map((bucket) => {
+    const champ = championCal(bucket.calCounts);
+    let champCat = null;
+    let champCatCount = 0;
+    for (const [name, count] of bucket.catCounts) {
+      if (count > champCatCount || (count === champCatCount && champCat && name.localeCompare(champCat, 'zh-Hans-CN') < 0)) {
+        champCat = name;
+        champCatCount = count;
+      }
+    }
+    const color = champ.color || FALLBACK_COLOR;
+    const alpha = alphaBand(bucket.total, maxMonthly);
+    return {
+      month: bucket.month,
+      name: MONTH_NAMES[bucket.month - 1],
+      total: bucket.total,
+      count: bucket.total,
+      calendarId: champ.id,
+      color,
+      calendarColor: color,
+      alpha,
+      ink: bucket.total ? inkOn(overWhite(color, alpha)) : INK3,
+      emoji: champCat ? (catCounts.get(champCat) || {}).emoji || UNCATEGORIZED.emoji : '',
+    };
+  });
+
+  const calendarRows = calendars
+    .map((cal, index) => ({ ...cal, index, count: calCounts.get(cal.id) || 0 }))
+    .filter((cal) => cal.count > 0)
+    .sort((a, b) => b.count - a.count || a.index - b.index);
+
+  const calendarSlices = [];
+  calendarRows.slice(0, 5).forEach((cal) => calendarSlices.push({
+    id: cal.id, name: cal.name, color: cal.color, count: cal.count,
+  }));
+  const restCals = calendarRows.slice(5);
+  if (restCals.length) {
+    calendarSlices.push({
+      id: '__other',
+      name: OTHER_LABEL,
+      color: OTHER_COLOR,
+      count: restCals.reduce((sum, cal) => sum + cal.count, 0),
+    });
+  }
+  const pct = (count) => (total ? Math.round((count / total) * 1000) / 10 : 0);
+  // 0.8.16（用户 00:48）：逐项四舍五入会让合计变 100.2%（6 项各 16.7%）。
+  // 圆形图例改最大余数法：先按 0.1% 取整，再按余数从大到小把差额补上，合计正好 100.0%。
+  const ringPercents = largestRemainderPercents(calendarSlices.map((slice) => slice.count), total);
+  calendarSlices.forEach((slice, index) => {
+    slice.percent = total ? ringPercents[index] : pct(slice.count);
+  });
+
+  const catRows = [...catCounts.entries()]
+    .map(([name, value]) => ({
+      name,
+      emoji: value.emoji,
+      count: value.count,
+      calendarColor: championCal(value.calCounts).color || FALLBACK_COLOR,
+      group: value.group || UNGROUPED_NAME,
+      groupOrder: Number.isInteger(value.groupOrder) ? value.groupOrder : -1,
+      // 有标签但未归组（order < 1）的条形也统一用「未分组」棕灰；正常分组按组序取色板。
+      groupColor: Number.isInteger(value.groupOrder) && value.groupOrder >= 1 ? groupColorOf(value.groupOrder) : UNGROUPED_COLOR,
+    }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh-Hans-CN'));
+
+  const categories = catRows.slice(0, 10).map((row) => ({ ...row }));
+  const restCats = catRows.slice(10);
+  if (restCats.length) {
+    categories.push({
+      name: OTHER_LABEL,
+      emoji: '📦',
+      count: restCats.reduce((sum, row) => sum + row.count, 0),
+      calendarColor: OTHER_COLOR,
+      group: OTHER_LABEL,
+      groupOrder: -1,
+      groupColor: OTHER_COLOR,
+      other: true,
+    });
+  }
+  // 04:40 口径：分类百分比的分母 = 有标签日程合计（不是全年总条数）
+  const catPct = (count) => (taggedTotal ? Math.round((count / taggedTotal) * 1000) / 10 : 0);
+  categories.forEach((row) => {
+    row.percent = catPct(row.count);
+  });
+
+  // 分组图例：用**全部分类**（含后被并进「其他」的那几行）聚合，图例合计 = 全年总数，
+  // 否则第 11 个起的分类会在图例里丢条数。用户分组按组序升序；「未分类」固定末位、
+  // 已按 04:17 口径：未分类 = 沙金 #d3a35f，只有聚合「其他」= 灰 #98a2b3。
+  // 分组图例（2026-11-15 03:50）：0 条目的分类一律不显示，分组也只按**实际有日程的分类**
+  // 聚合；某分组下所有分类都是 0 条时，该分组图例一起隐藏，不再保留空占位。
+  // 「未分类」固定末位、用沙金 #d3a35f（灰色只留给聚合「其他」，用户 04:17 口径）。
+  const groupRows = [];
+  const groupSeen = new Map();
+  let ungroupedRow = null;
+  for (const row of catRows) {
+    if (!(row.count > 0)) continue;
+    const isUngrouped = row.groupOrder < 1;
+    const key = isUngrouped ? UNGROUPED_NAME : row.group;
+    if (isUngrouped) {
+      if (!ungroupedRow) ungroupedRow = { name: UNGROUPED_NAME, order: -1, color: UNGROUPED_COLOR, count: 0 };
+      ungroupedRow.count += row.count;
+      continue;
+    }
+    let hit = groupSeen.get(key);
+    if (!hit) {
+      hit = { name: key, order: row.groupOrder, color: row.groupColor, count: 0 };
+      groupSeen.set(key, hit);
+      groupRows.push(hit);
+    }
+    hit.count += row.count;
+  }
+  groupRows.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  if (ungroupedRow) groupRows.push(ungroupedRow);
+
+  let busiest = null;
+  for (const row of monthRows) {
+    if (!busiest || row.total > busiest.total) busiest = row;
+  }
+
+  // 连续有日程的最长天数
+  let longestStreak = 0;
+  let streak = 0;
+  for (const day of days) {
+    if (day.total > 0) {
+      streak += 1;
+      if (streak > longestStreak) longestStreak = streak;
+    } else {
+      streak = 0;
+    }
+  }
+
+  let busiestDay = null;
+  let richestDay = null;
+  for (const day of days) {
+    if (!day.total) continue;
+    if (!busiestDay || day.total > busiestDay.count) {
+      busiestDay = { date: day.date, count: day.total };
+    }
+    const cats = dayCats.get(day.index);
+    const catCount = cats ? cats.size : 0;
+    if (!richestDay || catCount > richestDay.categories) {
+      richestDay = { date: day.date, categories: catCount };
+    }
+  }
+
+  const daysWithEvents = days.reduce((sum, day) => sum + (day.total ? 1 : 0), 0);
+  const date = new Date(now);
+  const generatedAt = isoDateOf(date);
+
+  const longestEvent = longest
+    ? {
+      minutes: longest.minutes,
+      date: longest.date,
+      title: String((longest.record && longest.record.title) || '').trim(),
+      categoryEmoji: emojiOfTag(tagOf(longest.record)),
+    }
+    : null;
+
+  // `weekday` 内部按周一开头累计（周一 … 周日）；输出按「周首」设置旋转。
+  const weekStart = Number(weekStartsOn) === 0 ? 0 : 1;
+  const weekdayByStart = weekStart === 0
+    ? [weekday[6], ...weekday.slice(0, 6)]
+    : weekday.slice();
+  const weekdayLabels = weekStart === 0
+    ? ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+    : ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+  return {
+    year: y,
+    total,
+    calendarCount: calendarRows.length,
+    categoryCount: catRows.length,
+    months: monthRows,
+    days,
+    heat: days.map((day) => ({ date: day.date, count: day.total, calendarColor: day.calendarColor })),
+    maxDaily,
+    calendars: calendarSlices,
+    categories,
+    groups: groupRows,
+    busiest: busiest && busiest.total > 0 ? { month: busiest.month, name: busiest.name, total: busiest.total } : null,
+    busiestDay,
+    richestDay,
+    longestEvent,
+    weekday: weekdayByStart,
+    weekdayLabels,
+    hourBuckets,
+    duration: {
+      totalMinutes,
+      longest: longestEvent,
+    },
+    kpis: {
+      daysWithEvents,
+      avgPerDay: dayCount ? Math.round((total / dayCount) * 10) / 10 : 0,
+      longestStreak,
+      busiestDay,
+      richestDay,
+    },
+    weekStartsOn: weekStart,
+    generatedAt,
+    accent: accentColor,
+    maxMonthly,
+    empty: total === 0,
+  };
+}
+
+/** MCP 的一句话文本摘要（与卡片同源）。 */
+export function annualSummarySentence(model) {
+  if (!model || model.empty) return `${model ? model.year : ''} 年度总结：今年还没有日程。`;
+  const busiest = model.busiest ? `，最忙的是 ${model.busiest.month} 月（${model.busiest.total} 条）` : '';
+  return `${model.year} 年度总结：共 ${model.total} 条日程、${model.calendarCount} 个日历、${model.categoryCount} 个分类${busiest}`;
+}
+
+/* ---- 2. 布局 ----------------------------------------------------------- */
+
+function text(x, y, content, {
+  size = 24, weight = 400, color = INK, align = 'left', maxW = 0, baseline = 'alphabetic',
+} = {}) {
+  return { t: 'text', x, y, text: String(content), size, weight, color, align, maxW, baseline };
+}
+
+function rect(x, y, w, h, fill, r = 0, extra = {}) {
+  return { t: 'rect', x, y, w, h, r, fill, ...extra };
+}
+
+function line(x1, y1, x2, y2, color, lw = 1) {
+  return { t: 'line', x1, y1, x2, y2, color, lw };
+}
+
+/**
+ * 分类卡图例项（用户 2026-11-15 20:35）：「其他」只在聚合发生时出现、永远末位、色 #98a2b3；
+ * 没有聚合就不出现。图例项 = 真实分组（含未分组，模型已排末）+ 其他。
+ */
+export function buildLegendItems(groups, hasOther, measure) {
+  const items = (Array.isArray(groups) ? groups : []).map((group) => ({
+    name: String(group.name || ''),
+    color: group.color,
+    nameW: measure ? measure(String(group.name || ''), 16) : 0,
+  }));
+  if (hasOther) items.push({ name: OTHER_LABEL, color: OTHER_COLOR, nameW: measure ? measure(OTHER_LABEL, 16) : 0 });
+  return items;
+}
+
+/**
+ * 图例按内容宽紧排（用户 2026-11-15 21:30，覆盖 0.8.7 的等宽槽做法）：
+ * 每项 = 圆点（9px）+ 6px + 名称 + 8px + 百分比（无百分比时到名称结束）。
+ * 项与项固定 20px，一行放不下就换行（新行也居中），整块在可用宽内水平居中。
+ * 换行后单条仍超宽才给名称加省略号（至少留 3 个字）；百分比永不截断。
+ * items：`{ name, nameW, pctText?, pctW?, color }`；avail：卡内宽 − 32（两侧各 16px）。
+ * 返回 `{ lines, widthOf, truncated }`。
+ */
+export function packLegendContent(items, avail, { gap = 20, measure = null, nameSize = 16, minName = 48, maxPerRow = 5 } = {}) {
+  const DOT_SPAN = 15; // 圆点直径 9 + 圆点与名称间距 6
+  const PCT_GAP = 8; // 名称与百分比间距
+  const widthOf = (item) => DOT_SPAN + item.nameW + (item.pctW ? PCT_GAP + item.pctW : 0);
+  let truncated = false;
+  const fitOne = (item) => {
+    if (widthOf(item) <= avail || !measure) return item;
+    truncated = true;
+    const pctPart = item.pctW ? PCT_GAP + item.pctW : 0;
+    const nameW = Math.max(minName, avail - DOT_SPAN - pctPart);
+    let name = String(item.name || '');
+    while (name.length > 1 && measure(`${name}…`, nameSize) > nameW) name = name.slice(0, -1);
+    name = `${name}…`;
+    return { ...item, name, nameW: measure(name, nameSize) };
+  };
+  const lines = [];
+  let line = [];
+  let width = 0;
+  for (const raw of items) {
+    const item = fitOne(raw);
+    const w = widthOf(item);
+    if (line.length && (line.length >= maxPerRow || width + gap + w > avail)) {
+      lines.push(line);
+      line = [];
+      width = 0;
+    }
+    line.push(item);
+    width = line.length === 1 ? w : width + gap + w;
+  }
+  if (line.length) lines.push(line);
+  return { lines, widthOf, truncated };
+}
+
+/**
+ * 数字 → 布局元素（1080×1440）。坐标、字号、颜色只在这里定一次。
+ * 版式唯一源：`projects/FnCal/design/0.8.0-年度总结卡片-定稿.md`（2026-11-15 定稿）
+ * + `design/annual-card-mock/mock-a2.html`；四行 290 / 528 / 200 / 230，外距 48，行距 32。
+ */
+export function buildAnnualCardLayout(model, { qrText = QR_URL, width = CARD_WIDTH, height = CARD_HEIGHT, fontFamily = FONT_STACK, curveK = HOUR_CURVE_K, ringCorner = RING_CORNER_RADIUS, ringPad = RING_PAD_GAP_PX, measure = null, legendNarrow = false } = {}) {
+  // 字体差异保底（用户 2026-11-15 04:09）：槽宽一律用真实字体量，量不到才退回估算
+  const mw = typeof measure === 'function' ? (value, size, weight = 400) => measure(String(value), size, weight) : (value, size) => textWidth(value, size);
+  const ACCENT = accentInk(model.accent);
+  const els = [];
+  const OUTER = 48;
+  const PAD = 32;
+  const PAD_T = 24; // 卡内上边距（定稿 §2：24 32 32）
+  const GAP = 32;
+  const CARD_W = width - OUTER * 2;
+  const INNER = CARD_W - PAD * 2;
+  const rowsH = [290, 528, 200, 230];
+  const rowsY = [OUTER];
+  for (let i = 1; i < rowsH.length; i += 1) rowsY.push(rowsY[i - 1] + rowsH[i - 1] + GAP);
+  const mid = (top, lh, size) => top + lh / 2 + size * 0.36;
+  const card = (x, y, w, h) => rect(x, y, w, h, CARD_FILL, 32, { shadow: CARD_SHADOWS });
+  const empty = Boolean(model.empty) || !model.total;
+
+  // 背景：135° 品牌渐变（固定，不随主题色）
+  els.push({ t: 'grad', x: 0, y: 0, w: width, h: height, from: BRAND_GRADIENT.from, to: BRAND_GRADIENT.to, dir: 'diag' });
+
+  /* ---- 第一行：全年日程热度（290） ---- */
+  els.push(card(OUTER, rowsY[0], CARD_W, rowsH[0]));
+  const r1Top = rowsY[0] + PAD_T;
+  const r1x = OUTER + PAD;
+  const r1Right = OUTER + CARD_W - PAD;
+  const titleBase = mid(r1Top, 34, 24);
+  els.push(text(r1x, titleBase, '全年日程热度', { size: 24, weight: 700, color: ACCENT }));
+
+  // KPI（右对齐）：96 天有日程 | 0.4 条/天 | 最长连续 7 天
+  const kpis = model.kpis || {};
+  const kpiGroups = [
+    [{ v: String(kpis.daysWithEvents ?? 0), size: 24, weight: 700, color: INK }, { v: '天有日程', size: 16, color: INK2 }],
+    [{ v: Number(kpis.avgPerDay ?? 0).toFixed(1), size: 24, weight: 700, color: INK }, { v: '条/天', size: 16, color: INK2 }],
+    [{ v: '最长连续', size: 16, color: INK2 }, { v: String(kpis.longestStreak ?? 0), size: 24, weight: 700, color: INK }, { v: '天', size: 16, color: INK2 }],
+  ];
+  const groupWidth = (parts) => parts.reduce((sum, part) => sum + mw(part.v, part.size, part.weight || 400), 0) + 9 * (parts.length - 1);
+  const kpiW = kpiGroups.reduce((sum, parts) => sum + groupWidth(parts), 0) + 41 * (kpiGroups.length - 1);
+  let kx = r1Right - kpiW;
+  kpiGroups.forEach((parts, gi) => {
+    parts.forEach((part, index) => {
+      els.push(text(kx, titleBase, part.v, { size: part.size, weight: part.weight || 400, color: part.color }));
+      kx += mw(part.v, part.size, part.weight || 400) + (index < parts.length - 1 ? 9 : 0);
+    });
+    if (gi < kpiGroups.length - 1) {
+      kx += 20;
+      els.push(line(kx, titleBase - 20, kx, titleBase + 6, '#cfd8e3', 1));
+      kx += 21;
+    }
+  });
+
+  // 日热度图：7 行 × 约 53 列，格 15 / 缝 1.5；月份 emoji 行按周列定位
+  const TOPGRID_W = 897;
+  const gridX = r1x + (INNER - TOPGRID_W) / 2;
+  const labelsTop = r1Top + 34 + 8;
+  const heatTop = labelsTop + 64 + 6;
+  const CELL = 15;
+  const CPITCH = 16.5;
+  const heatX = gridX + 18 + 6;
+  const ws = Number(model.weekStartsOn) === 0 ? 0 : 1;
+  const jan1 = new Date(model.year, 0, 1).getDay(); // 0 = 周日
+  const offset = ws === 1 ? (jan1 + 6) % 7 : jan1;
+  const columns = Math.ceil((offset + model.days.length) / 7);
+
+  els.push(text(gridX + 9, heatTop + 8, ws === 1 ? '一' : '日', { size: 16, color: INK3, align: 'center', baseline: 'middle' }));
+  els.push(text(gridX + 9, heatTop + 106, ws === 1 ? '日' : '六', { size: 16, color: INK3, align: 'center', baseline: 'middle' }));
+
+  // 0.8.14（总监 00:17）：全年一条分类都没有时，月份 emoji 行不画——否则 12 个月各印一个
+  // 兜底 📅，看起来像 12 个日期章。有分类但某月无分类时保持现状（该月仍印 📅）。
+  const hasAnyCategory = Array.isArray(model.categories) && model.categories.length > 0;
+  for (let m = 0; m < 12; m += 1) {
+    const startCol = Math.floor((offset + dayOfYear(model.year, m, 1) - 1) / 7);
+    const endCol = Math.floor((offset + dayOfYear(model.year, m + 1, 0) - 1) / 7);
+    const centerX = heatX + (startCol + (endCol - startCol + 1) / 2) * CPITCH;
+    const month = model.months && model.months[m] ? model.months[m] : null;
+    const emoji = !empty && hasAnyCategory && month ? month.emoji || '📅' : '';
+    if (emoji) els.push(text(centerX, labelsTop + 20, emoji, { size: 34, align: 'center', baseline: 'middle' }));
+    els.push(text(centerX, labelsTop + 57, `${m + 1}月`, { size: 16, color: INK3, align: 'center' }));
+  }
+
+  // 只画本年 365/366 天：年首年尾不属于今年的格位空开（定稿 §2，2026-11-15 更正）
+  model.days.forEach((day, index) => {
+    const slot = offset + index;
+    const col = Math.floor(slot / 7);
+    const row = slot % 7;
+    // 定稿 §3：有日程格取当天条数最多那个日历的颜色，再按条数 5 档加深；空格固定浅灰。
+    // 最浅档已按 ≥1.15:1 对齐空格；heatCellFill 再兜一层，防止以后换更浅的日历色糊掉。
+    els.push(rect(heatX + col * CPITCH, heatTop + row * CPITCH, CELL, CELL, heatCellFill(day.calendarColor, day.total, ACCENT), 3.5));
+  });
+
+  /* ---- 第二行：日历占比（440）+ 分类分布（512） ---- */
+  const row2y = rowsY[1];
+  const LEFT_W = 440;
+  const RIGHT_W = 512;
+  const leftX = OUTER + PAD;
+  const rightX = OUTER + LEFT_W + GAP + PAD;
+  const rightEdge = OUTER + LEFT_W + GAP + RIGHT_W - PAD;
+  els.push(card(OUTER, row2y, LEFT_W, rowsH[1]));
+  els.push(card(OUTER + LEFT_W + GAP, row2y, RIGHT_W, rowsH[1]));
+  const row2Top = row2y + PAD_T;
+  const row2Base = mid(row2Top, 34, 24);
+  const bodyTop = row2Top + 34;
+  const bodyBottom = row2y + rowsH[1] - PAD;
+  const leftInner = LEFT_W - PAD * 2;
+  const barInner = RIGHT_W - PAD * 2;
+  els.push(text(leftX, row2Base, '日历占比', { size: 24, weight: 700, color: ACCENT }));
+  els.push(text(rightX, row2Base, '分类分布', { size: 24, weight: 700, color: ACCENT }));
+
+  // 环形：外径 300 / 孔径 212（环宽 44，定稿 §4），环心直接落在卡片背景上
+  const slices = empty ? [] : model.calendars || [];
+  const cx = leftX + leftInner / 2;
+  const rOut = 150;
+  const rIn = 106;
+  // 0.8.8 图例（用户 21:30：不要两端对齐，先按间距控制，不够再换行或省略）：
+  // 每项按内容宽紧排——圆点 9 + 6 + 名称 + 8 + 百分比；项与项 20px；整块居中、两侧 16px。
+  // 0.8.7 的「等宽槽 + 百分比右对齐到槽尾」全部停用。
+  const legendAvailOf = (inner) => inner - 32;
+  const settleLegend = (items, avail, nameSize) => packLegendContent(items, avail, {
+    gap: 20,
+    measure: mw,
+    nameSize,
+    minName: 48,
+  });
+  const pctOf = (slice) => `${Number(slice.percent).toFixed(1)}%`;
+  const ringItems = slices.map((slice) => ({
+    name: String(slice.name),
+    color: slice.color,
+    pctText: pctOf(slice),
+    nameW: mw(String(slice.name), 20),
+    pctW: mw(pctOf(slice), 16),
+  }));
+  const ringFit = settleLegend(ringItems, legendAvailOf(leftInner), 20);
+  // 0.8.17（用户 01:00）：环形图位置下移 16px，回到用户认可那张图的基准（0.8.15/0.8.16 是 +9，太靠上）。
+  // 口径不变：固定圆心 + 图例固定顶边，1/2/3 行都不跳。基准 453 / 603 / 777（原 437 / 587 / 761）。
+  const ringTop = bodyTop + 25;
+  const cy = ringTop + rOut;
+  if (!slices.length) {
+    els.push({ t: 'ring', cx, cy, rOut, rIn, a0: 0, a1: Math.PI * 2, fill: '#dbe2ea', radius: 0 });
+  } else {
+    // 段间让位用角度（padAngle），按段收；缝宽按中径折算（4px @ R=128 ≈ 1.79°）；
+    // 一类（整圈）时 padAngle=0，画无缝整环。
+    const padAngle = slices.length > 1 ? ringPad / ((rOut + rIn) / 2) : 0;
+    let angle = -Math.PI / 2;
+    slices.forEach((slice) => {
+      const full = (slice.count / model.total) * Math.PI * 2;
+      const a0 = angle + padAngle / 2;
+      const a1 = angle + full - padAngle / 2;
+      if (a1 - a0 > 1e-6) els.push({ t: 'ring', cx, cy, rOut, rIn, a0, a1, fill: slice.color, radius: ringCorner });
+      angle += full;
+    });
+  }
+  els.push(text(cx, cy - 9, String(model.total || 0), { size: 52, weight: 700, color: ACCENT, align: 'center', baseline: 'middle' }));
+  els.push(text(cx, cy + 34, '条日程', { size: 16, color: INK2, align: 'center', baseline: 'middle' }));
+
+  // 图例：环下 24（固定顶边，不随行数移动），行基线间距 32。
+  const legendTop = ringTop + 300 + 24;
+  if (!slices.length) {
+    els.push(text(cx, legendTop + 12, '今年还没有日程', { size: 20, color: INK3, align: 'center', baseline: 'middle' }));
+  } else {
+    const avail = legendAvailOf(leftInner);
+    ringFit.lines.forEach((line, rowIndex) => {
+      // 行内按内容宽紧排，整行在可用宽里居中；项间距固定 20。
+      const lineW = line.reduce((acc, item, index) => acc + (index ? 20 : 0) + ringFit.widthOf(item), 0);
+      let x = leftX + 16 + Math.max(0, (avail - lineW) / 2);
+      const y = legendTop + rowIndex * 32 + 12;
+      line.forEach((item) => {
+        els.push({ t: 'arc', cx: x + 4.5, cy: y, r: 4.5, a0: 0, a1: Math.PI * 2, fill: item.color });
+        els.push(text(x + 15, y, item.name, { size: 20, color: INK, baseline: 'middle' }));
+        // 百分比紧跟名称 8px，永不进槽尾、不截断。
+        els.push(text(x + 15 + item.nameW + 8, y, item.pctText, { size: 16, color: INK3, baseline: 'middle' }));
+        x += ringFit.widthOf(item) + 20;
+      });
+    });
+  }
+
+  // 分类条：emoji 槽 30 + 条 + 数字 36；行高 30（>10 行 26），间距上限 13（>10 行 12）、最低 5
+  const rows = empty ? [] : model.categories || [];
+  if (!rows.length) {
+    // 0.8.13（用户 00:01）：全年可能有日程、只是一条标签都没有，所以不能写「还没有日程」。
+    els.push(text(rightX + barInner / 2, (bodyTop + bodyBottom) / 2, '今年还没有分类', {
+      size: 20, color: INK3, align: 'center', baseline: 'middle',
+    }));
+  } else {
+    const dense = rows.length > 10;
+    // 0.8.10（用户 23:17）：行间空隙加大。条带 18、行高不变；间距上限 >10 行 12、≤10 行 13，
+    // 空间不够时按可用高度自适应收紧，最低 5。
+    const rowH = dense ? 26 : 30;
+    const rowGapCap = dense ? 8 : 13; // 0.8.12：密集档行间距上限 12 → 8（用户 23:50，条带净空 16）
+    // 卡底分组图例：真实分组 + 未分组（模型已排末）+ 聚合「其他」（有则末位）。
+    // 0.8.8（用户 21:30）：与环形图例同一套内容宽紧排——项间 20px、整块居中、
+    // 放不下就换行，换行后仍超宽才省略名称；不再等宽拉伸、不再 space-between。
+    const catItems = buildLegendItems(model.groups, rows.some((row) => row.other), mw);
+    const catFit = settleLegend(catItems, legendAvailOf(barInner), 16);
+    const legendLines = catFit.lines;
+    // 16px 名称行 + 12px 行距（分类图例行距 28；环形图例仍 32）：0.8.10 用户 23:26 加大两行之隔。
+    const legendH = legendLines.length ? 28 * legendLines.length - 10 : 0;
+    // 条带底部到卡底图例顶部至少留 12px（0.8.10 验收：bars 底 ≤ 图例顶 − 12），
+    // 整块在「bodyTop –（图例顶 − 12）」这段里垂直居中；间距按这段高度收紧。
+    const LEGEND_GUARD = 12;
+    const usable = Math.max(0, bodyBottom - legendH - LEGEND_GUARD - bodyTop);
+    const gapFit = rows.length > 1
+      ? Math.floor((usable - rows.length * rowH) / (rows.length - 1))
+      : 0;
+    const rowGap = Math.max(5, Math.min(rowGapCap, gapFit));
+    const barsH = rows.length * rowH + (rows.length - 1) * rowGap;
+    const barsTop = bodyTop + Math.max(0, (usable - barsH) / 2);
+    // 任务书 §3：同一张卡里 emoji 重复（去 VS16 后比较）时，这些行补分类名，否则读的人分不出。
+    const emojiKey = (row) => String(row.emoji || '').replace(/\uFE0F/g, '').trim();
+    const emojiUse = new Map();
+    rows.forEach((row) => { const key = emojiKey(row); emojiUse.set(key, (emojiUse.get(key) || 0) + 1); });
+    const dupIndex = new Set();
+    rows.forEach((row, index) => { if (emojiUse.get(emojiKey(row)) > 1) dupIndex.add(index); });
+    const fitName = (name, maxW) => {
+      let cut = String(name || '');
+      if (mw(cut, 16) <= maxW) return cut;
+      while (cut.length > 1 && mw(`${cut}…`, 16) > maxW) cut = cut.slice(0, -1);
+      return `${cut}…`;
+    };
+    const nameSlot = dupIndex.size
+      ? Math.min(96, Math.max(...[...dupIndex].map((index) => mw(String(rows[index].name || ''), 16))))
+      : 0;
+    const slotW = dupIndex.size ? 30 + 6 + nameSlot : 30;
+    const trackX = rightX + slotW + 12;
+    const trackW = barInner - slotW - 12 - 36 - 12;
+    const barMax = Math.max(...rows.map((row) => row.count), 1);
+    rows.forEach((row, index) => {
+      const rowCy = barsTop + index * (rowH + rowGap) + rowH / 2;
+      els.push(text(rightX + 15, rowCy, row.emoji, { size: 24, align: 'center', baseline: 'middle' }));
+      if (dupIndex.has(index)) {
+        els.push(text(rightX + 36, rowCy, fitName(row.name, nameSlot), {
+          size: 16, color: INK2, baseline: 'middle',
+        }));
+      }
+      els.push(rect(trackX, rowCy - 9, trackW, 18, BAR_TRACK, 9));
+      const width = Math.max(18, Math.round((row.count / barMax) * trackW));
+      els.push(rect(trackX, rowCy - 9, width, 18, row.other ? OTHER_COLOR : row.groupColor || row.calendarColor || ACCENT, 9));
+      els.push(text(rightEdge, rowCy, String(row.count), { size: 16, color: INK, align: 'right', baseline: 'middle' }));
+    });
+
+    // 卡底分组图例（0.8.8：内容宽紧排——项间 20px、整块居中、放不下换行）
+    if (legendLines.length) {
+      const bottomGy = bodyBottom - 8;
+      const avail = legendAvailOf(barInner);
+      legendLines.forEach((line, lineIndex) => {
+        const lineW = line.reduce((acc, item, index) => acc + (index ? 20 : 0) + catFit.widthOf(item), 0);
+        let x = rightX + 16 + Math.max(0, (avail - lineW) / 2);
+        const gy = bottomGy - (legendLines.length - 1 - lineIndex) * 28;
+        line.forEach((item) => {
+          els.push({ t: 'arc', cx: x + 4.5, cy: gy - 5, r: 4.5, a0: 0, a1: Math.PI * 2, fill: item.color });
+          els.push(text(x + 15, gy, item.name, { size: 16, color: INK2 }));
+          x += catFit.widthOf(item) + 20;
+        });
+      });
+    }
+  }
+
+  /* ---- 第三行：一周节奏 / 时段分布 / 全年时长（200） ---- */
+  const row3y = rowsY[2];
+  const miniW = (CARD_W - GAP * 2) / 3;
+  const miniInner = miniW - PAD * 2;
+  const miniX = [OUTER, OUTER + miniW + GAP, OUTER + (miniW + GAP) * 2];
+  const miniTop = row3y + PAD_T;
+  const miniBase = mid(miniTop, 34, 24);
+  const miniBottom = row3y + rowsH[2] - PAD;
+  ['一周节奏', '时段分布', '全年时长'].forEach((label, index) => {
+    els.push(card(miniX[index], row3y, miniW, rowsH[2]));
+    els.push(text(miniX[index] + PAD, miniBase, label, { size: 24, weight: 700, color: ACCENT }));
+  });
+
+  // 一周节奏：7 根竖条（最高 70），峰值星期加粗；条底 1068、最高条顶 998（第三行三卡内容顶对齐）
+  const weekdayCounts = Array.isArray(model.weekday) && model.weekday.length === 7 ? model.weekday : new Array(7).fill(0);
+  const weekChar = (Array.isArray(model.weekdayLabels) && model.weekdayLabels.length === 7
+    ? model.weekdayLabels
+    : ['周一', '周二', '周三', '周四', '周五', '周六', '周日']).map((label) => String(label).replace(/^周/, ''));
+  const weekMax = Math.max(...weekdayCounts, 1);
+  const weekColW = miniInner / 7;
+  const weekBottom = miniBottom - 22 - 8;
+  weekdayCounts.forEach((count, index) => {
+    const centerX = miniX[0] + PAD + (index + 0.5) * weekColW;
+    const isPeak = !empty && count > 0 && count === weekMax;
+    const height = empty ? 6 : Math.max(6, Math.round((count / weekMax) * 70));
+    const fill = empty ? '#dbe2ea' : isPeak ? ACCENT : tintHex(ACCENT, 0.9 * (1 - count / weekMax));
+    els.push(rect(centerX - 11, weekBottom - height, 22, height, fill, 0, { rTop: 5, rBottom: 2 }));
+    els.push(text(centerX, miniBottom - 6, weekChar[index], {
+      size: 16, weight: isPeak ? 700 : 400, color: isPeak ? INK : INK2, align: 'center',
+    }));
+  });
+
+  // 时段分布：三次贝塞尔平滑曲线 + 线下渐变；只标 0 点 / 峰值 / 23
+  const hours = Array.isArray(model.hourBuckets) && model.hourBuckets.length === 24 ? model.hourBuckets : new Array(24).fill(0);
+  const hrsW = miniInner;
+  const hrsH = 70;
+  const hrsTop = miniBottom - 22 - 8 - hrsH;
+  const peak = hourPeakLabel(hours);
+  // 定稿 §6：定位与显示必须是同一个小时间（peakHour === peak.labelHour）。
+  const peakHour = peak.labelHour;
+  const peakText = String(peak.labelHour);
+  if (empty) {
+    els.push(line(miniX[1] + PAD, hrsTop + hrsH - 3, miniX[1] + PAD + hrsW, hrsTop + hrsH - 3, ACCENT, 2));
+    els.push(text(miniX[1] + PAD + hrsW / 2, hrsTop + hrsH / 2 - 4, '暂无数据', { size: 16, color: INK3, align: 'center', baseline: 'middle' }));
+  } else {
+    els.push({ t: 'curve', x: miniX[1] + PAD, y: hrsTop, w: hrsW, h: hrsH, values: hours, stroke: ACCENT, fillFrom: ACCENT, pad: 3, curveK });
+  }
+  els.push(text(miniX[1] + PAD, miniBottom - 6, '0 点', { size: 16, color: INK3 }));
+  els.push(text(miniX[1] + PAD + hrsW, miniBottom - 6, '23', { size: 16, color: INK3, align: 'right' }));
+  if (!empty) {
+    els.push(text(miniX[1] + PAD + (peakHour / (hours.length - 1)) * hrsW, miniBottom - 6, peakText, {
+      size: 16, weight: 700, color: INK, align: 'center',
+    }));
+  }
+
+  // 全年时长：34 数值 + 说明两行
+  const duration = model.duration || { totalMinutes: 0, longest: null };
+  const hoursTotal = Math.round((duration.totalMinutes || 0) / 60);
+  const longest = empty ? null : duration.longest;
+  const durTop = miniBottom - 6 - 94; // 0.8.10：块顶 998（第三行三卡内容顶对齐），末行基线 miniBottom − 6（1092）
+  const durX = miniX[2] + PAD;
+  const valueText = String(hoursTotal);
+  els.push(text(durX, durTop + 24, valueText, { size: 34, weight: 700, color: INK }));
+  els.push(text(durX + mw(valueText, 34, 700) + 10, durTop + 24, '小时 全年合计', { size: 16, color: INK2 }));
+  if (!empty) {
+    const longestTexts = longest
+      ? longestDurationTexts(longest.minutes, dayLabel(longest.date))
+      : ['最长一次 —'];
+    // 这行没有 maxW：按真实字体宽挑第一个放得下的候选（0.8.14，30 分钟不再写成 1 小时）。
+    const longestText = longestTexts.find((value) => mw(value, 16) <= miniInner)
+      || longestTexts[longestTexts.length - 1];
+    els.push(text(durX, durTop + 59, longestText, { size: 16, color: INK3 }));
+    if (longest && longest.title) {
+      els.push(text(durX, durTop + 94, emojiTitle(longest.categoryEmoji, longest.title), {
+        size: 16, color: INK2, maxW: miniInner,
+      }));
+    }
+  }
+
+  /* ---- 第四行：大字 + 两天 + 品牌二维码（230） ---- */
+  const row4y = rowsY[3];
+  els.push(card(OUTER, row4y, CARD_W, rowsH[3]));
+  const r4Top = row4y + PAD_T;
+  const r4Bottom = row4y + rowsH[3] - PAD;
+  const r4x = OUTER + PAD;
+  // 0.8.12 用户 23:58 定 84：字号 84、行高按 ×1.04 为 87.36（六级阶梯 16/20/24/34/52/84，84 替换原 72）；整卡高度、r4Top、两条小字与右侧品牌块都不动。
+  els.push(text(r4x, mid(r4Top, 87.36, 84), `${model.year}年度总结`, { size: 84, weight: 700, color: ACCENT }));
+  const kpi = model.kpis || {};
+  if (empty) {
+    els.push(text(r4x, mid(r4Bottom - 26, 26, 20), '今年还没有日程，明年继续记录', { size: 20, color: INK2 }));
+  } else {
+    const sub1 = kpi.busiestDay
+      ? `最忙的一天是 ${dayLabel(kpi.busiestDay.date)}，共 ${kpi.busiestDay.count} 条日程`
+      : '今年还没有日程';
+    // 0.8.13（用户 00:01）：全年有日程但全无标签时，不能印「最丰富的一天 … 共 0 种分类」；
+    // 行位不动（仍在 r4Bottom - 26），只换文案。
+    const sub2 = kpi.richestDay
+      ? (kpi.richestDay.categories > 0
+        ? `最丰富的一天是 ${dayLabel(kpi.richestDay.date)}，共 ${kpi.richestDay.categories} 种分类`
+        : '最丰富的一天 —')
+      : '';
+    els.push(text(r4x, mid(r4Bottom - 58, 26, 20), sub1, { size: 20, color: INK2 }));
+    if (sub2) els.push(text(r4x, mid(r4Bottom - 26, 26, 20), sub2, { size: 20, color: INK2 }));
+  }
+
+  // 右侧品牌块：logo + FnCal 在上，二维码在下，同中轴 x = 942
+  const axis = 942;
+  const brandSize = 34;
+  const brandTextW = textWidth('FnCal', 24);
+  const brandW = brandSize + 10 + brandTextW;
+  const brandX = axis - brandW / 2;
+  els.push({ t: 'image', key: 'brand-logo', x: brandX, y: r4Top, size: brandSize, radius: 8 });
+  els.push(text(brandX + brandSize + 10, mid(r4Top, 34, 24), 'FnCal', { size: 24, weight: 600, color: ACCENT }));
+  const qrSize = 116;
+  els.push({ t: 'qr', x: axis - qrSize / 2, y: r4Bottom - qrSize, size: qrSize, qr: encodeQr(qrText) });
+
+  return { width, height, els, fontFamily };
+}
+/** 该年 1 月 1 日是周几（0 = 周一 … 6 = 周日），用于日热度图排布。 */
+export function weekdayOffset(year) {
+  const day = new Date(year, 0, 1).getDay(); // 0 = 周日
+  return (day + 6) % 7;
+}
+
+/** 该年某月某日是该年第几天（1 起）。 */
+export function dayOfYear(year, monthIndex, day) {
+  const start = new Date(year, 0, 1).getTime();
+  const target = new Date(year, monthIndex, day).getTime();
+  return Math.round((target - start) / 86400000) + 1;
+}
+
+/* ---- 3. 绘制 ----------------------------------------------------------- */
+
+/**
+ * 对比度报告（证据与测试用）：卡片白底上的关键文字（v14 版式没有格内文字）。
+ * 返回 [{ kind, label, fill, ink, ratio }]，ratio 四舍五入到 0.01。
+ */
+export function annualContrastReport(model) {
+  const round2 = (v) => Math.round(v * 100) / 100;
+  const accent = accentInk(model && model.accent);
+  const white = '#ffffff';
+  const rows = [
+    { kind: 'text', label: '卡片大标题', fill: white, ink: accent },
+    { kind: 'text', label: '区块标题', fill: white, ink: accent },
+    { kind: 'text', label: 'KPI 数字', fill: white, ink: INK },
+    { kind: 'text', label: 'KPI 单位', fill: white, ink: INK2 },
+    { kind: 'text', label: '环形总数', fill: white, ink: accent },
+    { kind: 'text', label: '环形单位', fill: white, ink: INK2 },
+    { kind: 'text', label: '图例名称', fill: white, ink: INK },
+    { kind: 'text', label: '图例百分比', fill: white, ink: INK3 },
+    { kind: 'text', label: '条形数字', fill: white, ink: INK },
+    { kind: 'text', label: '柱下标签', fill: white, ink: INK2 },
+    { kind: 'text', label: '时段标签', fill: white, ink: INK3 },
+    { kind: 'text', label: '时长数字', fill: white, ink: INK },
+    { kind: 'text', label: '时长说明', fill: white, ink: INK3 },
+    { kind: 'text', label: '最长日程名', fill: white, ink: INK2 },
+    { kind: 'text', label: '最忙/最丰富', fill: white, ink: INK2 },
+    { kind: 'text', label: '月份标签', fill: white, ink: INK3 },
+  ];
+  return rows.map((row) => ({ ...row, ratio: round2(contrastRatio(row.ink, row.fill)) }));
+}
+function roundRectPath(ctx, x, y, w, h, r, rTop = r, rBottom = r) {
+  const rt = Math.max(0, Math.min(rTop, Math.min(w, h) / 2));
+  const rb = Math.max(0, Math.min(rBottom, Math.min(w, h) / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + rt, y);
+  ctx.lineTo(x + w - rt, y);
+  ctx.arcTo(x + w, y, x + w, y + rt, rt);
+  ctx.lineTo(x + w, y + h - rb);
+  ctx.arcTo(x + w, y + h, x + w - rb, y + h, rb);
+  ctx.lineTo(x + rb, y + h);
+  ctx.arcTo(x, y + h, x, y + h - rb, rb);
+  ctx.lineTo(x, y + rt);
+  ctx.arcTo(x, y, x + rt, y, rt);
+  ctx.closePath();
+}
+
+/** `rgba(...)` 里的 alpha 换掉（两层投影各画一次时用，避免底色叠加变白）。 */
+function withAlpha(color, alpha) {
+  const value = String(color || '');
+  if (value.startsWith('#')) return value;
+  return value.replace(/rgba?\(([^)]+)\)/, (_, body) => {
+    const parts = body.split(',').map((part) => part.trim());
+    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`;
+  });
+}
+
+/** `rgba(...)` 的 alpha × factor（投影要按覆盖比例补回强度）。 */
+function boostAlpha(color, factor) {
+  const value = String(color || '');
+  return value.replace(/rgba?\(([^)]+)\)/, (_, body) => {
+    const parts = body.split(',').map((part) => part.trim());
+    const alpha = Math.min(1, Number(parts[3] ?? 1) * factor);
+    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha.toFixed(3)})`;
+  });
+}
+
+/** 6 位 HEX → rgba(...)（渐变停靠点用）。 */
+function rgbaOf(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * 峰值小时（定稿 §6，2026-11-15 03:18 最终口径）：
+ * 1. peakHour = 原始 24 小时值里最大值所在的小时，并列最高取最早那个；
+ * 2. 标签文字与 x 都用它（peakIndex === labelHour === peakHour），不从曲线反推、不做补偿。
+ * 原始值是唯一真源；曲线只为圆滑连接，不参与定位。
+ */
+export function hourPeakLabel(values) {
+  const list = (Array.isArray(values) ? values : []).map((value) => (Number.isFinite(value) && value > 0 ? value : 0));
+  const rawMax = list.length ? Math.max(...list) : 0;
+  let peakHour = 0;
+  for (let i = 1; i < list.length; i += 1) {
+    if (list[i] > list[peakHour]) peakHour = i; // 严格大于 → 并列取最早
+  }
+  return { peakHour, apex: peakHour, peakIndex: peakHour, labelHour: peakHour, rawMax };
+}
+
+/** 时段分布曲线曲率：总监 2026-11-15 04:1x 定档 k = 0.22（比 ECharts smooth 0.5 略大，过冲仍 <1.5%）。 */
+export const HOUR_CURVE_K = 0.22;
+
+/** 时段分布绘图区留头：y 轴按 max × 1.06 折算（2026-11-15 04:1x 由 12% 收到 6%），曲线最高点断言 ≤ max×1.06。 */
+export const HOUR_HEADROOM = 1.06;
+
+/**
+ * 时段分布曲线的控制点（定稿 §6，2026-11-15 03:47 用户口径：ECharts `smooth` 那一套）：
+ * 基数样条，每段 p[i] → p[i+1] 用三次贝塞尔：
+ *   c1 = p[i]   + (p[i+1] − p[i−1]) × k
+ *   c2 = p[i+1] − (p[i+2] − p[i])   × k
+ * k = 0.22（HOUR_CURVE_K），端点镜像（p[−1] = p[0]、p[n] = p[n−1]）。
+ * 曲线在每个整点精确穿过原始值，段间平滑过渡，不会出现「先平顶再折角」的台阶。
+ * 允许轻微过冲（ECharts 的观感来源），但控制点 y 夹在 [0, max]：
+ * 贝塞尔落在控制点凸包内，所以曲线不会越出绘图区，也不为负。
+ * 坐标归一化（x = 小时序号），布局层再线性映射成像素。
+ */
+export function hourCurveSegments(values, { k = HOUR_CURVE_K } = {}) {
+  const list = (Array.isArray(values) ? values : []).map((value) => (Number.isFinite(value) && value > 0 ? value : 0));
+  const n = list.length;
+  if (n < 2) return [];
+  // 绘图区留头 12%（2026-11-15 03:58）：曲线允许略高过数据峰值，只夹在绘图区内，
+  // 不再按数据最大值夹平——否则平顶段会变成一条硬直线。
+  const cap = Math.max(...list, 1) * HOUR_HEADROOM;
+  const at = (index) => list[Math.max(0, Math.min(n - 1, index))];
+  const smooth = Number.isFinite(k) ? Math.max(0, k) : HOUR_CURVE_K;
+  const clamp = (value) => Math.max(0, Math.min(cap, value));
+  const segs = [];
+  for (let i = 0; i < n - 1; i += 1) {
+    const y0 = list[i];
+    const y1 = list[i + 1];
+    segs.push({
+      x0: i,
+      y0,
+      c1x: i + 1 / 3,
+      c1y: clamp(y0 + (at(i + 1) - at(i - 1)) * smooth),
+      c2x: i + 2 / 3,
+      c2y: clamp(y1 - (at(i + 2) - at(i)) * smooth),
+      x1: i + 1,
+      y1,
+    });
+  }
+  return segs;
+}
+
+/**
+ * 时段分布曲线：24 点三次贝塞尔（与 mock `hrs()` 同一套单调切线算法）。
+ * 返回绝对坐标的段列表 + 基线，painter 与 SVG 共用，保证两边同形。
+ */
+function curveSegments(item) {
+  const { x, y, w, h } = item;
+  const pad = item.pad || 3;
+  const raw = Array.isArray(item.values) ? item.values : [];
+  const n = raw.length;
+  const max = Math.max(...raw, 1) * HOUR_HEADROOM;
+  const xs = raw.map((_, index) => x + (index * (w - 1)) / (n - 1));
+  const toY = (value) => y + h - pad - (value / max) * (h - pad * 2);
+  // 归一化控制点（hourCurveSegments）线性映射到像素：曲线在每个整点精确穿过原始值。
+  const segs = hourCurveSegments(raw, { k: item.curveK }).map((seg) => {
+    const span = xs[seg.x1] - xs[seg.x0];
+    return {
+      x0: xs[seg.x0],
+      y0: toY(seg.y0),
+      c1x: xs[seg.x0] + span / 3,
+      c1y: toY(seg.c1y),
+      c2x: xs[seg.x0] + (span * 2) / 3,
+      c2y: toY(seg.c2y),
+      x1: xs[seg.x1],
+      y1: toY(seg.y1),
+    };
+  });
+  return { segs, baseY: y + h, startX: xs[0], endX: xs[n - 1] };
+}
+
+/**
+ * 环形扇区几何（定稿 §4，2026-11-15 03:48/03:50 用户口径）：四个角倒圆角（二次曲线转角，
+ * 不是胶囊端），段间用 padAngle（角度）让位；canvas 与 SVG 同源，都用这里的命令列表。
+ * 整圈（一类 360° 或空态）画无缝环，用偶奇填充挖孔，不出现接头。
+ */
+export const RING_CORNER_RADIUS = 12;
+/** 段间缝宽（px，按中径 R=128 折算角度；rc 由 4 改 8 是用户 04:12 口径）——2026-11-15 04:03 用户标注图口径：4px 等宽径向缝。 */
+export const RING_PAD_GAP_PX = 4;
+
+export function ringSectorPath({ cx, cy, rOut, rIn, a0, a1, radius = RING_CORNER_RADIUS }) {
+  const cmds = [];
+  const TAU = Math.PI * 2;
+  const P = (rad, ang) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
+  const M = (p) => cmds.push({ c: 'M', x: p[0], y: p[1] });
+  const L = (p) => cmds.push({ c: 'L', x: p[0], y: p[1] });
+  const Q = (corner, to) => cmds.push({ c: 'Q', cx: corner[0], cy: corner[1], x: to[0], y: to[1] });
+  const A = (r, from, to, sweep) => cmds.push({
+    c: 'A', cx, cy, r, aFrom: from, aTo: to, sweep, large: Math.abs(to - from) > Math.PI ? 1 : 0,
+    x: P(r, to)[0], y: P(r, to)[1],
+  });
+  const sweep = a1 - a0;
+  if (sweep >= TAU - 1e-6) {
+    // 一类（整圈）或空态：外圆 + 内圆反向，偶奇填充挖孔，padAngle=0，不画任何角。
+    // 必须各用「一条整弧 + Z」的两条子路径：早先拆成 4 段 1/4 弧时，每段前的 M 让 canvas
+    // 隐式用弦闭合，偶奇填充把 4 条弦围出的区域也填上，环内长出旋转方块（用户 17:07 真机）。
+    M(P(rOut, 0));
+    A(rOut, 0, TAU, 1);
+    cmds.push({ c: 'Z' });
+    M(P(rIn, 0));
+    A(rIn, 0, TAU, 0);
+    cmds.push({ c: 'Z' });
+    return { cmds, evenOdd: true, radius: 0 };
+  }
+  const rc = Math.max(0, Math.min(radius, (rOut - rIn) / 2));
+  const dO = rOut > 0 ? rc / rOut : 0;
+  const dI = rIn > 0 ? rc / rIn : 0;
+  if (!rc || dO + dI >= sweep * 0.9) {
+    // 极窄切片放不下圆角：退回直角扇区，避免四角互相吃掉
+    M(P(rOut, a0));
+    A(rOut, a0, a1, 1);
+    L(P(rIn, a1));
+    A(rIn, a1, a0, 0);
+    cmds.push({ c: 'Z' });
+    return { cmds, evenOdd: false, radius: 0 };
+  }
+  // 标准环形扇区（总监 03:58 口径，逐条照画）：外弧 → 外角 → 径向边 → 内角 → 内弧（反向）
+  // → 内角 → 径向边 → 外角；四条弧/边首尾相接，同一条路径一次填色。
+  M(P(rOut, a0 + dO));
+  A(rOut, a0 + dO, a1 - dO, 1);                 // 外弧
+  Q(P(rOut, a1), P(rOut - rc, a1));             // 外角（终角）
+  L(P(rIn + rc, a1));                           // 径向边
+  Q(P(rIn, a1), P(rIn, a1 - dI));               // 内角（终角）
+  A(rIn, a1 - dI, a0 + dI, 0);                  // 内弧（反向）
+  Q(P(rIn, a0), P(rIn + rc, a0));               // 内角（起角）
+  L(P(rOut - rc, a0));                          // 径向边
+  Q(P(rOut, a0), P(rOut, a0 + dO));             // 外角（起角）
+  cmds.push({ c: 'Z' });
+  return { cmds, evenOdd: false, radius: rc };
+}
+
+function setFont(ctx, weight, size, family) {
+  ctx.font = `${weight} ${size}px ${family}`;
+}
+
+function fitText(ctx, value, maxW) {
+  const textValue = String(value);
+  if (!maxW || ctx.measureText(textValue).width <= maxW) return textValue;
+  let cut = textValue;
+  while (cut.length > 1 && ctx.measureText(`${cut}…`).width > maxW) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/**
+ * 贴图 emoji：`text` 以 16 个「Noto 只有 SVG 表」的 emoji 开头时，用预渲染 PNG 画它，
+ * 后面的文字照常绘制。返回 true 表示这一条已经画完（调用方不再 fillText）。
+ */
+function paintEmojiText(ctx, item, images, family) {
+  if (!images || !images.size) return false;
+  const key = emojiTextureKey(item.text);
+  if (!key) return false;
+  const image = images.get(key);
+  if (!image) return false;
+  const chars = [...String(item.text)];
+  let index = 1;
+  if (chars[1] && chars[1].codePointAt(0) === 0xfe0f) index = 2;
+  const rest = chars.slice(index).join('').replace(/^ /, '');
+  const size = item.size * 1.12;
+  setFont(ctx, item.weight, item.size, family);
+  const restW = rest ? ctx.measureText(rest).width : 0;
+  const align = item.align || 'left';
+  let x = item.x;
+  if (align === 'center') x -= (size + restW) / 2;
+  else if (align === 'right') x -= size + restW;
+  const baseline = item.baseline || 'alphabetic';
+  const top = baseline === 'middle' ? item.y - size / 2 : item.y - size * 0.86;
+  ctx.drawImage(image, x, top, size, size);
+  if (rest) {
+    ctx.fillStyle = item.color;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = baseline;
+    ctx.fillText(rest, x + size, item.y);
+  }
+  return true;
+}
+
+/** 品牌标记：与 docs/logo/fncal-256.png 同一图形（渐变圆角方 + 白色日历）。 */
+function paintBrand(ctx, x, y, size) {
+  const s = size;
+  const grad = ctx.createLinearGradient(x, y, x + s, y + s);
+  grad.addColorStop(0, BRAND_GRADIENT.from);
+  grad.addColorStop(1, BRAND_GRADIENT.to);
+  roundRectPath(ctx, x, y, s, s, s * 0.22);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  ctx.fillStyle = '#ffffff';
+  roundRectPath(ctx, x + s * 0.195, y + s * 0.225, s * 0.61, s * 0.55, s * 0.085);
+  ctx.fill();
+  roundRectPath(ctx, x + s * 0.315, y + s * 0.15, s * 0.075, s * 0.16, s * 0.0375);
+  ctx.fill();
+  roundRectPath(ctx, x + s * 0.60, y + s * 0.15, s * 0.075, s * 0.16, s * 0.0375);
+  ctx.fill();
+
+  ctx.fillStyle = '#cfe2f0';
+  roundRectPath(ctx, x + s * 0.235, y + s * 0.395, s * 0.53, s * 0.31, s * 0.045);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  const cell = s * 0.075;
+  const gapX = s * 0.135;
+  const gapY = s * 0.085;
+  for (let row = 0; row < 2; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      roundRectPath(
+        ctx,
+        x + s * 0.285 + col * gapX,
+        y + s * 0.435 + row * gapY,
+        cell,
+        cell,
+        s * 0.02,
+      );
+      ctx.fill();
+    }
+  }
+}
+
+/**
+ * 布局元素 → Canvas2D。ctx 需支持 fillRect / arc / measureText / createLinearGradient，
+ * 浏览器 canvas 与 @napi-rs/canvas 均满足。
+ */
+export function paintAnnualCard(ctx, layout) {
+  const family = layout.fontFamily || FONT_STACK;
+  ctx.save();
+  ctx.textBaseline = 'alphabetic';
+  for (const item of layout.els) {
+    if (item.t === 'rect') {
+      const path = () => {
+        if (item.r || item.rTop || item.rBottom) {
+          roundRectPath(ctx, item.x, item.y, item.w, item.h, item.r || 0, item.rTop ?? item.r ?? 0, item.rBottom ?? item.r ?? 0);
+        } else {
+          ctx.beginPath();
+          ctx.rect(item.x, item.y, item.w, item.h);
+        }
+      };
+      if (Array.isArray(item.shadow) && item.shadow.length) {
+        // 两层投影：先只把投影画在卡外（evenodd 裁掉卡内），最后卡面只填一次，
+        // 否则第二层投影会压在已填好的卡面上，把 rgba(255,255,255,.88) 的卡底压暗。
+        const RR = item.r || 0;
+        for (const layer of item.shadow) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(-item.x - 2000, -item.y - 2000, item.w + 4000, item.h + 4000);
+          roundRectPath(ctx, item.x, item.y, item.w, item.h, RR, item.rTop ?? RR, item.rBottom ?? RR);
+          ctx.clip('evenodd');
+          ctx.shadowColor = layer.color;
+          ctx.shadowBlur = layer.blur || 0;
+          ctx.shadowOffsetY = layer.dy || 0;
+          ctx.fillStyle = layer.color;
+          path();
+          ctx.fill();
+          ctx.restore();
+        }
+        ctx.fillStyle = item.fill;
+        path();
+        ctx.fill();
+      } else {
+        ctx.fillStyle = item.fill;
+        path();
+        ctx.fill();
+      }
+      if (item.stroke) {
+        ctx.strokeStyle = item.stroke;
+        ctx.lineWidth = item.lw || 1;
+        path();
+        ctx.stroke();
+      }
+    } else if (item.t === 'grad') {
+      const grad = item.dir === 'v'
+        ? ctx.createLinearGradient(item.x, item.y, item.x, item.y + item.h)
+        : item.dir === 'diag'
+          ? ctx.createLinearGradient(item.x, item.y, item.x + item.w, item.y + item.h)
+          : ctx.createLinearGradient(item.x, item.y, item.x + item.w, item.y);
+      grad.addColorStop(0, item.from);
+      grad.addColorStop(1, item.to);
+      ctx.fillStyle = grad;
+      ctx.fillRect(item.x, item.y, item.w, item.h);
+    } else if (item.t === 'line') {
+      ctx.strokeStyle = item.color;
+      ctx.lineWidth = item.lw || 1;
+      ctx.beginPath();
+      ctx.moveTo(item.x1, item.y1);
+      ctx.lineTo(item.x2, item.y2);
+      ctx.stroke();
+    } else if (item.t === 'arc') {
+      ctx.beginPath();
+      ctx.moveTo(item.cx, item.cy);
+      ctx.arc(item.cx, item.cy, item.r, item.a0, item.a1);
+      ctx.closePath();
+      ctx.fillStyle = item.fill;
+      ctx.fill();
+    } else if (item.t === 'ring') {
+      const geo = ringSectorPath(item);
+      ctx.beginPath();
+      for (const cmd of geo.cmds) {
+        if (cmd.c === 'M') ctx.moveTo(cmd.x, cmd.y);
+        else if (cmd.c === 'L') ctx.lineTo(cmd.x, cmd.y);
+        else if (cmd.c === 'Q') ctx.quadraticCurveTo(cmd.cx, cmd.cy, cmd.x, cmd.y);
+        else if (cmd.c === 'A') ctx.arc(cmd.cx, cmd.cy, cmd.r, cmd.aFrom, cmd.aTo, cmd.sweep === 0);
+        else if (cmd.c === 'Z') ctx.closePath();
+      }
+      ctx.fillStyle = item.fill;
+      ctx.fill(geo.evenOdd ? 'evenodd' : 'nonzero');
+    } else if (item.t === 'curve') {
+      const { segs, baseY, startX, endX } = curveSegments(item);
+      const trace = () => {
+        ctx.beginPath();
+        ctx.moveTo(segs[0].x0, segs[0].y0);
+        for (const seg of segs) ctx.bezierCurveTo(seg.c1x, seg.c1y, seg.c2x, seg.c2y, seg.x1, seg.y1);
+      };
+      const grad = ctx.createLinearGradient(item.x, item.y, item.x, item.y + item.h);
+      grad.addColorStop(0, rgbaOf(item.fillFrom, 0.36));
+      grad.addColorStop(1, rgbaOf(item.fillFrom, 0));
+      trace();
+      ctx.lineTo(endX, baseY);
+      ctx.lineTo(startX, baseY);
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+      trace();
+      ctx.strokeStyle = item.stroke;
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.stroke();
+    } else if (item.t === 'text') {
+      if (!paintEmojiText(ctx, item, layout.emojiImages, family)) {
+        setFont(ctx, item.weight, item.size, family);
+        ctx.fillStyle = item.color;
+        ctx.textAlign = item.align || 'left';
+        ctx.textBaseline = item.baseline || 'alphabetic';
+        // 抗字体差异（用户 04:09）：槽宽由版式决定，超长一律「量宽 → 截断 → 加省略号」。
+        // 没登记 maxW 的文本按卡片内边距现算可用宽度，保证不越出 48px 安全区。
+        const cardL = 48;
+        const cardR = (layout.width || 1080) - 48;
+        const align = item.align || 'left';
+        const edgeW = align === 'right'
+          ? item.x - cardL
+          : align === 'center'
+            ? 2 * Math.min(item.x - cardL, cardR - item.x)
+            : cardR - item.x;
+        const allowed = Math.max(8, item.maxW || edgeW);
+        const value = fitText(ctx, item.text, allowed);
+        ctx.fillText(value, item.x, item.y);
+      }
+    } else if (item.t === 'image') {
+      const img = layout.images && layout.images[item.key];
+      if (!img || !img.width) {
+        // 位图没载入时退回程序画的品牌标记，不让卡片缺一块
+        if (item.key === 'brand-logo') paintBrand(ctx, item.x, item.y, item.size);
+      } else {
+        ctx.save();
+        roundRectPath(ctx, item.x, item.y, item.size, item.size, item.radius || 0);
+        ctx.clip();
+        ctx.drawImage(img, item.x, item.y, item.size, item.size);
+        ctx.restore();
+      }
+    } else if (item.t === 'brand') {
+      paintBrand(ctx, item.x, item.y, item.size);
+    } else if (item.t === 'qr') {
+      paintQr(ctx, item.qr, { x: item.x, y: item.y, size: item.size, dark: '#0d0f14' });
+    }
+  }
+  ctx.restore();
+}
+
+/** 便捷：完整出一张卡片（调用方负责建 canvas）。 */
+export function renderAnnualCard(ctx, model, options = {}) {
+  const layout = buildAnnualCardLayout(model, options);
+  if (options && options.emojiImages) layout.emojiImages = options.emojiImages;
+  if (options && options.images) layout.images = options.images;
+  paintAnnualCard(ctx, layout);
+  return layout;
+}
+
+/** 布局元素 → SVG 字符串（MCP 兜底路径，与 canvas 共用第 2 层）。 */
+/** 品牌标记的 SVG 版（与 paintBrand 同一套比例），位图缺图时兜底。 */
+function brandSvg(parts, x, y, s, id) {
+  const gradId = `${id}-g`;
+  parts.push(`<defs><linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${BRAND_GRADIENT.from}"/><stop offset="1" stop-color="${BRAND_GRADIENT.to}"/></linearGradient></defs>`);
+  parts.push(`<rect x="${x}" y="${y}" width="${s}" height="${s}" rx="${s * 0.22}" fill="url(#${gradId})"/>`);
+  parts.push(`<rect x="${x + s * 0.195}" y="${y + s * 0.225}" width="${s * 0.61}" height="${s * 0.55}" rx="${s * 0.085}" fill="#ffffff"/>`);
+  parts.push(`<rect x="${x + s * 0.315}" y="${y + s * 0.15}" width="${s * 0.075}" height="${s * 0.16}" rx="${s * 0.0375}" fill="#ffffff"/>`);
+  parts.push(`<rect x="${x + s * 0.60}" y="${y + s * 0.15}" width="${s * 0.075}" height="${s * 0.16}" rx="${s * 0.0375}" fill="#ffffff"/>`);
+  parts.push(`<rect x="${x + s * 0.235}" y="${y + s * 0.395}" width="${s * 0.53}" height="${s * 0.31}" rx="${s * 0.045}" fill="#cfe2f0"/>`);
+  for (let row = 0; row < 2; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      parts.push(`<rect x="${x + s * 0.285 + col * s * 0.135}" y="${y + s * 0.435 + row * s * 0.085}" width="${s * 0.075}" height="${s * 0.075}" rx="${s * 0.02}" fill="#ffffff"/>`);
+    }
+  }
+}
+
+export function layoutToSvg(layout) {
+  const { width, height, els } = layout;
+  const esc = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const parts = [];
+  parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`);
+  parts.push(`<defs><linearGradient id="brand" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="${BRAND_GRADIENT.from}"/><stop offset="1" stop-color="${BRAND_GRADIENT.to}"/></linearGradient><linearGradient id="brandDiag" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${BRAND_GRADIENT.from}"/><stop offset="1" stop-color="${BRAND_GRADIENT.to}"/></linearGradient></defs>`);
+  const cornerPath = (item) => {
+    const { x, y, w, h } = item;
+    const rt = Math.min(item.rTop ?? item.r ?? 0, Math.min(w, h) / 2);
+    const rb = Math.min(item.rBottom ?? item.r ?? 0, Math.min(w, h) / 2);
+    return `M ${x + rt} ${y} H ${x + w - rt} A ${rt} ${rt} 0 0 1 ${x + w} ${y + rt} V ${y + h - rb} A ${rb} ${rb} 0 0 1 ${x + w - rb} ${y + h} H ${x + rb} A ${rb} ${rb} 0 0 1 ${x} ${y + h - rb} V ${y + rt} A ${rt} ${rt} 0 0 1 ${x + rt} ${y} Z`;
+  };
+  for (const item of els) {
+    if (item.t === 'rect') {
+      const stroke = item.stroke ? ` stroke="${item.stroke}" stroke-width="${item.lw || 1}"` : '';
+      const filter = Array.isArray(item.shadow) && item.shadow.length
+        ? ` style="filter:${item.shadow.map((layer) => `drop-shadow(0 ${layer.dy || 0}px ${layer.blur || 0}px ${layer.color})`).join(' ')}"`
+        : '';
+      if (item.rTop != null || item.rBottom != null) {
+        parts.push(`<path d="${cornerPath(item)}" fill="${item.fill}"${stroke}${filter}/>`);
+      } else {
+        const rx = item.r ? ` rx="${item.r}"` : '';
+        parts.push(`<rect x="${item.x}" y="${item.y}" width="${item.w}" height="${item.h}"${rx} fill="${item.fill}"${stroke}${filter}/>`);
+      }
+    } else if (item.t === 'grad') {
+      const id = item.dir === 'diag' ? 'brandDiag' : 'brand';
+      parts.push(`<rect x="${item.x}" y="${item.y}" width="${item.w}" height="${item.h}" fill="url(#${id})"/>`);
+    } else if (item.t === 'line') {
+      parts.push(`<line x1="${item.x1}" y1="${item.y1}" x2="${item.x2}" y2="${item.y2}" stroke="${item.color}" stroke-width="${item.lw || 1}"/>`);
+    } else if (item.t === 'arc') {
+      const step = item.a1 - item.a0;
+      const x0 = item.cx + item.r * Math.cos(item.a0);
+      const y0 = item.cy + item.r * Math.sin(item.a0);
+      const x1 = item.cx + item.r * Math.cos(item.a1);
+      const y1 = item.cy + item.r * Math.sin(item.a1);
+      const large = step > Math.PI ? 1 : 0;
+      parts.push(`<path d="M ${item.cx} ${item.cy} L ${x0} ${y0} A ${item.r} ${item.r} 0 ${large} 1 ${x1} ${y1} Z" fill="${item.fill}"/>`);
+    } else if (item.t === 'ring') {
+      const geo = ringSectorPath(item);
+      const fmt = (v) => Number(v.toFixed(2));
+      let d = '';
+      for (const cmd of geo.cmds) {
+        if (cmd.c === 'M') d += ` M ${fmt(cmd.x)} ${fmt(cmd.y)}`;
+        else if (cmd.c === 'L') d += ` L ${fmt(cmd.x)} ${fmt(cmd.y)}`;
+        else if (cmd.c === 'Q') d += ` Q ${fmt(cmd.cx)} ${fmt(cmd.cy)} ${fmt(cmd.x)} ${fmt(cmd.y)}`;
+        else if (cmd.c === 'A') {
+          d += ` A ${fmt(cmd.r)} ${fmt(cmd.r)} 0 ${cmd.large ? 1 : 0} ${cmd.sweep} ${fmt(cmd.x)} ${fmt(cmd.y)}`;
+        } else if (cmd.c === 'Z') d += ' Z';
+      }
+      const evenOdd = geo.evenOdd ? ' fill-rule="evenodd"' : '';
+      parts.push(`<path d="${d.trim()}" fill="${item.fill}"${evenOdd}/>`);
+    } else if (item.t === 'curve') {
+      const { segs, baseY, startX, endX } = curveSegments(item);
+      const fmt = (v) => Number(v.toFixed(1));
+      let d = `M ${fmt(segs[0].x0)} ${fmt(segs[0].y0)}`;
+      for (const seg of segs) d += ` C ${fmt(seg.c1x)} ${fmt(seg.c1y)} ${fmt(seg.c2x)} ${fmt(seg.c2y)} ${fmt(seg.x1)} ${fmt(seg.y1)}`;
+      const area = `${d} L ${fmt(endX)} ${fmt(baseY)} L ${fmt(startX)} ${fmt(baseY)} Z`;
+      const gid = `hg${parts.length}`;
+      parts.push(`<defs><linearGradient id="${gid}" x1="0" y1="${fmt(item.y)}" x2="0" y2="${fmt(item.y + item.h)}" gradientUnits="userSpaceOnUse">`);
+      parts.push(`<stop offset="0" stop-color="${item.fillFrom}" stop-opacity="0.36"/><stop offset="1" stop-color="${item.fillFrom}" stop-opacity="0"/></linearGradient></defs>`);
+      parts.push(`<path d="${area}" fill="url(#${gid})"/>`);
+      parts.push(`<path d="${d}" fill="none" stroke="${item.stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`);
+    } else if (item.t === 'text') {
+      const anchor = item.align === 'center' ? 'middle' : item.align === 'right' ? 'end' : 'start';
+      const baseline = item.baseline === 'middle' ? 'central' : 'alphabetic';
+      parts.push(`<text x="${item.x}" y="${item.y}" font-family="${esc(layout.fontFamily || FONT_STACK)}" font-size="${item.size}" font-weight="${item.weight}" fill="${item.color}" text-anchor="${anchor}" dominant-baseline="${baseline}">${esc(item.text)}</text>`);
+    } else if (item.t === 'qr') {
+      const quiet = 2;
+      const total = item.qr.size + quiet * 2;
+      const unit = item.size / total;
+      parts.push('<g>');
+      parts.push(`<rect x="${item.x}" y="${item.y}" width="${item.size}" height="${item.size}" fill="#ffffff"/>`);
+      for (let row = 0; row < item.qr.size; row += 1) {
+        for (let col = 0; col < item.qr.size; col += 1) {
+          if (!item.qr.modules[row][col]) continue;
+          const px = item.x + (col + quiet) * unit;
+          const py = item.y + (row + quiet) * unit;
+          parts.push(`<rect x="${px.toFixed(2)}" y="${py.toFixed(2)}" width="${unit.toFixed(2)}" height="${unit.toFixed(2)}" fill="#0d0f14"/>`);
+        }
+      }
+      parts.push('</g>');
+    } else if (item.t === 'image') {
+      const href = layout.images && layout.images[item.key];
+      if (typeof href === 'string' && href.startsWith('data:')) {
+        const clipId = `imgclip${parts.length}`;
+        parts.push(
+          `<clipPath id="${clipId}"><rect x="${item.x}" y="${item.y}" width="${item.size}" height="${item.size}" rx="${item.radius || 0}"/></clipPath>`,
+        );
+        parts.push(
+          `<image x="${item.x}" y="${item.y}" width="${item.size}" height="${item.size}" href="${href}" clip-path="url(#${clipId})"/>`,
+        );
+      } else if (item.key === 'brand-logo') {
+        brandSvg(parts, item.x, item.y, item.size, 'mark');
+      }
+    } else if (item.t === 'brand') {
+      brandSvg(parts, item.x, item.y, item.size, 'mark');
+    }
+  }
+  parts.push('</svg>');
+  return parts.join('');
+}

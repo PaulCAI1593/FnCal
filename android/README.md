@@ -1,4 +1,4 @@
-# FnCal 安卓外壳 v0.2.2
+# FnCal 安卓外壳 v0.4.1
 
 给自托管 FnCal 一个安卓安装包：首次打开填自己的地址，之后正常登录使用。
 本目录只包含安卓壳；FnCal 网页与后端仍在 `code/`。
@@ -17,9 +17,9 @@
    在仓库根目录的 `android/` 里执行 `gradle assembleDebug --no-daemon`。
 3. 产物：
    - Actions artifact `FnCal-Android-debug`；
-   - Release `android-v0.2.2` 的资产 `FnCal-Android-0.2.2.apk`（固定测试签名）。
+   - Release `android-v0.4.1` 的资产 `FnCal-Android-0.4.1.apk`（固定测试签名）。
 4. 构建自检会打印 `aapt dump badging` 与 `apksigner verify --print-certs`：
-   包名 `com.paulcai1593.fncal.app`、`versionName=0.2.2`、`versionCode=202`，
+   包名 `com.paulcai1593.fncal.app`、`versionName=0.4.1`、`versionCode=401`，
    证书 SHA-256 必须是 `0A:78:89:85:4B:B2:E8:A8:21:53:A1:5D:59:A3:48:67:6D:77:2A:8A:22:F7:C9:71:CF:98:A7:F1:C0:8C:3A:CE`。
 
 ## 签名（0.2.1）
@@ -67,6 +67,37 @@ android/
   app/src/main/res/values-night/         colors / themes（深色覆盖）
   app/src/main/res/mipmap-*/             启动图标
 ```
+
+## 桌面卡片（0.4.1 起九款）
+
+九款全是整卡位图（`WidgetCards041`），同一份 `/api/widget/v1/summary` 缓存、同一个 15 分钟刷新。
+款名、默认尺寸与能否拉伸：
+
+| 款 | 默认 | 可拉伸到 | 说明 |
+| --- | --- | --- | --- |
+| 小月历 | 2×2（110dp） | 不可拉伸 | 当月网格 + 日号 + 事件点 |
+| 今日日程 | 2×2 | 不可拉伸 | 最多 3 条，超出「还有 N 条」 |
+| 大月历 | 4×4 | 不可拉伸 | 日号 + 最多 4 枚分类徽章 |
+| 四日 | 4×2 | 4×4 | 4×2 每列 3 条紧凑行；4×4 每列时间/标题/地址三行 |
+| 日程列表 | 4×2 | 4×4 | 4×2 两组共 4 条；4×4 五组共 11 条 |
+| 当月热度 | 2×2 | 4×2 | 四档热度 + 当天主 emoji |
+| 当月分类 | 2×2 | 4×2 | 最多 5 组，条数降序 |
+| 一周节奏 | 2×2 | 4×2 | 七柱四档 + 柱顶条数 |
+| 时段分析 | 2×2 | 4×2 | 平滑曲线 + 主题色渐变 |
+
+口径：
+
+- 颜色只读 `settings.accentColor` 与 `settings.weekStartsOn`（`WidgetClient.cardSettings` 一次取回，
+  存 `WidgetPrefs` 的 `accent_color` / `week_starts_on`）。主题色先过 `WidgetTokens.accentInk`：
+  相对亮度压到 ≤0.18、对卡面 ≥4.5:1。日历九色与分组十色不跟主题色。
+- 大月历徽章：全天与多日日程用日历色实底；有开始结束时间的定时日程用 30% 淡底 + 50% 同色
+  0.7dp 细边。几何直径 11.2dp、间距 2.8dp、每行 2 枚、最多 2 行。
+- 热度四档 = 日历色 42% / 58% / 76% / 实色，第 4 档（4 条以上）再压深 12%；空格 `#D6E1ED`。
+- 一周节奏四档阈值：占最大值的 ≥0.85 / ≥0.6 / ≥0.35 / 其余 → 92% / 72% / 50% / 32% 混白。
+- 日程列表时间列固定 52dp：开始 8.4sp/700 深灰、结束 8.0sp 浅灰接破折号；全天行「全天」右对齐到
+  时间列右缘，不写破折号。名称左缘固定 75dp（12 + 7 + 52 + 4），不随文字长短抖动。
+- 统计口径与年度总结共用同一套分类色与分组顺序（服务端补 `tagEmoji` / `tagGroupId` /
+  `tagGroupName` / `tagGroupIndex` 后直接读；缺字段时降级为日历色、名称首字）。
 
 ## 界面入口
 
@@ -159,6 +190,21 @@ C:\Python314\python.exe android/tools/check_static.py
 （外链只放行更新用的四个域名）、`update.json` 与 Gradle 版本一致、Gradle 关键配置
 与依赖白名单、固定测试签名、浅色 / 深色令牌值、系统栏必须透明、布局根容器不得
 `fitsSystemWindows` 或写死 `paddingTop`、文本文件 LF。**这只是静态检查，不等于编译通过。**
+
+0.4.1 另有两个兜底脚本（本机没有 SDK 时用）：
+
+```powershell
+C:\Python314\python.exe android/tools/check_kotlin_refs.py    # 括号配平 / R.* 存在 / 跨文件符号 / 禁 TODO
+C:\Python314\python.exe android/tools/check_widget_math.py     # 主题墨色、四档热度、四档节奏、徽章、几何、列表
+C:\Python314\python.exe android/tools/check_icons.py           # 自适应前景四角透明 / 66% 安全区 / 渐变底 / 同源
+```
+
+`check_widget_math.py` 写 `design/widget-041/数值表-0.4.1.md`；`check_icons.py` 写
+`design/widget-041/ic-adaptive-preview-0.4.1.png`（圆形遮罩 / 方形圆角遮罩 / 66% 安全区三块）。
+启动图标重生成用 `android/tools/make_icons.py`：前景取 `icon-512.png` 的标记本体（不用 maskable 满幅图），
+背景是 `res/drawable/ic_launcher_background.xml` 的 `#1E72D6 → #01B597` 渐变。
+四个脚本都**不等于编译通过**：真正的编译与 JUnit 只在 GitHub Actions 上跑。
+
 
 ## 已知限制
 

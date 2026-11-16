@@ -177,7 +177,7 @@ describe('0.3.10 菜单：管理员与普通用户都是 4 项', () => {
     const labels = await openMenu({ username: 'x', role: 'admin' });
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
     // 0.6.15（用户）：快捷键从设置页签搬到菜单，夹在安全入口与「立即同步」之间。
-    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '检查更新', '登出']);
+    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     expect(labels.some((label) => label.includes('我的安全'))).toBe(false);
   });
 
@@ -185,7 +185,7 @@ describe('0.3.10 菜单：管理员与普通用户都是 4 项', () => {
     const labels = await openMenu({ username: 'dave', role: 'user' });
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
     // 0.6.15（用户）：快捷键对所有登录用户可见。
-    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '检查更新', '登出']);
+    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     expect(labels.some((label) => label.includes('安全设置'))).toBe(false);
   });
 });

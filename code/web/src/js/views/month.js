@@ -7,7 +7,7 @@ import { el } from '../dom.js';
 import { icon } from '../icons.js';
 import { draggable } from '../drag.js';
 import { createEdgePan } from '../edge-autopan.js';
-import { colorHex, colorFg } from '../colors.js';
+import { colorHex, colorFg, timeInkForFill } from '../colors.js';
 // 0.7.0（用户）：月格事件条显示标签「emoji 名称」；窄档只留 emoji。
 import { tagForRecord } from '../store.js';
 import { applyTagDisplayLadder, splitTagTitle, tagHourText } from '../tag-display.js';
@@ -56,8 +56,12 @@ const chipEvents = new WeakMap();
 let morePopover = null;
 let morePopoverTimer = 0;
 let moreHideTimer = 0;
+let morePopoverAnchor = null;
 const MORE_HOVER_DELAY_MS = 1000;
 const MORE_HOVER_HIDE_MS = 120;
+// 0.8.18（用户 01:07）：触屏上「还有 N 个」轻触弹浮层、长按进日视图。
+const MORE_LONG_PRESS_MS = 500;
+const MORE_TAP_SLOP_PX = 8;
 
 // 0.2.17（B1）：≤520px 走「文字 chip、每格最多 2 条」的紧凑档。包里所有渲染路径都要
 // 问这一句，抽成一个带容错的判断（jsdom / 老 WebView 可能没有 matchMedia）。
@@ -98,6 +102,21 @@ export function planCellRows({ bars, others, capacity, laneIndexOfBar = null }) 
     return { more: hidden > 0, visibleBars, visibleOthers, hidden };
   }
   return { more: true, visibleBars: 0, visibleOthers: 0, hidden: bars + others };
+}
+
+/**
+ * 0.8.19（用户 01:30）：aria-label 第三段——日历名。
+ * 查不到（无 store / 无 calendarId / 日历不存在 / 名字为空）就返回空串，
+ * 拼 aria-label 时整段省略，绝不写 undefined 或空段。
+ */
+function calendarNameOf(store, calendarId) {
+  const cal =
+    store && typeof store.getCalendar === 'function' && calendarId
+      ? store.getCalendar(calendarId)
+      : null;
+  if (!cal) return '';
+  const name = typeof cal.displayName === 'string' ? cal.displayName : cal.name;
+  return typeof name === 'string' ? name.trim() : '';
 }
 
 export function renderMonth(ctx) {
@@ -141,7 +160,6 @@ export function renderMonth(ctx) {
       gridEl.append(
         el('div', {
           class: 'month__weeknum',
-          title: `${year} 第 ${week} 周`,
         }, [
           // 0.2.9（用户 6）：竖排改为**逐字 span 的 flex 竖列**——不再依赖
           // writing-mode/upright 的全角推进（那会把「第 / 4 / 0 / 周」撑开），
@@ -312,7 +330,6 @@ export function renderMonth(ctx) {
       text: String(day.getDate()),
       role: 'button',
       tabindex: '0',
-      title: t('month.openDay'),
       'aria-label': t('month.openDayAria', { date: formatFullDate(day) }),
       style: { cursor: 'pointer' },
       on: {
@@ -965,7 +982,8 @@ export function renderMonth(ctx) {
 /**
  * 0.7.10（用户：「还有 2 个」在窄格里被截成「还有 2…」）：折叠按钮按**实测宽度**
  * 决定文案，不按断点。完整文案放得下就用它；放不下换成「+N」，完整文案仍留在
- * aria-label 与 title 里（读屏与悬停不掉信息）。
+ * aria-label 与 dataset.fullText 里（读屏与缩成「+N」后的还原都不掉信息）。
+ * 0.8.20（用户 01:53）：不再写原生 title，否则悬停会弹一个与按钮文字同名的灰框。
  * 判定幂等：先把完整文案写回去量一次 scrollWidth，宽度由格子决定、不随文案变化。
  */
 function fitMoreButtonText(button) {
@@ -983,12 +1001,28 @@ function buildMoreButton(day, hiddenEvents, actions, ctx) {
     if (e.pointerType && e.pointerType !== 'mouse') return;
     scheduleMorePopover(btn, hiddenEvents, ctx, { x: e.clientX, y: e.clientY });
   };
+  // 0.8.18（用户 01:07）：触屏手势——轻触弹浮层（按按钮矩形定位）、长按 500ms 进日视图；
+  // 长按或轻触之后抬起产生的 click 一律吞掉，避免又弹浮层 / 重复进日视图。
+  let press = null;
+  let swallowClick = false;
+  const endPress = () => {
+    if (press && press.timer) clearTimeout(press.timer);
+    press = null;
+  };
+  const togglePopover = () => {
+    if (morePopover && morePopoverAnchor === btn) {
+      hideMorePopover();
+      return;
+    }
+    clearMorePopoverTimers();
+    showMorePopover(btn, hiddenEvents, ctx, null);
+  };
   const fullText = t('month.more', { count: hiddenEvents.length });
   const btn = el('button', {
     class: 'month__more',
     type: 'button',
     text: fullText,
-    title: fullText,
+    // 0.8.20：只留 aria-label 与 dataset，不设 title（原生灰框会重复按钮文字）。
     'aria-label': fullText,
     dataset: { fullText, count: String(hiddenEvents.length) },
     on: {
@@ -996,8 +1030,46 @@ function buildMoreButton(day, hiddenEvents, actions, ctx) {
       pointerleave: () => scheduleMorePopoverHide(),
       focus: () => scheduleMorePopover(btn, hiddenEvents, ctx, null),
       blur: () => scheduleMorePopoverHide(),
+      pointerdown: (e) => {
+        if (e.pointerType === 'mouse') return;
+        endPress();
+        press = { x: e.clientX, y: e.clientY, at: Date.now(), timer: 0, longFired: false };
+        press.timer = setTimeout(() => {
+          if (!press) return;
+          press.longFired = true;
+          press.timer = 0;
+          hideMorePopover();
+          actions.gotoDayView(day);
+        }, MORE_LONG_PRESS_MS);
+      },
+      pointermove: (e) => {
+        if (!press) return;
+        if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < MORE_TAP_SLOP_PX) return;
+        // 位移超过阈值：当成滚动/拖走，长按与轻触都不成立。
+        endPress();
+      },
+      pointerup: (e) => {
+        if (e.pointerType === 'mouse' || !press) return;
+        const held = Date.now() - press.at;
+        const moved = Math.hypot(e.clientX - press.x, e.clientY - press.y);
+        const longFired = press.longFired;
+        endPress();
+        swallowClick = true;
+        if (longFired || moved >= MORE_TAP_SLOP_PX) return;
+        if (held < MORE_LONG_PRESS_MS) togglePopover();
+      },
+      pointercancel: () => endPress(),
+      contextmenu: (e) => {
+        // 触屏长按不许弹系统菜单 / 放大镜；鼠标右键不拦。
+        if (press) e.preventDefault();
+      },
       click: (e) => {
         e.stopPropagation();
+        if (swallowClick) {
+          swallowClick = false;
+          e.preventDefault();
+          return;
+        }
         hideMorePopover();
         actions.gotoDayView(day);
       },
@@ -1044,15 +1116,21 @@ function showMorePopover(anchor, hiddenEvents, ctx, point) {
   const hour12 = (ctx.settings || {}).hour12;
   const list = el('div', { class: 'month__more-popover', role: 'tooltip' });
   hiddenEvents.forEach((ev) => {
-    // 0.2.21（F7）：任务没有 start，时间位不渲染（否则 formatTime 出 NaN:NaN）；
-    // 任务行 = 圆点 + 标题 +（已完成）+ 点击打开任务；事件行保持「圆点 → 时间 → 标题」。
+    // 0.2.21（F7）：任务没有 start，时间位不渲染（否则 formatTime 出 NaN:NaN）。
+    // 0.8.18（用户 01:04）：浮层行与格内 chip 同格式——删掉行首圆点，日历色由左侧 3px 色条承担；
+    // 全天 / 多日行整块填色（is-filled）。
     const isTask = !Number.isFinite(ev.start);
-    const cells = [el('span', { class: 'chip__dot' })];
+    // 与格内 chip 同一判定：全天、跨天条整块填色；单日定时事件与任务走「16% 同色底 + 3px 色条」。
+    const isFilled = !isTask && (ev.allDay || isMultiDayBar(ev));
+    const cells = [];
+    // 0.8.19（用户 01:30）：填色行时间用「最低满足 4.5:1 的不透明度」，与格内 chip 同一函数。
+    const timeInk = isFilled && !ev.ooo ? timeInkForFill(colorHex(ev.color), colorFg(ev.color)) : null;
     if (!isTask) {
       cells.push(
         el('span', {
           class: 'month__more-time',
           text: ev.allDay ? t('editor.allDay') : formatTime(new Date(ev.start), { hour12 }),
+          ...(timeInk ? { style: { color: timeInk.color, opacity: '1' } } : {}),
         }),
       );
     }
@@ -1069,8 +1147,9 @@ function showMorePopover(anchor, hiddenEvents, ctx, point) {
       el(
         'div',
         {
-          class: `month__more-row${isTask ? ' is-task' : ''}${ev.ooo ? ' is-ooo' : ''}`,
-          style: { '--chip-color': ev.ooo ? 'var(--ooo)' : colorHex(ev.color) },
+          class: `month__more-row${isTask ? ' is-task' : ''}${isFilled ? ' is-filled' : ''}${ev.ooo ? ' is-ooo' : ''}`,
+          // 0.8.18：与格内 chip 同一组变量——填色行的文字墨色必须按底色亮度选，不能固定 #101216。
+          style: { '--chip-color': ev.ooo ? 'var(--ooo)' : colorHex(ev.color), '--ev-fg': colorFg(ev.color) },
           // 0.2.24（H6）：事件行也可点（与格内 chip 同一入口 openEvent）；此前只有任务
           // 行能点，点事件行没反应。两种行都先收起浮层再打开详情。
           on: {
@@ -1086,6 +1165,7 @@ function showMorePopover(anchor, hiddenEvents, ctx, point) {
     );
   });
   // 先离屏量尺寸再贴光标（12px 起，出右/下边就翻到另一侧并夹在视口内）。
+  // 0.8.18：触屏没有光标，point 传 null 时按按钮矩形定位（下方 6px，放不下翻上方）。
   list.style.left = '-9999px';
   list.style.top = '-9999px';
   // 0.2.24（H6）：持续区 = 按钮 ∪ 浮层。指针从按钮跨过 12px 间隙进浮层时
@@ -1094,6 +1174,7 @@ function showMorePopover(anchor, hiddenEvents, ctx, point) {
   list.addEventListener('pointerleave', () => scheduleMorePopoverHide());
   document.body.append(list);
   morePopover = list;
+  morePopoverAnchor = anchor;
 
   const rect = list.getBoundingClientRect();
   const vw = document.documentElement.clientWidth || window.innerWidth;
@@ -1101,16 +1182,20 @@ function showMorePopover(anchor, hiddenEvents, ctx, point) {
   const GAP = 12;
   let left;
   let top;
+  let margin = 8;
   if (point) {
     left = point.x + GAP;
     top = point.y + GAP;
     if (left + rect.width > vw - 8) left = point.x - GAP - rect.width;
   } else {
+    // 0.8.18（用户 01:07）：按按钮矩形定位——优先正下方 6px，下方不够翻到上方，左右夹 ±12px。
     const anchorRect = anchor.getBoundingClientRect();
+    margin = 12;
     left = anchorRect.left;
     top = anchorRect.bottom + 6;
+    if (top + rect.height > vh - margin) top = anchorRect.top - 6 - rect.height;
   }
-  left = Math.max(8, Math.min(left, Math.max(8, vw - 8 - rect.width)));
+  left = Math.max(margin, Math.min(left, Math.max(margin, vw - margin - rect.width)));
   top = Math.max(8, Math.min(top, Math.max(8, vh - 8 - rect.height)));
   list.style.left = `${Math.round(left)}px`;
   list.style.top = `${Math.round(top)}px`;
@@ -1135,6 +1220,7 @@ function hideMorePopover() {
   if (!morePopover) return;
   morePopover.remove();
   morePopover = null;
+  morePopoverAnchor = null;
   document.removeEventListener('keydown', onMorePopoverKeydown, true);
   document.removeEventListener('pointerdown', onMorePopoverPointerDown, true);
   document.removeEventListener('scroll', hideMorePopover, true);
@@ -1238,8 +1324,15 @@ function buildChip(event, day, ctx, cellData, bounds) {
       // 0.7.2（用户）：紧凑档标签层同样是「emoji + 一个真实空格 + 名称」，不用 CSS 间距。
       ...(multiSeg && compactChip ? { barSeg: '1', barTitle: `${chipEmoji ? `${chipEmoji} ` : ''}${chipLabel}` } : {}),
     },
-    title: compactChip && !event.allDay ? `${chipTitle}，${timeTextFull}` : chipTitle,
-    'aria-label': `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}${event.allDay ? t('agenda.event.allDaySuffix') : '，' + formatTime(shownStartDate, { hour12: ctx.settings.hour12 })}`,
+    // 0.8.19（用户 01:30）：三段用中文逗号拼「标题，时间（或全天），日历名」；
+    // 日历名查不到就整段省略，不写 undefined / 空串。
+    'aria-label': [
+      `${event.ooo ? t('agenda.event.oooPrefix') : ''}${event.title || t('agenda.event.untitledAria')}${event.declined ? t('agenda.event.declined') : ''}`,
+      event.allDay ? t('editor.allDay') : formatTime(shownStartDate, { hour12: ctx.settings.hour12 }),
+      calendarNameOf(ctx.store, event.calendarId),
+    ]
+      .filter(Boolean)
+      .join('，'),
   });
 
   if (event.ooo && showLabel) chip.append(el('span', { class: 'chip__ooo-icon', html: icon('plane', { size: 'sm' }) }));
@@ -1247,10 +1340,14 @@ function buildChip(event, day, ctx, cellData, bounds) {
   // 0.2.21（F3）：时间只在**首段**出现——单日定时 chip、以及跨天定时事件的第一段
   // （"18:30 台球"）；多日全天不带时间；延续段（showLabel=false）时间和标题都不渲染。
   if (showLabel && !event.allDay && (!filled || isMultiDayBar(event))) {
+    // 0.8.19（用户 01:30）：填色条上的时间按「最低满足 4.5:1 的不透明度」取实色，
+    // 与「还有 N 个」浮层行共用 colors.js 的 timeInkForFill()。
+    const timeInk = filled && !event.ooo ? timeInkForFill(hex, colorFg(event.color)) : null;
     chip.append(
       el('span', {
         class: 'chip__time',
         text: timeText,
+        ...(timeInk ? { style: { color: timeInk.color } } : {}),
         dataset: { timeFull: timeText, timeShort: timeHour },
       }),
     );
@@ -1353,7 +1450,6 @@ function buildOverlayChip(item, ctx) {
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: item.id },
-    title: item.title,
     // Named by kind so a screen reader can tell it from an event; the label
     // also survives the ≤520px dot mode, where the visible title is
     // display:none and the chip would otherwise read as nothing.
@@ -1399,7 +1495,6 @@ function buildInlineLunar(dayStart, otherMonth) {
       class:
         'month__lunar month__lunar--inline' + (otherMonth ? ' is-othermonth' : ''),
       'aria-hidden': 'true',
-      title: dayLunarFullText(dayStart),
     },
     [
       el('span', {
@@ -1675,7 +1770,6 @@ function buildHolidayLabel(item, ctx, otherMonth, compact = false) {
       (compact ? ' month__holiday--inline' : ''),
     role: 'button',
     tabindex: '0',
-    title: name,
     'aria-label': `${t(isTerm ? 'agenda.solarTerm.kindTerm' : 'agenda.holiday.kindHoliday')}：${name}`,
   }, compact
     ? [el('span', { class: 'month__holiday-name', text: isTerm ? name : holidayDisplayName(name) })]
@@ -1699,14 +1793,24 @@ function buildHolidayLabel(item, ctx, otherMonth, compact = false) {
   return label;
 }
 
-function buildTaskChip(task, day, ctx, cellData) {  const chip = el('div', {
+function buildTaskChip(task, day, ctx, cellData) {
+  // 0.8.19（用户 01:30）：三段「标题，时间（或全天），日历名」，日历名查不到整段省略。
+  const taskTimeLabel = task.allDay === false
+    ? formatTime(new Date(task.due), { hour12: ctx.settings.hour12 })
+    : t('editor.allDay');
+  const chip = el('div', {
     class: `chip chip--task${task.done ? ' is-done' : ''}`,
     style: { '--chip-color': colorHex(task.color), '--ev-fg': colorFg(task.color) },
     tabindex: '0',
     role: 'button',
     dataset: { focusKey: `task:${task.id}` },
-    title: task.title || t('agenda.task.untitled'),
-    'aria-label': `${t('agenda.task.ariaPrefix')}${task.title || t('agenda.event.untitledAria')}${task.done ? t('agenda.task.doneSuffix') : ''}`,
+    'aria-label': [
+      `${t('agenda.task.ariaPrefix')}${task.title || t('agenda.event.untitledAria')}${task.done ? t('agenda.task.doneSuffix') : ''}`,
+      taskTimeLabel,
+      calendarNameOf(ctx.store, task.calendarId),
+    ]
+      .filter(Boolean)
+      .join('，'),
   });
   const check = el('button', {
     class: `chip__check${task.done ? ' is-checked' : ''}`,

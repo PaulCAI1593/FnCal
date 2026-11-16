@@ -10,7 +10,7 @@ import android.os.Bundle
 import android.widget.RemoteViews
 
 /**
- * 0.3.0 五款桌面卡片的共同逻辑。
+ * 0.4.1 九款桌面卡片的共同逻辑。
  *
  * 每款只声明自己的画法、默认尺寸与深链目标；取数、刷新、点击都走同一套。
  * `updatePeriodMillis=0`（见 res/xml/widget_*_info.xml）：系统闹钟不刷新，
@@ -93,6 +93,10 @@ abstract class FnCalWidgetProvider : AppWidgetProvider() {
             MonthWidgetProvider::class.java,
             FourDayWidgetProvider::class.java,
             AgendaListWidgetProvider::class.java,
+            MonthHeatWidgetProvider::class.java,
+            MonthCategoryWidgetProvider::class.java,
+            WeekRhythmWidgetProvider::class.java,
+            HoursWidgetProvider::class.java,
         )
 
         /** 点卡片：进主界面并带视图与日期；未登录时同一入口（网页会显示登录页）。 */
@@ -173,16 +177,50 @@ class MonthWidgetProvider : FnCalWidgetProvider() {
     override val linkView = "month"
 }
 
+/** 0.4.1：四日默认 4×2，可拉伸到 4×4。 */
 class FourDayWidgetProvider : FnCalWidgetProvider() {
     override val widgetKind = WidgetKind.FOUR_DAY
     override val defaultWidthDp = 250
-    override val defaultHeightDp = 250
+    override val defaultHeightDp = 110
     override val linkView = "4day"
 }
 
+/** 0.4.1：日程列表默认 4×2，可拉伸到 4×4。 */
 class AgendaListWidgetProvider : FnCalWidgetProvider() {
     override val widgetKind = WidgetKind.AGENDA_LIST
     override val defaultWidthDp = 250
-    override val defaultHeightDp = 250
+    override val defaultHeightDp = 110
+    override val linkView = "agenda"
+}
+
+/** 0.4.1：当月热度 2×2 → 4×2。 */
+class MonthHeatWidgetProvider : FnCalWidgetProvider() {
+    override val widgetKind = WidgetKind.MONTH_HEAT
+    override val defaultWidthDp = 110
+    override val defaultHeightDp = 110
+    override val linkView = "month"
+}
+
+/** 0.4.1：当月分类 2×2 → 4×2。 */
+class MonthCategoryWidgetProvider : FnCalWidgetProvider() {
+    override val widgetKind = WidgetKind.MONTH_CATEGORY
+    override val defaultWidthDp = 110
+    override val defaultHeightDp = 110
+    override val linkView = "month"
+}
+
+/** 0.4.1：一周节奏 2×2 → 4×2。 */
+class WeekRhythmWidgetProvider : FnCalWidgetProvider() {
+    override val widgetKind = WidgetKind.WEEK_RHYTHM
+    override val defaultWidthDp = 110
+    override val defaultHeightDp = 110
+    override val linkView = "agenda"
+}
+
+/** 0.4.1：时段分析 2×2 → 4×2。 */
+class HoursWidgetProvider : FnCalWidgetProvider() {
+    override val widgetKind = WidgetKind.HOURS
+    override val defaultWidthDp = 110
+    override val defaultHeightDp = 110
     override val linkView = "agenda"
 }

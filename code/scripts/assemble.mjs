@@ -167,11 +167,12 @@ for (const f of ['ICON.PNG', 'ICON_256.PNG']) {
 // 图标来源一致性（P3 加固）：包内图标必须与**负责人核过的已批准图标集**逐字节相同。
 // 0.2.6：logo = v8（用户最终确认版）。
 // 0.2.34：logo = v9（v8 造型不变，仅 256 大图标轻微锐化），核对目标 = `scripts/icon-approved-v9/`。
+// 0.7.29：logo = v10（蓝绿渐变 + 白色线框日历，用户 2026-11-14 定稿），核对目标 = `scripts/icon-approved-v10/`。
 // 2026-11-03：v6 / v7 / v8 与 0.2.3 留档目录已删，只留 v9（旧图反向断言随之从 check-icons 移除）。
 {
   const { createHash } = await import('node:crypto');
   const projectRoot = path.resolve(codeDir, '..');
-  const logoDir = path.join(here, 'icon-approved-v9');
+  const logoDir = path.join(here, 'icon-approved-v10');
   const pairs = [
     ['ICON.PNG', path.join(logoDir, 'icon-64.png')],
     ['ICON_256.PNG', path.join(logoDir, 'icon-256.png')],

@@ -273,6 +273,10 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 0.8.18（用户 01:07）：触屏长按要进日视图，期间不许选中文字 / 弹系统放大镜。 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 /* Hover styles are gated to devices that can hover: on a touch screen a tap
@@ -307,7 +311,8 @@
   max-height: min(60vh, 380px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--sp-1) 0;
+  /* 0.8.18（用户 01:04）：四边各 4px，行不贴边框。 */
+  padding: var(--sp-1);
   border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -319,22 +324,55 @@
 .month__more-row {
   pointer-events: auto;
   cursor: pointer;
+  position: relative;
   display: flex;
   /* 0.7.1：浮层是 flex column + max-height + 滚动，行固定高度不被压缩。 */
   flex: 0 0 auto;
-  /* 0.2.20（E10）：行首是与格子 chip 同款的 8px 实心圆点，不再是 3px 竖条；圆点与文字
-     垂直居中，「圆点 → 时间 → 标题」与普通 chip 一致。 */
   align-items: center;
   gap: 6px;
-  padding: 2px var(--sp-2);
+  overflow: hidden;
+  /* 0.8.18（用户 01:04）：浮层行与格内 chip 同格式——行内距 2/8/2/9，文字让开左侧 3px 色条。 */
+  padding: 2px var(--sp-2) 2px 9px;
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--chip-color, var(--accent)) 16%, transparent);
   white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease);
+}
+/* 与 .chip::after 同一条色条：日历色识别线索，不是装饰性侧边条。 */
+/* impeccable-disable-next-line side-tab: 日历色识别线索，非装饰性卡片侧边条 */
+.month__more-row::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--chip-color, var(--accent));
+}
+/* 0.8.18：全天 / 多日行整块填色（同 .chip--filled），不叠左侧色条。 */
+.month__more-row.is-filled {
+  background: var(--chip-color, var(--accent));
+  color: var(--ev-fg, #101216);
+}
+.month__more-row.is-filled::after {
+  display: none;
+}
+.month__more-row.is-filled .month__more-time {
+  color: var(--ev-fg, #101216);
+  opacity: 0.7;
 }
 .month__more-row.is-task {
   cursor: pointer;
 }
 @media (hover: hover) {
+  /* 0.8.18：定时行 hover 与 .chip:hover 一致（同色加深到 26%），不再换中性 --surface-3。 */
   .month__more-row:hover {
-    background: var(--surface-3);
+    background: color-mix(in srgb, var(--chip-color, var(--accent)) 26%, transparent);
+  }
+  .month__more-row.is-filled:hover {
+    background: var(--chip-color, var(--accent));
+    filter: brightness(1.06);
   }
 }
 .month__more-state {
@@ -354,7 +392,21 @@
 .month__more-title {
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 0.8.18：长标题在 260px 上限内走省略号，时间保持完整。 */
+  min-width: 0;
   font-weight: 500;
+}
+/* 0.8.18（用户 01:04/01:07）：≤520px 浮层行与格内紧凑 chip 同尺寸——同一套
+   26px 行高、11px 字号、1/4/1/7 内距；手机上一行一行对照才是「同格式」，
+   顺带把触屏命中区撑到 26px。 */
+@media (max-width: 520px) {
+  .month__more-row {
+    gap: 0 4px;
+    min-height: 26px;
+    padding: 1px 4px 1px 7px;
+    font-size: var(--fs-xs);
+    line-height: 12px;
+  }
 }
 
 /* Month event chip */
@@ -1420,7 +1472,8 @@ body.is-dragging .tevent--resizing * {
    nothing clips or collides. */
 .agenda__event--holiday .agenda__event-icon {
   width: 16px;
-  margin: 0 -3px;
+  /* 0.8.24：旗子同样跟首行（原来的 `margin: 0 -3px` 会盖掉 5px 上边距）。 */
+  margin: 5px -3px 0;
   /* 0.5.11（S2）旗子与节日文字同色；0.6.11 改为 currentColor，节气同样自动跟随 --term-ink。 */
   color: currentColor;
 }
@@ -1640,7 +1693,10 @@ body.is-dragging .tevent--resizing * {
 }
 .agenda__event {
   display: flex;
-  align-items: center;
+  /* 0.8.24（用户 m01043「日程同一行，顶部对齐，现在时间高了一点」）：行内顶部对齐——
+     竖向三行时间块（约 48px）比单行标题（20px）高，居中会把时间首行顶到标题上方。
+     首行行盒统一 20px（见 `.agenda__event-time`），圆点/图标跟着首行居中。 */
+  align-items: flex-start;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
@@ -1659,14 +1715,27 @@ body.is-dragging .tevent--resizing * {
   flex: none;
   background: var(--chip-color);
 }
+/* 0.8.24（用户 m01043）：圆点与飞机图标跟首行对齐——10px 圆点在 20px 首行里居中，
+   图标盒自身 20px 高，也用 5px 上边距落在首行中线。 */
+.agenda__event-dot,
+.agenda__event-icon {
+  align-self: flex-start;
+  margin-top: 5px;
+}
 .agenda__event-time {
   width: 128px;
   flex: none;
   color: var(--text-2);
   font-variant-numeric: tabular-nums;
   font-size: var(--fs-base);
+  /* 0.8.24（用户 m01043）：首行行盒取 20px，与标题（13px / 行高 1.5 = 19.5px）对齐，
+     时间首行文字顶与标题文字顶差 ≤1px。 */
+  line-height: 20px;
 }
 .agenda__event-title {
+  /* 0.8.24（用户 m01043 / m01098）：标题取 20px 行盒，与时间列首行同高，桌面与手机
+     首行文字顶对齐。 */
+  line-height: 20px;
   /* Fill the rest of the row and allow shrinking below content width — a
      flex item's automatic min-size otherwise keeps a long title at full
      content width, pushing the row past the viewport instead of engaging
@@ -1696,7 +1765,8 @@ body.is-dragging .tevent--resizing * {
   flex-direction: column;
   align-items: flex-start;
   row-gap: 1px;
-  line-height: 1.25;
+  /* 0.8.24（用户 m01043）：宽屏两行时间同样取 20px 行盒，首行与标题齐平。 */
+  line-height: 20px;
 }
 /* 0.7.21（总监 m02610）：标注有两份 DOM，由断点二选一显示。
    >520px：名称行右侧那份（`--name`，与 0.7.17 之前一致），时间列那份隐藏；
@@ -1705,6 +1775,8 @@ body.is-dragging .tevent--resizing * {
 .agenda__event-daypart--time {
   display: none;
 }
+/* 0.8.21（用户 m01014，总监 m02593）：标注留在 44px 时间列里，可见文案改紧凑版
+   「第2/3天」、9px、行高 1.15、不拉字距、不折行；>520 的名称行那份仍是完整文案。 */
 @media (max-width: 520px) {
   .agenda__event-daypart--name {
     display: none;
@@ -1714,6 +1786,11 @@ body.is-dragging .tevent--resizing * {
     align-self: flex-start;
     margin-left: 0;
     padding-left: 0;
+    font-size: 9px;
+    line-height: 1.15;
+    letter-spacing: 0;
+    white-space: nowrap;
+    color: var(--text-3);
   }
 }
 /* 窄屏紧凑时间（flex-wrap）里标注 flex-basis 100%，独占一行、不夹在两个时间片段之间。 */
@@ -1747,10 +1824,18 @@ body.is-dragging .tevent--resizing * {
   .agenda__event-main--tagged:has(> .agenda__event-daypart--name) > .agenda__event-title--tagged {
     grid-column: 1 / 3;
   }
+  /* 0.8.24（总监 m03054 / 用户 m01098）：名称行右侧的「（第 n/m 天）」与标题同基线，
+     不再以 11px 小字的基线浮高。 */
+  .agenda__event-daypart--name {
+    line-height: 20px;
+    align-self: baseline;
+  }
 }
 .agenda__event-location {
   grid-column: 1 / -1;
   grid-row: 2;
+  /* 0.8.24（总监 m03054）：地址仍第二行，与标题之间留 2px。 */
+  margin-top: 2px;
   color: var(--text-3);
   font-size: var(--fs-sm);
   line-height: 1.35;
@@ -1763,10 +1848,10 @@ body.is-dragging .tevent--resizing * {
   align-items: flex-start;
 }
 .agenda__event--has-location .agenda__event-dot {
-  margin-top: 6px;
+  margin-top: 5px;
 }
 .agenda__event--has-location .agenda__event-icon {
-  margin-top: 3px;
+  margin-top: 5px;
 }
 .agenda__task-check {
   flex: none;
@@ -2400,8 +2485,10 @@ button.year__day {
     grid-template-columns: 64px minmax(0, 1fr);
     gap: var(--sp-2);
   }
+  /* 0.8.21（用户 m00745 / m01007）：定时行时间竖向堆叠后列宽统一 44px，
+     宽度让给名称与地点；跨夜在日界截到 00:00，不再有宽列分支。 */
   .agenda__event-time {
-    width: 104px;
+    width: 44px;
     font-size: var(--fs-sm);
   }
 }
@@ -3006,16 +3093,29 @@ button.year__day {
    「产品评审（跨三天）」被截成「产品…」——大屏看得见的事件标题手机上等于看不见。
    窄屏把标注挪到标题下面一行，标题拿满整行（仍单行省略，不换行长高）。 */
 @media (max-width: 520px) {
+  /* 0.8.24（总监 m02983）：时间列两行都取 20px 行盒后行高净增 11.2px；这一档把行内
+     上下内距各收 2px（8 → 6），净增压到 +7.2px，行高 60px（不低于 44）。 */
+  .agenda__event {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  /* 0.8.26（总监 m03145 / 用户 m01209「底部和右侧名称一行地址的底部对齐」）：名称区
+     两行（标题 / 地址）与时间列两行（开始 / 结束）各 20px，去掉 2px 行间距，地址文字
+     底才能与结束时间底齐平；行高 54 → 52px。 */
   .agenda__event-main {
     grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
   }
-  /* 0.7.21（总监 m02610）：旧的「标注放标题下面 grid-row: 2」作废——窄屏标注改由
-     时间列的 `--time` 那份承担（见上方 1658 一段），名称区拿回整行宽度。 */
+  /* 0.8.21（总监 m02593）：标注留在时间列（`--time` 紧凑文案），名称区拿回整行宽度。 */
   .agenda__event-main > .agenda__event-daypart--name {
     display: none;
   }
+  /* 0.8.26（总监 m03145 / 用户 m01209「底部和右侧名称一行地址的底部对齐」）：地址与
+     结束时间共用 20px 行盒、去掉 2px 上边距，两行文字底齐平；字号仍是 11px。 */
   .agenda__event-location {
     grid-row: 2;
+    line-height: 20px;
+    margin-top: 0;
   }
   /* 标题仍放不下时换到第二行（最多两行），不把「跨三天」这种关键后缀截掉。 */
   .agenda__event-main > .agenda__event-title {
@@ -3037,6 +3137,61 @@ button.year__day {
   .agenda__event-time--compact > span {
     white-space: nowrap;
   }
+  /* 0.8.21（用户 m00745）：同日定时竖向——开始 / 短竖线 / 结束。竖线画在结束片段的
+     `::before` 上（1px × 6px、currentColor 45%），两行都 nowrap，行高 1.2 不出行框。
+     0.8.23（用户 m01035）：竖线在整列里水平居中——结束片段吃满整列宽，`::before`
+     用 `margin: 1px auto`；容器必须 stretch，否则 width:100% 拿不到整列宽。 */
+  .agenda__event-time--stack {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    row-gap: 0;
+    /* 0.8.24（用户 m01043）：两行时间也用 20px 行盒，首行与标题首行齐平；行距由行盒
+       承担，短竖线仍 `margin: 1px auto` 居中。 */
+    line-height: 20px;
+    width: 44px;
+  }
+  .agenda__event-time--stack > span {
+    white-space: nowrap;
+  }
+  /* 0.8.24（总监 m03053）：结束行与开始行之间不再留额外间距，与右侧「地址」共用 20px 行盒。
+     0.8.25（用户 m01163「竖排的时间行间距再小点，均匀一点」，总监 m03093）：8 → 6px。
+     0.8.26（用户 m01209「竖线下面明显比上面空隙大」/ 总监 m03145）：6px → 0，两行行盒
+     各 20px，结束时间文字底与地址文字底对齐；总高 46 → 40px。 */
+  .agenda__event-time--stack > .agenda__event-time-end {
+    display: block;
+    line-height: 20px;
+    margin-top: 0;
+  }
+  /* 紧凑标注在竖向列里按内容高度排，不占满整列高度。 */
+  .agenda__event-time--stack > .agenda__event-daypart--time {
+    flex: 0 0 auto;
+  }
+  /* 0.8.24（用户 m01077「时间的竖线应该居中与:和:之间」）：1px × 4px 短竖线挂在
+     开始时间的冒号上，中心与冒号中心同一 x；全天与中间日没有冒号，自然不画线。 */
+  /* 0.8.24（总监 m03070 / 用户 m01106「竖线上下间距也一样」）：冒号做成 20px 高的
+     行内块，`top: 100%` 正好落在首行行盒底边。
+     0.8.26（总监 m03145 / 用户 m01209）：结束行不再留 6px，竖线改从首行行盒底边上移
+     1px 起画（`calc(100% - 1px)`、4px），落在两行文字之间的空隙里，上下等距。 */
+  .agenda__event-time-colon {
+    position: relative;
+    display: inline-block;
+    height: 20px;
+    line-height: 20px;
+    vertical-align: top;
+  }
+  .agenda__event-time-colon::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: calc(100% - 1px);
+    transform: translateX(-50%);
+    width: 1px;
+    height: 4px;
+    background: currentColor;
+    opacity: 0.45;
+    border-radius: 1px;
+  }
 }
 
 /* 0.5.9（S4）：320 宽下日期列 64px + 时间列 104px 把标题挤到 55px，两行也只装得下
@@ -3053,11 +3208,34 @@ button.year__day {
   }
   .agenda__event {
     gap: var(--sp-2);
-    padding: var(--sp-2) var(--sp-2);
+    /* 0.8.24：与 ≤520 一样上下各 6px（shorthand 会盖掉上面的 padding-top/bottom）。 */
+    padding: 6px var(--sp-2);
+  }
+  /* 360 档首行行盒 18px，冒号块同步 18px，竖线上下间隙才各 1px。 */
+  .agenda__event-time-colon {
+    height: 18px;
+    line-height: 18px;
   }
   .agenda__event-time {
-    width: 68px;
+    width: 36px;
     font-size: 10px;
+    /* 0.8.24（用户 m01043）：10px 字号下 20px 行盒的首行文字会比标题低 2px，
+       这一档把行盒收到 18px（半行距 3.25px 与标题一致），圆点/图标边距同步 4px。 */
+    line-height: 18px;
+  }
+  .agenda__event-dot,
+  .agenda__event-icon,
+  .agenda__event--has-location .agenda__event-dot,
+  .agenda__event--has-location .agenda__event-icon {
+    margin-top: 4px;
+  }
+  .agenda__event-time--stack {
+    width: 36px;
+  }
+  /* 0.8.26（总监 m03145 / 用户 m01209）：这一档时间列两行各 18px（共 36px），标题行盒
+     仍是 20px；地址行盒取 16px，地址文字底才与结束时间底齐平（20 + 16 = 36）。 */
+  .agenda__event-location {
+    line-height: 16px;
   }
 }
 

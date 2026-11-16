@@ -606,14 +606,14 @@ describe('0.2.20 E10：「还有 N 个」浮层 1000ms + 8px 圆点', () => {
     expect(monthJs).toContain('MORE_HOVER_HIDE_MS = 120');
   });
 
-  it('浮层行是「(隐藏的圆点) → 时间 → 标题」，没有左侧竖条', () => {
+  it('浮层行是「时间 → 标题」，无圆点、左侧 3px 色条', () => {
     expect(rule(viewsCss, '.month__more-row')).not.toContain('inset 3px 0 0');
     // 0.2.20（E10）口径是「与格内 chip 同款的 8px 圆点」；0.7.8（用户：月格统一
     // 左竖条 + 透明底、全天实色块）把圆点整体隐藏，浮层行沿用同一节点但不显示。
     const dotRule = rule(viewsCss, '.chip__dot');
     expect(dotRule).toContain('display: none');
     expect(dotRule).not.toContain('width: 8px');
-    expect(monthJs).toContain("class: 'chip__dot'");
+    expect(rule(viewsCss, '.month__more-row::after')).toContain('width: 3px');
   });
 
   it('悬停不足 1000ms 不出、满 1000ms 出且行数 = 隐藏条目数', () => {
@@ -645,8 +645,8 @@ describe('0.2.20 E10：「还有 N 个」浮层 1000ms + 8px 圆点', () => {
       const pop = document.querySelector('.month__more-popover');
       expect(pop).toBeTruthy();
       expect(pop.querySelectorAll('.month__more-row')).toHaveLength(hiddenCount);
-      // 每行第一个子元素是圆点（不是竖条）
-      expect(pop.querySelector('.month__more-row').firstElementChild.classList.contains('chip__dot')).toBe(true);
+      // 0.8.18：圆点删除，行首是时间（不是竖条）
+      expect(pop.querySelector('.month__more-row').firstElementChild.classList.contains('month__more-time')).toBe(true);
     } finally {
       vi.useRealTimers();
     }

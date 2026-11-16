@@ -166,7 +166,7 @@ async function mintCredential(admin, body) {
 
 // 0.7.0 起：新增只读工具 list_tags（标签与数量），只读凭据 5 个、可写凭据 5+3。
 // 0.7.11（M6 §3）起：三个标签写工具与日历写权限无关，只读凭据也注册（提案或直写由凭据标签权限决定）。
-const READ_TOOL_NAMES = ['list_calendars', 'list_events', 'get_event', 'find_free_slots', 'list_tags'];
+const READ_TOOL_NAMES = ['list_calendars', 'list_events', 'get_event', 'find_free_slots', 'list_tags', 'generate_annual_review'];
 const WRITE_TOOL_NAMES = ['create_event', 'update_event', 'delete_event'];
 const TAG_TOOL_NAMES = ['create_tag', 'update_tag', 'delete_tag'];
 
@@ -264,7 +264,7 @@ try {
   eq('只读凭据 tools/list → 200', 200, listRead.status);
   const readNames = listRead.body.result.tools.map((tool) => tool.name).sort();
   // 0.7.0 起：5 个读工具（含 list_tags）+ 3 个写工具。
-  eq('只读凭据只有 5 个读工具 + 3 个标签工具', [...READ_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), readNames.join(','));
+  eq('只读凭据只有 6 个读工具 + 3 个标签工具', [...READ_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), readNames.join(','));
   ok('只读凭据没有 create_event', !readNames.includes('create_event'));
   ok('只读凭据没有 delete_event', !readNames.includes('delete_event'));
   ok('每个工具都有 inputSchema', listRead.body.result.tools.every((tool) => tool.inputSchema && tool.inputSchema.type === 'object'));
@@ -276,7 +276,7 @@ try {
   const listWrite = await mcp(rpc('t-2', 'tools/list', {}), { token: tokenWrite });
   const writeNames = listWrite.body.result.tools.map((tool) => tool.name).sort();
   // 0.7.0 起：5 个读工具 + 3 个写工具。
-  eq('可写凭据 5+3+3 个工具', [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), writeNames.join(','));
+  eq('可写凭据 6+3+3 个工具', [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), writeNames.join(','));
   const deleteDef = listWrite.body.result.tools.find((tool) => tool.name === 'delete_event');
   // 0.4.13 起删除有双模式：提案模式只出提案，回收站模式立即删除并进回收站。
   ok('delete_event 的 description 讲明双模式', deleteDef.description.includes('提案模式') && deleteDef.description.includes('回收站模式'));
@@ -312,6 +312,32 @@ try {
   const slots = await callTool(tokenRead, 'find_free_slots', { minMinutes: 60 });
   ok('find_free_slots 返回 slots 数组', Array.isArray(JSON.parse(slots.toolText).slots));
   ok('空闲时段不带事件标题', !slots.toolText.includes('窗内评审'));
+
+  /* ------------------------------------------------------------ ④·5 年度总结（0.8.0 §十） */
+
+  const annual = await callTool(tokenRead, 'generate_annual_review', { year: 2026 });
+  eq('generate_annual_review → 200', 200, annual.status);
+  const annualParts = (annual.result && annual.result.content) || [];
+  const annualImage = annualParts.filter((part) => part.type === 'image');
+  const annualSvgNote = annualParts.some((part) => part.type === 'text' && String(part.text).includes('本机未带 PNG 渲染依赖，已返回 SVG'));
+  ok('返回图片或明说退回 SVG（不静默降级）', annualImage.length > 0 || annualSvgNote,
+    annualImage.length ? `png ${annualImage[0].mimeType}` : 'svg 兜底');
+  ok('年度总结文案含年份与合计', /2026 年度总结：共 \d+ 条日程/.test(annual.toolText), annual.toolText.slice(0, 60));
+  ok('年度总结文案含保存方式', annual.toolText.includes('保存方式'));
+
+  // 0.8.28（总监 m01288）：点名日历。成功路径带「本次只统计：」；解析不到 → 结构化失败、不出图。
+  const readableNames = (() => {
+    try { return JSON.parse(calendarList.toolText).map((item) => item.name).filter(Boolean); } catch { return []; }
+  })();
+  if (readableNames.length) {
+    const scoped = await callTool(tokenRead, 'generate_annual_review', { year: 2026, calendars: [readableNames[0]] });
+    eq('generate_annual_review 点名日历 → 200', 200, scoped.status);
+    ok('点名文案含「本次只统计：」', scoped.toolText.includes('本次只统计：'), scoped.toolText.slice(0, 80));
+  }
+  const missingCal = await callTool(tokenRead, 'generate_annual_review', { year: 2026, calendars: ['没有这个日历'] });
+  ok('点名不存在的日历 → isError', Boolean(missingCal.result && missingCal.result.isError));
+  ok('点名不存在的日历 → code=calendar_not_found', missingCal.toolText.includes('calendar_not_found'), missingCal.toolText.slice(0, 120));
+  ok('点名不存在的日历 → 不出图', !((missingCal.result && missingCal.result.content) || []).some((part) => part.type === 'image'));
 
   /* ------------------------------------------------------------ ⑤ 不泄露存在性 */
 

@@ -542,7 +542,7 @@ it('0.4.14 管理员菜单：账号管理 / 安全设置 / 立即同步 / 检查
     expect(labels.some((l) => l.includes('账号安全'))).toBe(false);
     // 0.4.14（M22 §1）：管理员 5 项（新增「检查更新」），自己的安全并入「安全设置」① 页。
     // 0.6.15（用户）：快捷键搬到菜单，夹在安全入口与「立即同步」之间，共 6 项。
-    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '检查更新', '登出']);
+    expect(labels).toEqual(['账号管理', '安全设置', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     expect(labels.some((l) => l.includes('我的安全'))).toBe(false);
   });
 
@@ -554,7 +554,7 @@ it('0.4.14 管理员菜单：账号管理 / 安全设置 / 立即同步 / 检查
     expect(labels.some((l) => l.includes('安全设置'))).toBe(false);
     // 0.4.14（M22 §1）：菜单多一项「检查更新」，位于「立即同步」之后、「登出」之前。
     // 0.6.15（用户）：快捷键对所有登录用户可见。
-    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '检查更新', '登出']);
+    expect(labels).toEqual(['我的账号', '我的安全', '快捷键', '立即同步', '年度总结', '检查更新', '登出']);
     const mine = [...document.querySelectorAll('.popover .menu-item')].find((b) => b.textContent.includes('我的账号'));
     mine.click();
     // 复用「账号安全」对话框：标题 + 改显示名 + 改密码区

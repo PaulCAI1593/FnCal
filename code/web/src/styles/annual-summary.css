@@ -1,0 +1,148 @@
+/* 0.8.0（任务书 §八）：年度总结预览层。
+ *
+ * 0.8.6（用户 2026-11-15）：预览层改成**一张卡**——图片在上、按钮在下，全在同一个
+ * 卡片容器里；按钮行不再有自己的背景/边框/阴影。遮罩仍保持背景模糊。
+ *
+ * 结构：全屏遮罩（背景模糊）→ 卡片（`--surface`、24px 圆角、`--shadow-lg`）
+ *       → 图片（18px 圆角内嵌）→ 提示行 → 按钮行。
+ * 颜色全部取 tokens，深浅色跟随界面；卡片图本身固定浅色（在 canvas 里画）。
+ */
+
+.annual-scrim {
+  z-index: 140; /* 高于事件弹窗（100）与重复规则弹窗（130） */
+  background: var(--overlay-scrim);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+/* 不支持背景模糊时退化为更实的半透明底，保证卡片仍然清晰可读。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .annual-scrim {
+    background: color-mix(in srgb, var(--text) 45%, transparent);
+  }
+}
+
+/* 0.8.6：卡片本体。宽随图片，高不越过视口 32px。 */
+.annual-dialog {
+  width: auto;
+  max-width: none;
+  max-height: calc(100dvh - 32px);
+  padding: 12px 12px 14px;
+  background: var(--surface);
+  border: 0;
+  border-radius: 24px;
+  box-shadow: var(--shadow-lg);
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  animation: none;
+}
+
+.annual__stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: 120px;
+}
+
+/* 图片圆角 18 内嵌；阴影交给卡片，避免两张卡叠在一起。 */
+.annual__canvas {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(88vw, 520px);
+  /* 卡内固定占位：上下内边距 26 + 按钮行 40 + 提示行 18 + 两个 14 间距 + 视口留白 32 */
+  max-height: calc(100dvh - 158px);
+  aspect-ratio: 3 / 4;
+  border-radius: 18px;
+  background: var(--surface);
+}
+
+/* 加载与错误态：不再自带卡片外观（外层已经是卡片）。 */
+.annual__loading,
+.annual__error {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-2);
+  color: var(--text-2);
+}
+
+.annual__error {
+  color: var(--text);
+  text-align: center;
+  flex-direction: column;
+}
+
+.annual__spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: annual-spin 700ms linear infinite;
+}
+
+@keyframes annual-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 按钮行与提示行合成卡片底部一条。 */
+.annual__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.annual__hint {
+  margin: 0;
+  padding: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* 0.8.6：按钮行只作排版，去掉自己的背景/边框/阴影/内边距。 */
+.annual__actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0;
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.annual__actions .btn {
+  min-width: 96px;
+  /* 触屏点击区 ≥ 44px（check_design 390/430 两档零问题要求） */
+  min-height: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .annual__spinner {
+    animation: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .annual-dialog {
+    max-width: 92vw;
+  }
+  .annual__canvas {
+    max-width: calc(92vw - 24px);
+    max-height: calc(100dvh - 150px);
+  }
+  .annual__actions .btn {
+    min-width: 84px;
+  }
+}

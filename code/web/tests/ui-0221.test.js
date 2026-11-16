@@ -557,8 +557,8 @@ describe('0.2.21 F7 任务与事件同一折叠路径 + 浮层任务行', () => 
       expect(rows[0].querySelector('.month__more-title').textContent).toBe('报销单');
       expect(rows[0].querySelector('.month__more-state').textContent).toBe(t('agenda.task.doneSuffix'));
       expect(rows[0].textContent).not.toContain('NaN');
-      // 行内顺序：圆点 → 标题（任务没有时间位）
-      expect(rows[0].firstElementChild.classList.contains('chip__dot')).toBe(true);
+      // 行内顺序：标题（任务没有时间位；0.8.18 起圆点删除）
+      expect(rows[0].firstElementChild.classList.contains('month__more-title')).toBe(true);
     } finally {
       vi.useRealTimers();
     }

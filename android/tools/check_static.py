@@ -52,15 +52,21 @@ ALLOWED_DEPS = {
     "androidx.appcompat:appcompat:1.7.0",
     # 0.3.0（§A2）：桌面卡片 30 分钟周期刷新。
     "androidx.work:work-runtime-ktx:2.9.0",
+    # 0.4.1：九款卡片的颜色运算与统计是纯 Kotlin，用普通 JUnit 在本机跑。
+    "junit:junit:4.13.2",
 }
 
-# 0.3.0（§A3）：五款卡片与它们声明的尺寸 / 目标格。
+# 0.4.1：九款卡片与它们声明的尺寸 / 目标格（四日与日程列表默认 4×2，统计四款默认 2×2）。
 WIDGET_PROVIDERS = {
     "widget_mini_month_info": ("MiniMonthWidgetProvider", 110, 110, "2x2", "widget_mini_month_label"),
     "widget_day_agenda_info": ("DayAgendaWidgetProvider", 110, 110, "2x2", "widget_day_agenda_label"),
     "widget_month_info": ("MonthWidgetProvider", 250, 250, "4x4", "widget_month_label"),
-    "widget_four_day_info": ("FourDayWidgetProvider", 250, 250, "4x4", "widget_four_day_label"),
-    "widget_agenda_list_info": ("AgendaListWidgetProvider", 250, 250, "4x4", "widget_agenda_list_label"),
+    "widget_four_day_info": ("FourDayWidgetProvider", 250, 110, "4x2", "widget_four_day_label"),
+    "widget_agenda_list_info": ("AgendaListWidgetProvider", 250, 110, "4x2", "widget_agenda_list_label"),
+    "widget_month_heat_info": ("MonthHeatWidgetProvider", 110, 110, "2x2", "widget_month_heat_label"),
+    "widget_month_category_info": ("MonthCategoryWidgetProvider", 110, 110, "2x2", "widget_month_category_label"),
+    "widget_week_rhythm_info": ("WeekRhythmWidgetProvider", 110, 110, "2x2", "widget_week_rhythm_label"),
+    "widget_hours_info": ("HoursWidgetProvider", 110, 110, "2x2", "widget_hours_label"),
 }
 
 failures: list[str] = []
@@ -353,9 +359,9 @@ def check_gradle() -> None:
         "compileSdk = 34": app_gradle,
         "minSdk = 24": app_gradle,
         "targetSdk = 34": app_gradle,
-        "versionCode = 308": app_gradle,
-        'versionName = "0.3.8"': app_gradle,
-        'resValue("string", "fncal_shell_version", "0.3.8")': app_gradle,
+        "versionCode = 401": app_gradle,
+        'versionName = "0.4.1"': app_gradle,
+        'resValue("string", "fncal_shell_version", "0.4.1")': app_gradle,
         # 0.3.7（包体瘦身）：release 变体必须真的开 R8 与资源收缩，并挂固定签名。
         "isMinifyEnabled = true": app_gradle,
         "isShrinkResources = true": app_gradle,
@@ -689,12 +695,12 @@ def check_layouts() -> None:
 
 
 def check_widgets() -> None:
-    """0.3.0（§A1–§A5）：五款桌面卡片、令牌入口、30 分钟刷新、透明系统栏与 72dp 标志。"""
+    """0.4.1：九款桌面卡片、令牌入口、30 分钟刷新、透明系统栏与 72dp 标志。"""
     kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
     manifest = (APP / "AndroidManifest.xml").read_text(encoding="utf-8")
     xml_dir = APP / "res" / "xml"
 
-    # ① 五款 provider：声明的尺寸 / 目标格 / 初始布局，manifest 注册与 meta-data 指向。
+    # ① 九款 provider：声明的尺寸 / 目标格 / 初始布局，manifest 注册与 meta-data 指向。
     for info, (cls, width, height, cells, label) in WIDGET_PROVIDERS.items():
         path = xml_dir / (info + ".xml")
         if not path.is_file():
@@ -906,7 +912,7 @@ def check_widgets() -> None:
 
     # ⑦ 点卡片开对应视图：主界面把 hash 交给网页；UA 带机型（0.3.0 §D）。
     main_kt = (kt / "MainActivity.kt").read_text(encoding="utf-8")
-    for needle in ('UA_SUFFIX = " FnCalAndroid/0.3.8"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
+    for needle in ('UA_SUFFIX = " FnCalAndroid/0.4.1"', "DeviceName.suffix()", "EXTRA_VIEW", 'fncal-view=', "onNewIntent"):
         if needle in main_kt:
             ok("main activity has " + needle)
         else:
@@ -1331,7 +1337,7 @@ def check_widget_week_start() -> None:
     else:
         fail("week labels must be used by mini month and month (exactly 2)")
     repository = (kt / "WidgetRepository.kt").read_text(encoding="utf-8")
-    if "WidgetClient.weekStartsOn(context)?.let" in repository:
+    if "WidgetClient.cardSettings(context)?.let" in repository:
         ok("repository refreshes week start without failing the summary")
     else:
         fail("repository must refresh week start best-effort")
@@ -1605,12 +1611,12 @@ def check_release_workflow() -> None:
         "release apk path": "app/build/outputs/apk/release/app-release.apk" in wf,
         "no debug apk path": "apk/debug/app-debug.apk" not in wf,
         "build step name": "Build release APK" in wf,
-        "badging versionCode 308": "versionCode='308'" in wf,
-        "badging versionName 0.3.8": "versionName='0.3.8'" in wf,
+        "badging versionCode 401": "versionCode='401'" in wf,
+        "badging versionName 0.4.1": "versionName='0.4.1'" in wf,
         "artifact name": "FnCal-Android-release" in wf,
         "mapping upload": "app/build/outputs/mapping/release/mapping.txt" in wf,
-        "TAG android-v0.3.8": "TAG=android-v0.3.8" in wf,
-        "OUT 0.3.8": "OUT=FnCal-Android-0.3.8.apk" in wf,
+        "TAG android-v0.4.1": "TAG=android-v0.4.1" in wf,
+        "OUT 0.4.1": "OUT=FnCal-Android-0.4.1.apk" in wf,
         "signature pin": "SHA-256 digest: 0a7889854bb2e8a82153a15d59a348676d772a8a22f7c971cf98a7f1c08c3ace" in wf,
     }
     for label, good in checks.items():
@@ -1618,6 +1624,124 @@ def check_release_workflow() -> None:
             ok("release workflow " + label)
         else:
             fail("release workflow missing " + label)
+
+def check_widget_041() -> None:
+    """0.4.1 九款：新文件、令牌与统计、日程列表时间列、单测与数值自检脚本。"""
+    kt = APP / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    tokens_path = kt / "WidgetTokens.kt"
+    stats_path = kt / "WidgetStats.kt"
+    cards_path = kt / "WidgetCards041.kt"
+    for path in (tokens_path, stats_path, cards_path):
+        if path.is_file():
+            ok("0.4.1 file " + path.name)
+        else:
+            fail("0.4.1 file missing " + path.name)
+    if not (tokens_path.is_file() and stats_path.is_file() and cards_path.is_file()):
+        return
+
+    tokens = tokens_path.read_text(encoding="utf-8")
+    for needle in (
+        "fun accentInk(value: Int): Int",
+        "relLum(hex) > 0.18" if "relLum(hex) > 0.18" in tokens else "WidgetTokens",
+        "const val BADGE_DIAMETER_DP = 11.2f",
+        "const val BADGE_GAP_DP = 2.8f",
+        "fun heatColor(base: Int, count: Int): Int",
+        "fun weekAlpha(ratio: Float): Float",
+        "fun badgeFill(calendarColor: Int, solid: Boolean): Int",
+        "fun tintWhite(color: Int, alpha: Float): Int = mix(WHITE, color, alpha)",
+    ):
+        if needle in tokens:
+            ok("0.4.1 tokens has " + needle[:48])
+        else:
+            fail("0.4.1 tokens missing " + needle[:48])
+
+    stats = stats_path.read_text(encoding="utf-8")
+    for needle in (
+        "fun monthCells(",
+        "fun categories(events: List<StatEvent>, limit: Int = 5)",
+        "fun weekBars(",
+        "fun catmullRom(",
+        "fun badgeOffsets(",
+        "const val AGENDA_TIME_COL_DP = 52f",
+        "fun agendaRangeLabel(start: String, end: String): String",
+        "const val AGENDA_ALL_DAY",
+    ):
+        if needle in stats:
+            ok("0.4.1 stats has " + needle[:48])
+        else:
+            fail("0.4.1 stats missing " + needle[:48])
+
+    cards = cards_path.read_text(encoding="utf-8")
+    for needle in (
+        "fun draw(canvas: Canvas, widthPx: Int, heightPx: Int, snapshot: WidgetSnapshot?, signedIn: Boolean)",
+        "WidgetTokens.accentInk(WidgetPrefs.accentColor(context))",
+        "WidgetStats.AGENDA_TIME_COL_DP",
+        "WidgetStats.AGENDA_ALL_DAY",
+        "WidgetStats.agendaRangeLabel(",
+        "Paint.Align.RIGHT",
+        "LinearGradient",
+    ):
+        if needle in cards:
+            ok("0.4.1 cards has " + needle[:48])
+        else:
+            fail("0.4.1 cards missing " + needle[:48])
+
+    renderer = (kt / "WidgetRenderer.kt").read_text(encoding="utf-8")
+    for needle in (
+        "\n    MONTH_HEAT,\n",
+        "\n    MONTH_CATEGORY,\n",
+        "\n    WEEK_RHYTHM,\n",
+        "\n    HOURS,\n",
+        "WidgetCards041(context, kind).draw(",
+    ):
+        if needle in renderer:
+            ok("0.4.1 renderer has " + needle)
+        else:
+            fail("0.4.1 renderer missing " + needle)
+
+    strings = (APP / "res" / "values" / "strings.xml").read_text(encoding="utf-8")
+    for key in (
+        "widget_agenda_list_title",
+        "widget_count_items",
+        "widget_more_rows",
+        "widget_all_day_short",
+        "widget_heat_meta",
+        "widget_category_meta",
+        "widget_week_rhythm_title",
+        "widget_hours_title",
+        "widget_month_heat_label",
+        "widget_month_category_label",
+        "widget_week_rhythm_label",
+        "widget_hours_label",
+    ):
+        if ('name="' + key + '"') in strings:
+            ok("0.4.1 string " + key)
+        else:
+            fail("0.4.1 string missing " + key)
+
+    tests = ROOT / "app" / "src" / "test" / "java" / "com" / "paulcai1593" / "fncal" / "app"
+    for name in ("WidgetTokensTest.kt", "WidgetStatsTest.kt"):
+        if (tests / name).is_file():
+            ok("0.4.1 unit test " + name)
+        else:
+            fail("0.4.1 unit test missing " + name)
+    tokens_test = (tests / "WidgetTokensTest.kt").read_text(encoding="utf-8") if (tests / "WidgetTokensTest.kt").is_file() else ""
+    if "accentInkMeetsContrastForEveryPreset" in tokens_test and "badgeSolidUsesCalendarColorAndTimedUsesTranslucentFill" in tokens_test:
+        ok("0.4.1 unit test covers accentInk and badge solid/soft")
+    else:
+        fail("0.4.1 unit test must cover accentInk and badge solid/soft")
+
+    script = ROOT / "tools" / "check_widget_math.py"
+    if script.is_file():
+        ok("0.4.1 numeric check script")
+    else:
+        fail("0.4.1 numeric check script missing tools/check_widget_math.py")
+    table = ROOT.parent / "design" / "widget-041" / "数值表-0.4.1.md"
+    if table.is_file():
+        ok("0.4.1 numeric table")
+    else:
+        fail("0.4.1 numeric table missing design/widget-041/数值表-0.4.1.md")
+
 
 def main() -> int:
     print("root:", ROOT)
@@ -1640,6 +1764,7 @@ def main() -> int:
     check_theme_tokens()
     check_layouts()
     check_widgets()
+    check_widget_041()
     check_line_endings()
     print()
     if failures:

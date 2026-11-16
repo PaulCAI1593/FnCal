@@ -245,7 +245,7 @@ describe('0.6.6 二十四节气：月视图日号行', () => {
     const heads = [...node.querySelectorAll('.month__holiday')];
     expect(heads).toHaveLength(1);
     expect(heads[0].classList.contains('month__holiday--term')).toBe(false);
-    expect(heads[0].getAttribute('title')).toBe('清明节');
+    expect(heads[0].getAttribute('aria-label')).toContain('清明节');
   });
 
   it('只有节气：显示节气行、sun 图标、节气修饰类；不占 chip 行', () => {
@@ -254,7 +254,7 @@ describe('0.6.6 二十四节气：月视图日号行', () => {
     const node = renderMonthWith([overlayItem(date, '清明', 'term')]);
     const label = node.querySelector('.month__holiday--term');
     expect(label).toBeTruthy();
-    expect(label.getAttribute('title')).toBe('清明');
+    expect(label.getAttribute('aria-label')).toContain('清明');
     expect(label.getAttribute('aria-label')).toContain('节气');
     expect(label.querySelector('.month__holiday-icon svg')).toBeTruthy();
     expect(node.querySelector('.chip.chip--holiday')).toBeNull();

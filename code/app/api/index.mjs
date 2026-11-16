@@ -103,7 +103,7 @@ function readJsonBody(req) {
   });
 }
 
-export function createApiHandler({ version, auth, kv, admin, data, calendars, tags = null, ai = null, aiRest = null, widgetRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
+export function createApiHandler({ version, auth, kv, admin, data, calendars, tags = null, annual = null, ai = null, aiRest = null, widgetRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
   async function handleAuth(req, res, pathnameIn) {
     const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
     // M2 §6.2 paths are `/api/v1/auth/*`; the M3.2 implementation used
@@ -421,6 +421,12 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ta
     if (pathname === '/api/widget' || pathname.startsWith('/api/widget/')) {
       if (!widgetRest) return sendJson(res, 404, { ok: false, code: 'not_found' });
       return widgetRest.handleRead(req, res, url);
+    }
+
+    // 0.8.0（用户）：头像菜单「年度总结」的只读聚合。鉴权（会话 Cookie）在模块内做，
+    // 只回月份/日历/分类计数，不含任何事件标题或正文；`calendars` 为空即空结果。
+    if (annual && (pathname === '/api/annual-summary' || pathname === '/api/v1/annual-summary')) {
+      return annual.handle(req, res, url);
     }
 
     // 0.2.8：被要求改密的账号，改密前只放行认证类接口（上面已处理）与身份读取

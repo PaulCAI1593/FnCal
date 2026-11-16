@@ -15,6 +15,7 @@ import { t } from '../i18n/index.js';
 import { changePassword, ApiError } from './api-client.js';
 import { createPasswordField } from './password-field.js';
 import { DEFAULT_RESET_PASSWORD, MIN_PASSWORD_LENGTH } from './password-policy.js';
+import { versionedAsset } from './build-info.js';
 
 /** 会话是否需要强制改密（main.js 用它决定渲染哪一屏）。 */
 export function needsPasswordChange(session) {
@@ -207,7 +208,7 @@ export function renderForcePasswordScreen(root, { user, onDone, onSignOut } = {}
       el('div', { class: 'auth-card' }, [
         el('img', {
           class: 'auth-card__logo',
-          src: './icon-192.png',
+          src: versionedAsset('./icon-192.png'),
           alt: t('app.name'),
           width: '56',
           height: '56',

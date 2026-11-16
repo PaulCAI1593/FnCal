@@ -76,6 +76,38 @@ export function contrastRatio(fg, bg) {
   return (light + 0.05) / (dark + 0.05);
 }
 
+/** hex → [r, g, b]；非法值给黑。 */
+function hexChannels(hex) {
+  const raw = String(hex || '').replace('#', '').slice(0, 6);
+  if (raw.length !== 6) return [0, 0, 0];
+  return [0, 2, 4].map((i) => parseInt(raw.slice(i, i + 2), 16) || 0);
+}
+
+/** 把 `fg` 按 `alpha` 叠在 `bg` 上，返回实际显示的实色（#rrggbb）。 */
+export function blendHex(fg, bg, alpha) {
+  const f = hexChannels(fg);
+  const b = hexChannels(bg);
+  const a = Math.max(0, Math.min(1, Number(alpha) || 0));
+  const mixed = f.map((v, i) => Math.round(v * a + b[i] * (1 - a)));
+  return '#' + mixed.map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * 0.8.19（用户 01:30）：填色行时间文字的最低可读不透明度。
+ * 从 70% 起、5% 一档往上试（70/75/80/85/90/95/100），取第一个与填色底
+ * 对比 ≥ 4.5:1 的档；100% 仍不到就直接用实色墨（opacity 1）。
+ * 返回 `{ color, opacity }`，`color` 是该不透明度叠在填色底上的实色——
+ * 调用方直接写 `color`，不要再用 CSS `opacity`（否则会二次稀释）。
+ * 格内 chip 与「还有 N 个」浮层行必须共用本函数。
+ */
+export function timeInkForFill(fillHex, inkHex = inkForFill(fillHex)) {
+  for (let pct = 70; pct <= 100; pct += 5) {
+    const solid = blendHex(inkHex, fillHex, pct / 100);
+    if (contrastRatio(solid, fillHex) >= 4.5 - 1e-9) return { color: solid, opacity: pct / 100 };
+  }
+  return { color: inkHex, opacity: 1 };
+}
+
 /**
  * 在给定实色底上取可读的墨色（白或 DARK_INK），取对比度更高的一方。
  * 0.6.2（用户：「有些是白色的……，有些黑色的，不统一」）：旧实现用未做 gamma

@@ -117,7 +117,7 @@ describe('M3 走查：30 字中文 + emoji 最坏标题', () => {
       expect(chip.textContent).toContain('🎉');
       expect(chip.textContent).toContain('👨‍👩‍👧‍👦');
     });
-    check('月视图 title 属性带完整标题（原生悬停）', () => expect(chip.getAttribute('title')).toBe(TITLE));
+    check('月视图不再写原生 title（0.8.18）', () => expect(chip.hasAttribute('title')).toBe(false));
     check('月视图 aria-label 含完整标题', () => expect(chip.getAttribute('aria-label')).toContain(TITLE));
     check('月视图截断规则（.chip__title overflow+ellipsis）', () => {
       const rule = cssRule(styles.views, '.chip__title');
@@ -137,7 +137,7 @@ describe('M3 走查：30 字中文 + emoji 最坏标题', () => {
     check('周视图事件块存在', () => expect(tevent).toBeTruthy());
     check('周视图 textContent 完整保留 30 汉字 + emoji', () => {
       expect(tevent.querySelector('.tevent__title').textContent).toBe(TITLE);
-      expect(tevent.getAttribute('title')).toBe(TITLE);
+      expect(tevent.hasAttribute('title')).toBe(false);
     });
     check('周视图截断规则（.tevent__title 多行 clamp）', () => {
       // 0.6.3（B）起：标题由「单行 ellipsis + nowrap」改为按 `--tevent-lines-title`

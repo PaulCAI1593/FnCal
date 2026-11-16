@@ -79,7 +79,6 @@ function buildMiniMonth(monthDate, ctx, eventsByDay) {
       class: 'year__month-name',
       type: 'button',
       text: MONTHS_LONG[monthDate.getMonth()],
-      title: t('year.openMonth', { month: MONTHS_LONG[monthDate.getMonth()] }),
       on: { click: () => actions.gotoMonthView(monthDate) },
     }),
   );

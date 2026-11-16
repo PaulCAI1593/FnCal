@@ -23,6 +23,13 @@ import { createAiRateLimiter } from '../lib/ai-rate-limit.mjs';
 import { BATCH_MAX_IDS, createAiService, parseBearer, runProposalBatch } from '../lib/ai-service.mjs';
 // 0.4.27（S2）：摘要时间与审批页同一套服务端时区规则（默认 Asia/Shanghai）。
 import { formatWhenInZone } from '../lib/time-zone.mjs';
+// 0.8.0（任务书 §十）：年度总结卡片。统计与布局都在 `lib/annual-review.mjs`（网页同源），
+// 这里只负责「模型 → PNG / SVG → MCP content」。
+import {
+  CARD_HEIGHT, CARD_WIDTH, annualSummarySentence, buildAnnualCardLayout, layoutToSvg, paintAnnualCard,
+} from '../lib/annual-review.mjs';
+import { CARD_FONT_FAMILY, renderAnnualCardPng } from '../lib/card-render.mjs';
+import { YEAR_MAX, YEAR_MIN } from '../lib/annual-collect.mjs';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const PREFIX = '/mcp';
@@ -349,7 +356,7 @@ function tool(name, description, properties, required) {
 const READ_TOOLS = Object.freeze([
   tool(
     'list_calendars',
-    '列出你的凭据可读的日历（id/名称/颜色/权限档位）。未被授权或时间窗外的日历不会出现在结果里，'
+    '列出你的凭据可读的日历（id/名称/颜色/权限档位/是否在侧栏显示）。未被授权或时间窗外的日历不会出现在结果里，'
       + '表现为不存在。',
     {},
     [],
@@ -394,6 +401,27 @@ const READ_TOOLS = Object.freeze([
       from: { type: 'string', description: 'ISO 8601 开始时间，省略则从现在起' },
       to: { type: 'string', description: 'ISO 8601 结束时间，省略则未来 7 天' },
       minMinutes: { type: 'number', description: '空闲时段最小长度（分钟），默认 30' },
+    },
+    [],
+  ),
+  tool(
+    'generate_annual_review',
+    '生成年度总结卡片（**返回一张图片**）：竖版 1080×1440，含每月热力图、日历分布饼图、'
+      + '分类分布条形图、年度标题与二维码，另附一句文字摘要与一句保存方式。'
+      + '默认统计你的凭据可见、且用户在侧栏显示中的日历（与网页口径一致），只读、无副作用；'
+      + '「一周从哪天开始」按用户设置（周日或周一开头）；范围收在凭据时间窗内（被裁时会在文案里说明）。'
+      + '空数据也会出图（空态）。年份省略时取当前年。'
+      + '只想看某几个日历时传 `calendars`（日历名称或 id 都行，最多 20 个，单个也能用 `calendar`）：'
+      + '点名后统计范围 = 点名 ∩ 凭据可读，**点名优先于侧栏开关**（用户明确点名就不再按开关剔除）；'
+      + '传了年份就收在那一年。名不确定时先调 list_calendars 取 displayName。',
+    {
+      year: { type: 'number', description: `要总结的年份，如 2026；省略取当前年（${YEAR_MIN}–${YEAR_MAX}）` },
+      calendars: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '只统计这些日历：日历名称或 id，最多 20 个。点名优先于侧栏开关；解析不到（含无权限）时返回 calendar_not_found 并且不出图。',
+      },
+      calendar: { type: 'string', description: '单个日历名称或 id（`calendars` 的兼容写法）' },
     },
     [],
   ),
@@ -1231,6 +1259,60 @@ export function createMcp({
       }
       case 'list_tags': {
         return toolResult(await service.listTags(ctx));
+      }
+      // 0.8.0（任务书 §十）：年度总结。PNG 走 vendored canvas；缺依赖时退 SVG 并明说。
+      case 'generate_annual_review': {
+        const year = args.year === undefined || args.year === null
+          ? undefined
+          : Number(args.year);
+        // 0.8.28（总监 m01288）：可选点名日历。解析失败一律结构化失败、零渲染、不出空卡。
+        let review;
+        try {
+          review = await service.annualReview(ctx, {
+            year,
+            calendars: args.calendars,
+            calendar: args.calendar,
+          });
+        } catch (err) {
+          if (err && err.code === 'calendar_not_found') {
+            return toolResult(
+              { ok: false, code: 'calendar_not_found', message: err.message, available: err.available || [] },
+              { isError: true },
+            );
+          }
+          if (err && err.code === 'invalid' && err.field === 'calendars') {
+            return toolResult({ ok: false, code: 'invalid', field: 'calendars', message: err.message }, { isError: true });
+          }
+          throw err;
+        }
+        const { model } = review;
+        const lib = { CARD_WIDTH, CARD_HEIGHT, buildAnnualCardLayout, paintAnnualCard };
+        const rendered = renderAnnualCardPng(lib, model);
+        const lines = [annualSummarySentence(model)];
+        if (review.scopedCalendars && review.scopedCalendars.length) {
+          lines.push(`本次只统计：${review.scopedCalendars.join('、')}。`);
+          if (!model.total) lines.push('点名的日历今年没有日程。');
+        }
+        if (review.clipped) lines.push('统计范围已收在你的凭据时间窗内，年份之外的日程不会计入。');
+        lines.push('保存方式：把上面这张图片存到本地即可（网页版也可在「头像菜单 → 年度总结」里保存）。');
+        const content = [];
+        if (rendered.ok) {
+          content.push({ type: 'text', text: lines.join('\n') });
+          content.push({ type: 'image', data: rendered.png.toString('base64'), mimeType: 'image/png' });
+        } else {
+          // 不静默降级：先说清楚为什么给 SVG。
+          if (rendered.reason === 'missing-glyphs') {
+            const shown = (rendered.chars || []).slice(0, 6).join(' ');
+            lines.unshift(`字体缺字，已返回 SVG（缺 ${rendered.chars.length} 个字符：${shown}）。可存为 .svg 后用浏览器打开或转 PNG。`);
+          } else if (rendered.reason === 'no-fonts') {
+            lines.unshift('本机未带卡片字体，已返回 SVG（可存为 .svg 后用浏览器打开或转 PNG）。');
+          } else {
+            lines.unshift('本机未带 PNG 渲染依赖，已返回 SVG（可存为 .svg 后用浏览器打开或转 PNG）。');
+          }
+          content.push({ type: 'text', text: lines.join('\n') });
+          content.push({ type: 'text', text: layoutToSvg(buildAnnualCardLayout(model, { fontFamily: CARD_FONT_FAMILY })) });
+        }
+        return { content };
       }
       // 0.7.11（M6 §3）：三个标签写工具。错误按 tag_* 码回结构化失败，不抛 RPC 错误。
       case 'create_tag': {

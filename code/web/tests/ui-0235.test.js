@@ -173,7 +173,7 @@ describe('0.2.35（M2）月视图：尾随空泳道不再占行', () => {
     expect(cell16.querySelectorAll('.chip[hidden]')).toHaveLength(0);
     const vis16 = [...cell16.querySelectorAll('.chip')];
     expect(vis16).toHaveLength(2);
-    expect(vis16[1].title).toContain('单日c');
+    expect(vis16[1].getAttribute('aria-label')).toContain('单日c');
   });
 
   it('C 需要对齐的格子仍补前导占位（第 2 带的条不被挤到第 1 行）', () => {
@@ -184,7 +184,7 @@ describe('0.2.35（M2）月视图：尾随空泳道不再占行', () => {
     expect(cell19.querySelectorAll('.month__lane-gap')).toHaveLength(1);
     const rows19 = [...cell19.querySelectorAll('.month__events > *')];
     expect(rows19[0].classList.contains('month__lane-gap')).toBe(true);
-    expect(rows19[1].title).toContain('多日b');
+    expect(rows19[1].getAttribute('aria-label')).toContain('多日b');
   });
 
   it('D 源码：渲染泳道不再引用整周 laneCount（只到本格最后一条条）', () => {
