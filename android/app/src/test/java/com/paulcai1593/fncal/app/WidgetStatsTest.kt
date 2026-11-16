@@ -203,7 +203,10 @@ class WidgetStatsTest {
     fun catmullRomKeepsEndpointsAndSampleCount() {
         val points = listOf(0f to 0f, 1f to 2f, 2f to 1f, 3f to 3f)
         val curve = WidgetStats.catmullRom(points, samples = 12)
-        assertEquals("每段 12 个采样点", 4 * 12, curve.size)
+        // 0.4.1（总监单 m02062 裁决）：旧期望写成 4 × 12 = 48 是错的——把点数当成段数；
+        // 4 点 = 3 段 × 12 采样 + 收尾那 1 点 = 37。依据 `design/widget-041/交付清单-0.4.1.md:38`
+        // 「24 点 Catmull-Rom（每段 12 采样）」。实现不改。
+        assertEquals("N 点 → (N−1) 段 × 12 + 1 = 37 个采样点", 37, curve.size)
         assertEquals(0f, curve.first().first, 0.0001f)
         assertEquals(0f, curve.first().second, 0.0001f)
         assertEquals(3f, curve.last().first, 0.0001f)
@@ -270,12 +273,20 @@ class WidgetStatsTest {
         val label = WidgetStats.AGENDA_LABEL_DP
         val gap = WidgetStats.AGENDA_GROUP_GAP_DP
 
-        // 148dp（4×2 真机高）：可用 148 - 32.5 - 22 - 2×16 = 61.5 → 3 行。
+        // 148dp（4×2 真机高）：可用 148 - 32.5 - 22 - 2×(12+2) = 65.5 → 4 行。
+        // 0.4.1（总监单 m02062 裁决）：旧期望写成 3 是错的——把每组「标签 12 + 组间距 2」误当成 16；
+        // 依据 `design/widget-041/数值表-0.4.1.md:81`（4×2 / 4 列屏 148dp → 4 行）与
+        // `design/widget-041/交付清单-0.4.1.md:45`（4×2 在 148dp 画满 4 条）。实现不改。
         val short = WidgetStats.agendaCapacity(148f, 2, row, label, gap, top, bottom)
-        assertEquals(3, short)
-        // 296dp（4×4 真机高）：可用 296 - 32.5 - 22 - 5×16 = 161.5 → 10 行。
+        assertEquals(4, short)
+        // 296dp（4×4 / 4 列屏）：可用 296 - 32.5 - 22 - 5×(12+2) = 171.5 → 10 行（数值表 :76）。
         val tall = WidgetStats.agendaCapacity(296f, 5, row, label, gap, top, bottom)
         assertEquals(10, tall)
+        // 264dp（4×4 / 5 列屏）→ 8 行；250dp（4×4 / 最小）→ 7 行（数值表 :77-78，按高度画不凑数）。
+        val fiveCol = WidgetStats.agendaCapacity(264f, 5, row, label, gap, top, bottom)
+        assertEquals(8, fiveCol)
+        val minWidth = WidgetStats.agendaCapacity(250f, 5, row, label, gap, top, bottom)
+        assertEquals(7, minWidth)
         assertTrue("容量必须随高度变化，不能是常量", tall > short)
 
         // 组数越多，标签吃掉的高度越多；同高度下 5 组比 2 组能画的少。
@@ -283,9 +294,11 @@ class WidgetStatsTest {
         assertTrue("组数增加会减少可画行数", two > tall)
 
         // 轮流分配：4 行 2 组 → 2 + 2；7 行 5 组 → 2 + 2 + 1 + 1 + 1。
-        val two = WidgetStats.agendaGroupRows(4, listOf(2, 2))
-        assertEquals(2, two[0])
-        assertEquals(2, two[1])
+        // 0.4.1（总监单 m02062）：本行原来也叫 `two`，与上面 `val two` 重名 → 整个测试类编译不过；
+        // 只改变量名（断言一条未动），让 0.4.1 的 JVM 单测能在本机与 CI 跑起来。
+        val pairRows = WidgetStats.agendaGroupRows(4, listOf(2, 2))
+        assertEquals(2, pairRows[0])
+        assertEquals(2, pairRows[1])
         val spread = WidgetStats.agendaGroupRows(7, listOf(3, 3, 3, 3, 3))
         assertEquals(7, spread.sum())
         assertEquals(2, spread[0])
