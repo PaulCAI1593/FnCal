@@ -39,6 +39,7 @@
     --t-md: 14px;
     --t-base: 15px;
     --t-lg: 17px;
+    --t-xl: 24px;
     --r-sm: 8px;
     --r-md: 12px;
     --r-lg: 18px;
@@ -70,7 +71,7 @@
   }
   img, svg { max-width: 100%; }
   img { height: auto; display: block; }
-  code { font-family: var(--mono); font-size: .92em; white-space: nowrap; }
+  code { font-family: var(--mono); font-size: 1em; white-space: nowrap; }
   h1, h2, h3 { line-height: 1.22; letter-spacing: -.01em; margin: 0; font-weight: 650; }
   p { margin: 0; }
   .wrap { max-width: 1080px; margin: 0 auto; padding: 0 28px; }
@@ -118,6 +119,22 @@
     font-weight: 680;
     letter-spacing: -.025em;
     max-width: 15em;
+  }
+  .hero__title {
+    display: flex; align-items: center; gap: 16px;
+    max-width: none;
+  }
+  .hero__logo {
+    width: clamp(44px, 5vw, 56px); height: auto;
+    border-radius: 14px; flex: none;
+  }
+  .hero__tag {
+    margin: 16px 0 0;
+    font-size: var(--t-xl);
+    font-weight: 620;
+    letter-spacing: -.012em;
+    line-height: 1.4;
+    color: var(--ink);
   }
   .lede {
     margin-top: 22px;
@@ -345,7 +362,7 @@
     .top__gh { margin-left: auto; }
   }
   @media (min-width: 701px) and (max-width: 900px) {
-    nav.top__nav { gap: 4px; font-size: 13px; }
+    nav.top__nav { gap: 4px; font-size: var(--t-xs); }
     nav.top__nav a { padding: 8px 6px; }
   }
 
@@ -462,12 +479,13 @@
 <main>
   <section class="hero wrap">
     <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.8.29</p>
-    <h1>日历留在自己的 NAS 上</h1>
+    <h1 class="hero__title"><img class="hero__logo" src="logo/fncal-256.png" alt="" width="56" height="56">FnCal</h1>
+    <p class="hero__tag">日历留在自己的 NAS 上</p>
     <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
       <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.29/FnCal-0.8.29.fpk">下载安装包 0.8.29</a>
       <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.4.1/FnCal-Android-0.4.1.apk">下载安卓 APK 0.4.1</a>
-      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/skill-v0.8.29/FnCal-MCP-Skill-0.8.29.zip">下载 AI 技能包</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/mcp-skill-v0.8.29/FnCal-MCP-Skill-0.8.29.zip">下载 AI 技能包</a>
       <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.29/SHA256SUMS.txt">下载校验文件</a>
     </div>
     <p style="margin-top:12px;font-size:var(--t-sm);color:var(--ink-3)">国内访问慢时可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>，内容与 GitHub 相同。</p>
@@ -1008,8 +1026,8 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
         <div class="asset">
           <div class="asset__name">AI 技能包 <code>FnCal-MCP-Skill-0.8.29.zip</code></div>
           <div class="asset__act">
-            <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.8.29.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/skill-v0.8.29/FnCal-MCP-Skill-0.8.29.zip">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载 AI 技能包 FnCal-MCP-Skill-0.8.29.zip" href="https://gitee.com/Paul1593/FnCal/releases/download/skill-v0.8.29/FnCal-MCP-Skill-0.8.29.zip">Gitee 镜像</a>
+            <a class="btn" aria-label="下载 AI 技能包 FnCal-MCP-Skill-0.8.29.zip" href="https://github.com/PaulCAI1593/FnCal/releases/download/mcp-skill-v0.8.29/FnCal-MCP-Skill-0.8.29.zip">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载 AI 技能包 FnCal-MCP-Skill-0.8.29.zip" href="https://gitee.com/Paul1593/FnCal/releases/download/mcp-skill-v0.8.29/FnCal-MCP-Skill-0.8.29.zip">Gitee 镜像</a>
           </div>
           <div class="asset__meta">31,804 B · SHA-256 0E075C907B2CCE48C16C1E80A6B6E7F15F2598F21401DF849B337AC25D17A035</div>
         </div>
