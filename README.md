@@ -81,7 +81,7 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 安卓外壳直连你自己的 NAS，填地址就能用，不经过任何中转。桌面卡片从 0.4.1 起有九款：小月历、今日日程、大月历、四日、日程列表、当月热度、当月分类、一周节奏、时段分析；支持 2×2 / 4×2 / 4×4，颜色跟设置里的主题色走，跟随登录态自动刷新。大月历的日期下面放徽章，全天与多日日程用日历色实底，定时日程用半透明底加细边；统计四款与年度总结共用同一套口径，一周开始日读设置。
 
-**安卓下载**：0.4.2 已撤下（启动图标尺寸待调整），新版 0.4.3 发布后在此提供安装包。历史版本见 <https://github.com/PaulCAI1593/FnCal/releases>。
+**安卓下载**：[`FnCal-Android-0.4.3.apk`](https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.4.3/FnCal-Android-0.4.3.apk)（1,006,557 B / SHA-256 `51CFA7E4B3976A83D306FE61761EC311B71210A292D12C34CEC7103D1F09AE5E`）。与 0.3.8 同一签名，可直接覆盖升级，数据保留；0.4.2 已撤下，不要再装。历史版本见 <https://github.com/PaulCAI1593/FnCal/releases>。
 
 *国内访问慢时可用 [Gitee 发行版](https://gitee.com/Paul1593/FnCal/releases) 下载同一个包。*
 
