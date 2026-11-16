@@ -1,14 +1,12 @@
 {
-  "versionCode": 401,
-  "versionName": "0.4.1",
+  "versionCode": 402,
+  "versionName": "0.4.2",
   "releasedAt": "2026-11-16",
-  "apk": "FnCal-Android-0.4.1.apk",
-  "apkCn": "https://gitee.com/Paul1593/FnCal/releases/download/android-v0.4.1/FnCal-Android-0.4.1.apk",
+  "apk": "FnCal-Android-0.4.2.apk",
+  "apkCn": "https://gitee.com/Paul1593/FnCal/releases/download/android-v0.4.2/FnCal-Android-0.4.2.apk",
   "notes": [
-    "桌面卡片按新设计重做，共九款：小月历、今日日程、大月历、四日、日程列表、当月热度、当月分类、一周节奏、时段分析",
-    "四日与日程列表默认 4×2，可拉伸到 4×4；统计四款默认 2×2，可拉伸到 4×2",
-    "日程列表每行显示开始–结束时间，全天行写「全天」并右对齐；名称左缘固定，不随文字长短抖动",
-    "大月历徽章按日程类型分色：全天与多日实底，定时日程淡底加细边",
-    "主题色读网页设置，卡片上的今天、曲线、柱子跟着变；日历九色与分类十色不跟主题走"
+    "启动图标缩小到 54%，圆形与圆角遮罩下四周留白均匀，不再贴边",
+    "九款桌面卡片沿用 0.4.1 的设计，本次未改动",
+    "与 0.3.8 同一签名，可直接覆盖安装"
   ]
 }
