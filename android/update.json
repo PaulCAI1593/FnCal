@@ -1,12 +1,14 @@
 {
-  "versionCode": 402,
-  "versionName": "0.4.2",
-  "releasedAt": "2026-11-16",
-  "apk": "FnCal-Android-0.4.2.apk",
-  "apkCn": "https://gitee.com/Paul1593/FnCal/releases/download/android-v0.4.2/FnCal-Android-0.4.2.apk",
+  "versionCode": 308,
+  "versionName": "0.3.8",
+  "releasedAt": "2026-11-11",
+  "apk": "FnCal-Android-0.3.8.apk",
+  "apkCn": "https://gitee.com/Paul1593/FnCal/releases/download/android-v0.3.8/FnCal-Android-0.3.8.apk",
   "notes": [
-    "启动图标缩小到 54%，圆形与圆角遮罩下四周留白均匀，不再贴边",
-    "九款桌面卡片沿用 0.4.1 的设计，本次未改动",
-    "与 0.3.8 同一签名，可直接覆盖安装"
+    "打不开页面时不再一直转圈：15 秒后显示「加载超时」，可以重试或修改地址",
+    "服务器返回 403 或 5xx 也会显示错误页，标题带状态码",
+    "错误页给出诊断：失败请求地址、状态、耗时、域名解析结果，可长按选中或一键复制",
+    "诊断只留最近 5 条失败请求，同一地址只留最新一条，不落盘",
+    "桌面卡片与四日视图沿用 0.3.7，不改排布"
   ]
 }
