@@ -6,7 +6,7 @@
 
 ![FnCal 主界面：年视图、左侧日历列表与顶部工具栏](docs/screenshots/main.webp)
 
-当前版本：**0.8.31**
+当前版本：**0.8.30**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -14,7 +14,7 @@
 
 **项目页面**：<https://paulcai1593.github.io/FnCal/>
 
-**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.30)（只在有实质更新时重发）。
+**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.30)。
 
 *国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)，内容与 GitHub 相同。*
 
@@ -81,7 +81,7 @@ AI 客户端（Claude、ChatGPT、Cursor 等支持自定义 MCP 的客户端）�
 
 安卓外壳直连你自己的 NAS，填地址就能用，不经过任何中转。桌面卡片从 0.4.1 起有九款：小月历、今日日程、大月历、四日、日程列表、当月热度、当月分类、一周节奏、时段分析；支持 2×2 / 4×2 / 4×4，颜色跟设置里的主题色走，跟随登录态自动刷新。大月历的日期下面放徽章，全天与多日日程用日历色实底，定时日程用半透明底加细边；统计四款与年度总结共用同一套口径，一周开始日读设置。
 
-**安卓下载**：[`FnCal-Android-0.4.3.apk`](https://github.com/PaulCAI1593/FnCal/releases/download/android-v0.4.3/FnCal-Android-0.4.3.apk)（1,006,557 B / SHA-256 `51CFA7E4B3976A83D306FE61761EC311B71210A292D12C34CEC7103D1F09AE5E`）。与 0.3.8 同一签名，可直接覆盖升级，数据保留；0.4.2 已撤下，不要再装。历史版本见 <https://github.com/PaulCAI1593/FnCal/releases>。
+**安卓下载**：0.4.2 已撤下（启动图标尺寸待调整），新版 0.4.3 发布后在此提供安装包。历史版本见 <https://github.com/PaulCAI1593/FnCal/releases>。
 
 *国内访问慢时可用 [Gitee 发行版](https://gitee.com/Paul1593/FnCal/releases) 下载同一个包。*
 
@@ -112,7 +112,7 @@ AI 客户端也能要一张：说「给我 2026 年度总结」或「只要工�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 下载 `FnCal-0.8.31.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
+1. 下载 `FnCal-0.8.30.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -120,29 +120,33 @@ AI 客户端也能要一张：说「给我 2026 年度总结」或「只要工�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.8.31.fpk
-# Windows: Get-FileHash .\FnCal-0.8.31.fpk -Algorithm SHA256
+sha256sum FnCal-0.8.30.fpk
+# Windows: Get-FileHash .\FnCal-0.8.30.fpk -Algorithm SHA256
 ```
 
-期望值也写在 `SHA256SUMS.txt` 里（83 B，一行：安装包）。把安装包与校验文件放同一目录再核对：
+期望值也写在 `SHA256SUMS.txt` 里（176 B，两行：安装包与 AI 技能包）。一次核对两个文件：
 
 ```bash
 sha256sum -c SHA256SUMS.txt
-# Windows: 逐行比对，或 Get-FileHash .\FnCal-0.8.31.fpk -Algorithm SHA256
+# Windows: 逐行比对，或 Get-FileHash .\FnCal-0.8.30.fpk -Algorithm SHA256
 ```
 
-0.8.31 安装包（22,200,895 B）：
+0.8.30 安装包（22,196,096 B）：
 
 ```
-71778736F9989FD34B9F82A21887C69778034BC694E0744FA9BD2312ED31E115
+B34AB3E49938747B657488B989D3146C71A9731F1809ADD27976AAE7EA5B323D
 ```
 
-AI 技能包本版不重发：技能内容没有实质变化，仍是 0.8.30 那份（31,804 B / `22B6E50AD7772BAFDEAA02C38ED2A67FB9E7EEE8BB4F4BC0DBDE03F5DDCF5FBB`），可直接配 0.8.31 用。技能包改为「有实质更新才单独发版」，不再跟网页版对齐版本号。
+AI 技能包（31,804 B）：
+
+```
+22B6E50AD7772BAFDEAA02C38ED2A67FB9E7EEE8BB4F4BC0DBDE03F5DDCF5FBB
+```
 
 **升级**
 
 - **0.8.0 及以后的版本**：在应用中心覆盖安装即可，数据保留。
-- **早于 0.8.0 的版本不能直接覆盖升级**：0.8.0 起应用账号体系有变更。做法是先在应用中心**卸载，卸载时选「保留资料」**，再重新安装 0.8.31，安装向导里**填入与原来完全相同的管理员账号、密码与端口**，数据与设置都会接着用，等于无损更新。卸载时若没有选「保留资料」，数据目录会被一起删掉。
+- **早于 0.8.0 的版本不能直接覆盖升级**：0.8.0 起应用账号体系有变更。做法是先在应用中心**卸载，卸载时选「保留资料」**，再重新安装 0.8.30，安装向导里**填入与原来完全相同的管理员账号、密码与端口**，数据与设置都会接着用，等于无损更新。卸载时若没有选「保留资料」，数据目录会被一起删掉。
 
 账号数据里若已存在 TOTP 种子，升级后会自动转成密文（AES-256-GCM）。
 
