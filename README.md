@@ -14,7 +14,7 @@
 
 **项目页面**：<https://paulcai1593.github.io/FnCal/>
 
-**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.31)。
+**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.30)（只在有实质更新时重发）。
 
 *国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)，内容与 GitHub 相同。*
 
@@ -124,7 +124,7 @@ sha256sum FnCal-0.8.31.fpk
 # Windows: Get-FileHash .\FnCal-0.8.31.fpk -Algorithm SHA256
 ```
 
-期望值也写在 `SHA256SUMS.txt` 里（176 B，两行：安装包与 AI 技能包）。一次核对两个文件：
+期望值也写在 `SHA256SUMS.txt` 里（83 B，一行：安装包）。把安装包与校验文件放同一目录再核对：
 
 ```bash
 sha256sum -c SHA256SUMS.txt
@@ -137,11 +137,7 @@ sha256sum -c SHA256SUMS.txt
 71778736F9989FD34B9F82A21887C69778034BC694E0744FA9BD2312ED31E115
 ```
 
-AI 技能包（31,805 B）：
-
-```
-CB82FCFBA81A74EB2B8BEB663456BFB8AD5C6A59AB152A8EBFC12405A937070A
-```
+AI 技能包本版不重发：技能内容没有实质变化，仍是 0.8.30 那份（31,804 B / `22B6E50AD7772BAFDEAA02C38ED2A67FB9E7EEE8BB4F4BC0DBDE03F5DDCF5FBB`），可直接配 0.8.31 用。技能包改为「有实质更新才单独发版」，不再跟网页版对齐版本号。
 
 **升级**
 
@@ -198,7 +194,7 @@ CB82FCFBA81A74EB2B8BEB663456BFB8AD5C6A59AB152A8EBFC12405A937070A
 | 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500）。不带会话头的客户端照常可用；批准时返回审批链接（`approval_requires_ui` + `approvalUrl`，10 分钟、每条一次） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；标签：`create_tag` / `update_tag` / `delete_tag`（受「新建与编辑」「删除」两组控制）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用） |
 
-附一份 **MCP 技能包**，独立发版，当前 0.8.31：`FnCal-MCP-Skill-0.8.31.zip`（31,805 B / `CB82FCFBA81A74EB2B8BEB663456BFB8AD5C6A59AB152A8EBFC12405A937070A`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.31) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
+附一份 **MCP 技能包**，独立发版，当前 0.8.30：`FnCal-MCP-Skill-0.8.30.zip`（31,804 B / `22B6E50AD7772BAFDEAA02C38ED2A67FB9E7EEE8BB4F4BC0DBDE03F5DDCF5FBB`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.30) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
 
 ---
 
