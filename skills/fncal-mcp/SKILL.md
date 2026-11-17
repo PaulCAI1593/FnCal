@@ -1,8 +1,8 @@
 ---
 name: fncal-mcp
 description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. It can also generate the year's annual review card as a 1080×1440 PNG (generate_annual_review, read-only). Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.8.29
-fncalMinVersion: 0.8.29
+version: 0.8.30
+fncalMinVersion: 0.8.30
 user-invocable: true
 license: MIT
 ---
