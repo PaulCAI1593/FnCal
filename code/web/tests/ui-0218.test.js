@@ -499,7 +499,16 @@ describe('C6 事件编辑弹窗：农历日期控件', () => {
     expect(lunarToSolar(2101, 1, 1)).toBeNull();
   });
 
-  it('0.2.19（D3）+ 0.2.20（E6/E7）：日期字段 + 弹层日历，两段式切换公历 / 农历', () => {
+  /** 0.8.35：语种只有一个入口——编辑器「农历」开关（弹层两段式已删）。 */
+  function setLunar(on) {
+    const toggle = document.querySelector('.modal-scrim input[aria-label="农历"]');
+    expect(toggle).toBeTruthy();
+    if (toggle.checked === on) return;
+    toggle.checked = on;
+    toggle.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  it('0.2.19（D3）+ 0.2.20（E6/E7）+ 0.8.35：日期字段 + 弹层日历，开关切换公历 / 农历', () => {
     openModal(new Date(2026, 9, 24, 9, 0), new Date(2026, 9, 24, 10, 0));
 
     // 公历态（事件没标农历）：主文案是公历年月日、无副标
@@ -515,21 +524,19 @@ describe('C6 事件编辑弹窗：农历日期控件', () => {
     document.querySelector('.modal-scrim .editor__date-btn').click();
     const pop = document.querySelector('.date-pop');
     expect(pop).toBeTruthy();
-    expect(document.querySelector('.date-pop__title').textContent).toBe('2026年10月');
+    expect(document.querySelector('.date-pop__title-text').textContent).toBe('2026年10月');
     // 公历格子：日号 + 小字农历
     const day = [...document.querySelectorAll('.date-pop__day:not(.is-outside)')].find(
       (b) => b.querySelector('.date-pop__day-main')?.textContent === '24',
     );
     expect(day.querySelector('.date-pop__day-sub').textContent).toBe('十五');
 
-    // 0.2.20（E6）：弹层里点「农历」段 → 弹层与字段一起变农历（显示语种单源在编辑器上）
-    const segLunar = [...document.querySelectorAll('.date-pop__seg-btn')].find(
-      (b) => b.textContent === '农历',
-    );
-    expect(segLunar).toBeTruthy();
-    segLunar.click();
+    // 0.8.35：拨编辑器开关 → 弹层按农历重建（语种单源在编辑器上，不另点弹层）
+    setLunar(true);
+    expect(document.querySelector('.date-pop')).toBeNull();
+    document.querySelector('.modal-scrim .editor__date-btn').click();
     // 0.2.20（E7）：两态同结构，农历不加「农历」前缀
-    expect(document.querySelector('.date-pop__title').textContent).toBe('2026年九月');
+    expect(document.querySelector('.date-pop__title-text').textContent).toBe('2026年九月');
     expect(document.querySelectorAll('.modal-scrim .editor__date-main')[0].textContent).toBe(
       '2026年九月十五',
     );
@@ -543,21 +550,17 @@ describe('C6 事件编辑弹窗：农历日期控件', () => {
     modal = null;
     document.body.innerHTML = '';
     openModal(new Date(2028, 6, 20, 9, 0), new Date(2028, 6, 20, 10, 0));
+    setLunar(true);
     document.querySelector('.modal-scrim .editor__date-btn').click();
-    [...document.querySelectorAll('.date-pop__seg-btn')]
-      .find((b) => b.textContent === '农历')
-      .click();
-    expect(document.querySelector('.date-pop__title').textContent).toBe('2028年闰五月');
+    expect(document.querySelector('.date-pop__title-text').textContent).toBe('2028年闰五月');
     expect(leapMonth(2028)).toBe(5);
   });
 
   it('0.2.19（D3）+ 0.2.20（E6/E7）：弹层选日 → 隐藏公历真值 / 字段文案同步', () => {
     openModal(new Date(2026, 9, 24, 9, 0), new Date(2026, 9, 24, 10, 0));
     const native = document.querySelector('.modal-scrim input.editor__date-native');
+    setLunar(true);
     document.querySelector('.modal-scrim .editor__date-btn').click();
-    [...document.querySelectorAll('.date-pop__seg-btn')]
-      .find((b) => b.textContent === '农历')
-      .click();
     // 九月十五 → 九月廿二 = 公历 10/31（用户口径样例）
     const target = [...document.querySelectorAll('.date-pop__day:not(.is-outside)')].find((b) =>
       b.getAttribute('aria-label').startsWith('九月廿二'),
@@ -576,17 +579,19 @@ describe('C6 事件编辑弹窗：农历日期控件', () => {
     expect(document.querySelector('.modal-scrim input[aria-label="结束时间"]').value).toContain('10:00');
   });
 
-  it('C6①②③ + 0.2.20（E6）：「对应农历」行、农历开关整行与字段胶囊都已删除', () => {
+  it('C6①②③ + 0.2.20（E6）+ 0.8.35：「对应农历」行与字段胶囊已删除，顶部「农历」开关按新要求恢复', () => {
     openModal(new Date(2026, 9, 24, 9, 0), new Date(2026, 9, 24, 10, 0));
     expect(document.querySelector('.modal__lunar-hint')).toBeNull();
     expect(document.querySelectorAll('.modal__lunar-sub')).toHaveLength(0);
     expect(modalJs).not.toContain('modal__lunar-sub');
     expect(modalJs).not.toContain('modal__lunar-hint');
     expect(READ('src/styles/layout.css')).not.toContain('.modal__lunar-sub');
-    // 0.2.20（E6）：顶部「农历」开关整行、字段右侧「公历/农历」胶囊都已删除，
-    // 显示语种只剩弹层里的一处两段式；农历仍由 data 层写 X-FNCAL-LUNAR。
-    expect(document.querySelector('.modal-scrim input[aria-label="农历"]')).toBeNull();
-    expect(modalJs).not.toContain('onLunarToggle');
+    // 0.2.20（E6）：字段右侧「公历/农历」胶囊已删除；0.8.35 用户要求把「农历」
+    // 开关加回「全天」行上方，它与弹层两段式共用 setLunarMode，状态不分叉。
+    const lunarToggle = document.querySelector('.modal-scrim input[aria-label="农历"]');
+    expect(lunarToggle).toBeTruthy();
+    expect(lunarToggle.closest('.field').nextElementSibling.textContent).toContain('全天');
+    expect(modalJs).toContain('setLunarMode');
     expect(modalJs).not.toContain('editor__date-mode');
     expect(modalJs).toContain("import { closeDatePopover, openDatePopover }");
     const labels = [...document.querySelectorAll('.modal-scrim .field__label')].map(

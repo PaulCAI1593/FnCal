@@ -6,7 +6,7 @@
 
 ![FnCal 主界面：年视图、左侧日历列表与顶部工具栏](docs/screenshots/main.webp)
 
-当前版本：**0.8.34**
+当前版本：**0.8.41**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/PaulCAI1593/FnCal)](https://github.com/PaulCAI1593/FnCal/releases)
@@ -14,7 +14,7 @@
 
 **项目页面**：<https://paulcai1593.github.io/FnCal/>
 
-**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.30)。
+**下载**：网页安装包、安卓 APK 与校验文件在 GitHub 发布页 <https://github.com/PaulCAI1593/FnCal/releases>。AI 技能包单独发版，见 [技能包发布页](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.40)。
 
 *国内访问慢时可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)，内容与 GitHub 相同。*
 
@@ -112,7 +112,7 @@ AI 客户端也能要一张：说「给我 2026 年度总结」或「只要工�
 
 **系统要求**：飞牛OS（fnOS）≥ 1.2.0401，x86 / arm，依赖 `nodejs_v22`。
 
-1. 下载 `FnCal-0.8.34.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
+1. 下载 `FnCal-0.8.41.fpk`：<https://github.com/PaulCAI1593/FnCal/releases>（国内慢可用 [Gitee 镜像](https://gitee.com/Paul1593/FnCal/releases)）；
 2. 先核对哈希（见下），再在 fnOS 应用中心安装；
 3. 安装向导里填一个未被占用的空闲端口（建议 1024 以上，避开系统保留端口；不要填 5232，那是 Radicale 的默认端口），并设定管理员用户名与密码；
 4. 装完后点桌面图标，会在浏览器新标签打开 `http://<NAS-IP>:<端口>/`，用刚设的账号登录。
@@ -120,33 +120,33 @@ AI 客户端也能要一张：说「给我 2026 年度总结」或「只要工�
 **核对哈希**
 
 ```bash
-sha256sum FnCal-0.8.34.fpk
-# Windows: Get-FileHash .\FnCal-0.8.34.fpk -Algorithm SHA256
+sha256sum FnCal-0.8.41.fpk
+# Windows: Get-FileHash .\FnCal-0.8.41.fpk -Algorithm SHA256
 ```
 
-期望值也写在 `SHA256SUMS.txt` 里（83 B，单行：本版只发安装包；AI 技能包没有实质改动，仍是 0.8.30 那份，单独在技能包发布页下载）。
+期望值也写在 `SHA256SUMS.txt` 里（176 B，两行：本版安装包与 AI 技能包；技能包 0.8.40 单独发版，两份哈希都在这个文件里）。
 
 ```bash
 sha256sum -c SHA256SUMS.txt
-# Windows: 逐行比对，或 Get-FileHash .\FnCal-0.8.34.fpk -Algorithm SHA256
+# Windows: 逐行比对，或 Get-FileHash .\FnCal-0.8.41.fpk -Algorithm SHA256
 ```
 
-0.8.34 安装包（22,043,317 B）：
+0.8.41 安装包（22,068,072 B）：
 
 ```
-ED17E5533BCDD8B57FA7D8A4150D827BF7617F32DEA74FDC02EA193AC0472D73
+79B8F1EBD3B4ABFA178F2009ADBADC7F659CDEAF5ECC2F82E4FD2DF9726C19D0
 ```
 
-AI 技能包（31,804 B）：
+AI 技能包（35,880 B）：
 
 ```
-22B6E50AD7772BAFDEAA02C38ED2A67FB9E7EEE8BB4F4BC0DBDE03F5DDCF5FBB
+1D3E62938178760C9DCBCAAE4519C1C74BA8148DB43B1D2F59BD6A866872A5AA
 ```
 
 **升级**
 
 - **0.8.0 及以后的版本**：在应用中心覆盖安装即可，数据保留。
-- **早于 0.8.0 的版本不能直接覆盖升级**：0.8.0 起应用账号体系有变更。做法是先在应用中心**卸载，卸载时选「保留资料」**，再重新安装 0.8.34，安装向导里**填入与原来完全相同的管理员账号、密码与端口**，数据与设置都会接着用，等于无损更新。卸载时若没有选「保留资料」，数据目录会被一起删掉。
+- **早于 0.8.0 的版本不能直接覆盖升级**：0.8.0 起应用账号体系有变更。做法是先在应用中心**卸载，卸载时选「保留资料」**，再重新安装 0.8.41，安装向导里**填入与原来完全相同的管理员账号、密码与端口**，数据与设置都会接着用，等于无损更新。卸载时若没有选「保留资料」，数据目录会被一起删掉。
 
 账号数据里若已存在 TOTP 种子，升级后会自动转成密文（AES-256-GCM）。
 
@@ -198,7 +198,7 @@ AI 技能包（31,804 B）：
 | 协议 | MCP Streamable HTTP。普通请求回 JSON；需要弹窗确认时走 SSE 下行流，`initialize` 后返回 `Mcp-Session-Id`（会话 30 分钟过期、上限 500）。不带会话头的客户端照常可用；批准时返回审批链接（`approval_requires_ui` + `approvalUrl`，10 分钟、每条一次） |
 | 工具 | 读：`list_calendars` / `list_events` / `get_event` / `find_free_slots`；写：`create_event` / `update_event` / `delete_event`（**只读凭据连写工具都看不到**）；标签：`create_tag` / `update_tag` / `delete_tag`（受「新建与编辑」「删除」两组控制）；提案：`list_proposals` / `decide_proposals` / `approve_proposal` / `reject_proposal`（后四个只在凭据开启「对话内代办批准」后可用） |
 
-附一份 **MCP 技能包**，独立发版，当前 0.8.30：`FnCal-MCP-Skill-0.8.30.zip`（31,804 B / `22B6E50AD7772BAFDEAA02C38ED2A67FB9E7EEE8BB4F4BC0DBDE03F5DDCF5FBB`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.30) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
+附一份 **MCP 技能包**，独立发版，当前 0.8.40：`FnCal-MCP-Skill-0.8.40.zip`（35,880 B / `1D3E62938178760C9DCBCAAE4519C1C74BA8148DB43B1D2F59BD6A866872A5AA`），从 [技能包 Release](https://github.com/PaulCAI1593/FnCal/releases/tag/mcp-skill-v0.8.40) 下载，交给 AI 客户端当使用说明。技能包与 FnCal 分开升级：源文件在仓库 `skills/fncal-mcp/`，你说「升级技能包」时 AI 会从 Gitee 镜像与 GitHub 两个地址依次拉最新版并比对版本号，拉不到就用本地版本、不阻塞对话。细节与排错见技能包里的 `reference/setup.md`。
 
 ---
 
@@ -269,7 +269,7 @@ docker compose up -d --build      # 然后在 http://<NAS-IP>:5581/ 登录
 
 ## 版本记录
 
-每个版本的改动见 [`CHANGELOG.md`](./CHANGELOG.md)。0.6.x 主要变化：设置页签收拢与诊断包迁移、登录设备与接入管理、权限独立提示、桌面卡片接口与安卓桌面卡片、卡片多行排版、二十四节气、手机日号行与跨天条几何修正、节日与节气在月视图、周 / 四日 / 日与日程列表的配色与图标统一、迷你月历精简、日程视图日期列不折行。0.7.x 加入标签系统（分组、拖动排序、按标签筛选、导出写进 `CATEGORIES`），并连续修正月格与周视图排版：名称按本格实际宽度显示、单日全天补 emoji、折叠按每格实测高度、跨天定时事件裁进当天时间轴。0.8.x 加入年度总结卡片（含 MCP 出图、按年份与日历限定）、月视图「还有 N 个」弹层与触屏手势、手机日程视图竖排时间列，并让安卓桌面卡片扩到九款；0.8.34 修复筛选面板点标签会把搜索条收起的问题，并把设置保存的 CSRF 校验放宽到「请求头或 cookie 任一对得上即通过」（内网直连也能保存）。0.5.x 是手机端形态与 AI 审批链路的成型阶段。
+每个版本的改动见 [`CHANGELOG.md`](./CHANGELOG.md)。0.6.x 主要变化：设置页签收拢与诊断包迁移、登录设备与接入管理、权限独立提示、桌面卡片接口与安卓桌面卡片、卡片多行排版、二十四节气、手机日号行与跨天条几何修正、节日与节气在月视图、周 / 四日 / 日与日程列表的配色与图标统一、迷你月历精简、日程视图日期列不折行。0.7.x 加入标签系统（分组、拖动排序、按标签筛选、导出写进 `CATEGORIES`），并连续修正月格与周视图排版：名称按本格实际宽度显示、单日全天补 emoji、折叠按每格实测高度、跨天定时事件裁进当天时间轴。0.8.x 加入年度总结卡片（含 MCP 出图、按年份与日历限定）、月视图「还有 N 个」弹层与触屏手势、手机日程视图竖排时间列，并让安卓桌面卡片扩到九款；0.8.34 修复筛选面板点标签会把搜索条收起的问题，并把设置保存的 CSRF 校验放宽到「请求头或 cookie 任一对得上即通过」（内网直连也能保存）。0.8.35–0.8.41 加入农历开关与农历重复（每年 / 每月）、待办重复、MCP 农历与待办工具，并让详情卡、搜索结果、服务端时间范围查询与空闲查询都按农历逐次展开。0.5.x 是手机端形态与 AI 审批链路的成型阶段。
 
 ---
 

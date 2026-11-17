@@ -75,8 +75,22 @@ export const zhCN = {
   'view.switchTo': '{name}视图',
   'view.beyond': '及以后',
   /* 0.2.12（C11-2/C11-3）：农历标注（详情/日程里跟在公历时间后面） */
-  'view.lunar': '农历 {label}',
-  'view.lunarYearly': '农历 {label} · 每年',
+  /* 0.8.39：{label} 本身已带「农历」前缀（lunarLabel），这几个键不再重复加，也不再插空格。
+     规则说明与搜索结果统一为「每年（农历）」/「每月（农历）」（总监 m01225 口径）。 */
+  'view.lunar': '{label}',
+  'view.lunarYearly': '{label} · 每年（农历）',
+  /* 0.8.35：按农历每月重复与自定义的间隔/结束日期 */
+  'view.lunarMonthly': '{label} · 每月（农历）',
+  /* 0.8.39：搜索结果里农历重复的规则说明（与编辑器重复下拉同一套措辞）。 */
+  'lunar.rule.yearly': '每年（农历）',
+  'lunar.rule.monthly': '每月（农历）',
+  'view.lunarEvery': '每隔 {n} {unit}',
+  // 0.8.35 §7：详情卡重复说明行末尾的「第 N 次」。
+  'view.occurrenceIndex': '第 {n} 次',
+  'view.occurrenceIndexTotal': '第 {n} 次 / 共 {m} 次',
+  /* 0.8.36（任务书 §B/C）：任务勾完成后的 3 秒提示。 */
+  'view.taskNext': '下一次：{date}',
+  'view.taskLast': '已完成，这是最后一次',
   /* 0.2.12（C11-2）：月/周/天视图的农历副标题（初一显示月份，其余显示日期） */
   'calendar.lunarOnDay': '农历 {label}',
 
@@ -269,6 +283,9 @@ export const zhCN = {
   'common.save': '保存',
   'common.saved': '已保存',
   'common.cancel': '取消',
+  // 0.8.35 §10：自定义重复的日期框底部动作。
+  'common.clear': '清除',
+  'common.today': '今天',
   'common.delete': '删除',
   'common.undo': '撤销',
   'common.edit': '编辑',
@@ -295,6 +312,8 @@ export const zhCN = {
   'editor.guests': '参与者',
   'editor.description': '添加描述',
   'editor.repeat': '重复',
+  /* 0.8.36（任务书 §C）：任务没有到期日时重复不可用，行下写明原因。 */
+  'editor.repeatNeedDue': '先设到期日',
 
   /* ---- 事件/任务编辑弹窗：0.2.12（C11-3）农历 ---- */
   'editor.lunar': '农历',
@@ -303,18 +322,25 @@ export const zhCN = {
   'editor.lunarMonth': '农历月',
   'editor.lunarDay': '农历日',
   /* 0.2.19（D3）：日期字段 + 弹层日历（公历 / 农历切换）。 */
-  'editor.dateMode.solar': '公历',
-  'editor.dateMode.lunar': '农历',
   'editor.dateTitle.solar': '{year}年{month}月',
   'editor.dateTitle.solarFull': '{year}年{month}月{day}日',
   // 0.2.20（E7）：两态同结构、都不加「农历」前缀——语种由弹层两段式表达。
   'editor.dateTitle.lunar': '{year}年{month}',
   'editor.dateTitle.lunarFull': '{year}年{month}{day}',
   'editor.pickDate': '选择日期',
-  'editor.dateModeLabel': '显示语种',
+  // 0.8.35 §9：日期弹层标题按钮打开年月选择器。
+  'editor.pickYearMonth': '选择年月',
   'editor.datePrev': '上一月',
   'editor.dateNext': '下一月',
   'editor.repeat.yearlyLunar': '每年（农历）',
+  // 0.8.35：农历态下拉只有三项（不重复 / 每年 / 每月）；开关与日期弹层双向同步。
+  // 0.8.38：农历态不再有「自定义…」，间隔 / 结束日期只读保留。
+  'editor.repeat.monthlyLunar': '每月（农历）',
+  'editor.lunarOutOfRange': '该日期超出农历范围（1900–2100）',
+  'editor.repeat.lunarKept': '保留既有设置：{detail}',
+  'editor.repeat.lunarEveryYear': '每 {n} 个农历年',
+  'editor.repeat.lunarEveryMonth': '每 {n} 个农历月',
+  'editor.repeat.lunarUntil': '至 {date}',
   'editor.save': '保存',
   'editor.delete': '删除',
   'editor.created': '事件已保存',

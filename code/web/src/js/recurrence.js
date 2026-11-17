@@ -432,11 +432,41 @@ function buildOccurrence(master, recurrenceId, override, dur) {
       ? { categories: pick('categories') }
       : {}),
     ...(master.calendarId ? { calendarId: master.calendarId } : {}),
+    // 0.8.39（总监 m00890）：农历系列的实例必须带上农历字段，否则详情卡
+    // 的 viewLunarHint 第一行（`!item.lunar`）直接返回空、withOccurrenceIndex
+    // 也认不出农历规则——农历第 2 次起「农历八月十五」「第 N 次」都不显示。
+    // override 不写这些字段，一律以 master 为准；形状与 master 一致，
+    // 整数/布尔才带（避免把 undefined 写成键）。
+    ...(master.lunar === true
+      ? {
+          lunar: true,
+          ...(Number.isInteger(master.lunarMonth) ? { lunarMonth: master.lunarMonth } : {}),
+          ...(Number.isInteger(master.lunarDay) ? { lunarDay: master.lunarDay } : {}),
+          ...(typeof master.lunarLeap === 'boolean' ? { lunarLeap: master.lunarLeap } : {}),
+          ...(typeof master.lunarRule === 'string' ? { lunarRule: master.lunarRule } : {}),
+          ...(Number.isInteger(master.lunarInterval) ? { lunarInterval: master.lunarInterval } : {}),
+          ...(typeof master.lunarUntil === 'string' ? { lunarUntil: master.lunarUntil } : {}),
+        }
+      : {}),
     createdAt: master.createdAt,
     updatedAt: master.updatedAt,
     isOccurrence: true,
     isException: Boolean(override),
   };
+}
+
+/**
+ * 0.8.38：给农历系列用——它们没有 `recurrence`（不写 RRULE），实例日期由
+ * `lunar-repeat.js` 按 `lunarRule` 算好后，落成与公历实例同一套字段的对象。
+ * 与 `materializeOccurrence` 的唯一区别是不要求 `master.recurrence`。
+ */
+export function materializeLunarOccurrence(master, recurrenceId) {
+  if (!master) return null;
+  const rid = Number(recurrenceId);
+  if (!Number.isFinite(rid)) return null;
+  const dur = Math.max(0, master.end - master.start);
+  const overrides = master.overrides || {};
+  return buildOccurrence(master, rid, overrides[rid], dur);
 }
 
 /** A single occurrence for `recurrenceId` (with any override applied), or null. */

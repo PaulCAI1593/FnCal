@@ -459,18 +459,34 @@ describe('event modal — 0.2.12 lunar row follows the mode', () => {
     document.body.innerHTML = '';
   });
 
-  it('0.2.20（E6）：顶部农历开关整行已删；农历语义只剩弹层里的语种开关', () => {
+  it('0.8.35：顶部恢复「农历」开关行（在「全天」行正上方），与弹层两段式共用同一状态', () => {
     modal = createEventModal({ store: makeStore() });
     modal.openNew({ start: new Date(2026, 8, 25).getTime() });
 
-    // 顶部那行「农历」开关（input[aria-label="农历"]）连同 .field 整行都不再渲染
-    expect(document.querySelector('input[aria-label="农历"]')).toBeNull();
-    // 日期字段里也不再有「公历/农历」胶囊，语种只在弹层里切
+    // 0.8.35 用户要求「在全天按钮上面加一个农历的开关」：0.2.20（E6）删掉的那行
+    // 按新口径恢复，开关就是唯一的顶部语种入口。
+    const toggle = document.querySelector('input[aria-label="农历"]');
+    expect(toggle).toBeTruthy();
+    const lunarField = toggle.closest('.field');
+    expect(lunarField.nextElementSibling.textContent).toContain('全天');
+    // 日期字段里仍然没有「公历/农历」胶囊（0.2.20 E6 的结论不变）
     expect(document.querySelector('.editor__date-mode')).toBeNull();
     expect(document.querySelector('.editor__date-btn')).toBeTruthy();
-    // 任务模式同样（没有单独一行可显示/隐藏）
+
+    // 打开开关 = 现有农历态：日期字段立刻显示农历，下拉换成农历三项
+    // （0.8.38：去掉「自定义…」，农历只有每月 / 每年的概念）
+    toggle.checked = true;
+    fire(toggle, 'change');
+    expect(document.querySelector('.editor__date-main').textContent).toMatch(/月/);
+    expect([...document.querySelectorAll('.modal-scrim select[aria-label="重复"] option')].map((o) => o.textContent)).toEqual([
+      '不重复',
+      '每年（农历）',
+      '每月（农历）',
+    ]);
+
+    // 任务模式同样有这行（任务不加重复，但日期语种照样能切）
     $('.modal__mode button[data-mode="task"]').click();
-    expect(document.querySelector('input[aria-label="农历"]')).toBeNull();
+    expect(document.querySelector('input[aria-label="农历"]')).toBeTruthy();
     expect(document.querySelector('.editor__date-btn')).toBeTruthy();
   });
 });
@@ -496,7 +512,7 @@ describe('event modal — Task shares the same window', () => {
 
   const fieldOf = (labelSel) => $(labelSel).closest('.field');
 
-  it('switches to Task in place — Due label, Completed toggle, no repeat/end/location', () => {
+  it('switches to Task in place — Due label, Completed toggle, repeat shared, end/location hidden', () => {
     modal.openNew({});
     // The mode toggle stays put; the window does not change.
     expect($('.modal__mode').style.display).not.toBe('none');
@@ -507,8 +523,8 @@ describe('event modal — Task shares the same window', () => {
     expect(fieldOf('input[aria-label="开始日期"]').querySelector('.field__label').textContent).toBe('截止');
     expect(fieldOf('input[aria-label="结束日期"]').style.display).toBe('none');
 
-    // Event-only fields are hidden.
-    expect(fieldOf('select[aria-label="重复"]').style.display).toBe('none');
+    // 0.8.36：重复行在任务模式也显示（任务可重复）；地点等仅事件字段仍隐藏。
+    expect(fieldOf('select[aria-label="重复"]').style.display).toBe('');
     expect(fieldOf('input[aria-label="地点"]').style.display).toBe('none');
 
     // The Completed toggle and Notes label appear.

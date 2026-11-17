@@ -206,8 +206,9 @@ export function createKvApi({ store, tags = null }) {
       out.createdBy = previous.createdBy;
     }
     // 0.2.12 农历标记：前端有开关，但老客户端/别处改的事件不能因此丢掉农历规则。
+    // 0.8.35：`lunarInterval` / `lunarUntil` 是农历「自定义」的两个字段，同一份继承口径。
     if (value.lunar !== false) {
-      for (const field of ['lunar', 'lunarMonth', 'lunarDay', 'lunarLeap', 'lunarRule']) {
+      for (const field of ['lunar', 'lunarMonth', 'lunarDay', 'lunarLeap', 'lunarRule', 'lunarInterval', 'lunarUntil']) {
         if (value[field] === undefined && previous[field] !== undefined) out[field] = previous[field];
       }
     }

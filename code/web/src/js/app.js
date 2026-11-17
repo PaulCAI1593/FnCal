@@ -86,6 +86,8 @@ import {
   formatFullDate,
   formatTime,
 } from './date-utils.js';
+// 0.8.36：任务重复的「完成即推进」提示（与编辑器按钮同口径）。
+import { taskRepeats } from './task-repeat.js';
 import { colorHex, colorFg, EVENT_COLORS } from './colors.js';
 // 0.5.4（U3）：手机日历主体横滑切换周期（判定参数见 swipe-nav.js）。
 import { canSwipe, createSwipeNav } from './swipe-nav.js';
@@ -529,8 +531,26 @@ export function createApp(root, { store, user }) {
       modal.openNew({ ...defaults, mode: 'task' });
     },
     openTask: (task) => modal.openView(task),
-    toggleTask: (task) =>
-      Promise.resolve(store.toggleTask(task.id)).catch(reportWriteFailure(t('app.error.updateTask'))),
+    toggleTask: (task) => {
+      // 0.8.36（任务书 §B）：重复任务勾完成会推进到下一次——用同一条 3 秒提示
+      // 告诉用户新到期日，或用尽时说明这是最后一次（与编辑器里的按钮同口径）。
+      const before = store.getTask(task.id) || task;
+      return Promise.resolve(store.toggleTask(task.id))
+        .then((updated) => {
+          if (!updated || !before || before.done || !taskRepeats(before)) return updated;
+          if (!updated.done && updated.due !== before.due) {
+            const dueDate = new Date(updated.due);
+            const date = before.allDay
+              ? formatFullDate(dueDate)
+              : `${formatFullDate(dueDate)} ${formatTime(dueDate, { hour12: store.getSettings().hour12 })}`;
+            toast(t('view.taskNext', { date }), { duration: 3000 });
+          } else if (updated.done) {
+            toast(t('view.taskLast'), { duration: 3000 });
+          }
+          return updated;
+        })
+        .catch(reportWriteFailure(t('app.error.updateTask')));
+    },
     // Drag-to-reschedule a task (month: new day, timegrid: new time). Mirrors
     // moveEvent: optimistic + an Undo that reverts only the due date onto the
     // task's current state (so an edit made while the toast was up isn't lost).

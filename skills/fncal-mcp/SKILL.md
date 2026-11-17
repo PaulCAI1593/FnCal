@@ -1,8 +1,8 @@
 ---
 name: fncal-mcp
-description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. It can also generate the year's annual review card as a 1080×1440 PNG (generate_annual_review, read-only). Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.8.30
-fncalMinVersion: 0.8.30
+description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event or task, set up a lunar or Gregorian repeat, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. It can also generate the year's annual review card as a 1080×1440 PNG (generate_annual_review, read-only). Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
+version: 0.8.40
+fncalMinVersion: 0.8.40
 user-invocable: true
 license: MIT
 ---
@@ -62,7 +62,7 @@ Each AI credential has, per calendar, one of three levels, plus a time window an
 - `write` — read and change events in that calendar.
 - `read` — read only. The write tools are still listed if the credential can write somewhere, so a write aimed at a `read` calendar is refused with its own message: `该日历只有「只读」权限：请在 FnCal 的 AI 凭据里把这个日历改成「读写」后再试。` Report that sentence as-is; do not call it "not found".
 - `hidden` — **the calendar does not exist for this credential.** It is absent from `list_calendars`, absent from event lists, and asking for one of its events returns the same "not found" answer as a genuinely unknown uid. Do not treat that as an error to work around, and do not ask the user "is there a calendar I can't see?" — the correct behaviour is that it is not there.
-- A credential with `write` on nothing **does not have the write tools at all**: `tools/list` simply will not contain `create_event`, `update_event`, `delete_event`. If you cannot find them, the credential is read-only; do not retry, do not guess other names.
+- A credential with `write` on nothing **does not have the write tools at all**: `tools/list` simply will not contain `create_event`, `update_event`, `delete_event`, `create_task`, `update_task`, `complete_task`, `delete_task`. If you cannot find them, the credential is read-only; do not retry, do not guess other names.
 
 **Visibility vs. permission** (0.8.28) — two different filters, and permission always wins:
 - **Not granted = does not exist.** A calendar outside the credential's grants never appears in `list_calendars`, never enters event lists, and is never counted by `generate_annual_review`. Do not mention that it exists, and do not report a count of "calendars you cannot see".
@@ -119,18 +119,24 @@ A name can be used directly when you just saw it; if you are not sure of the spe
 
 | Tool | Kind | Required args |
 |---|---|---|
-| `list_calendars` | read | — (each calendar carries `access` and `visible`) |
-| `list_events` | read | — (`calendar`, `from`, `to` optional) |
-| `get_event` | read | `uid` |
+| `list_calendars` | read | — (each calendar carries `access`, `visible`, `type`: `calendar` or `vtodo`) |
+| `list_events` | read | — (`calendar`, `from`, `to` optional; each event carries `lunar`, `lunarRule`, `recurrence`; lunar repeats come back once per occurrence with `recurrenceId`) |
+| `get_event` | read | `uid` (`<uid>::<ms>` for one lunar occurrence) |
+| `list_tasks` | read | — (`calendar`, `from`, `to`, `tags`, `done` optional; tasks without a due date always come back) |
+| `get_task` | read | `uid` (`calendarId` optional) |
 | `find_free_slots` | read | — (`from`, `to`, `minMinutes` optional) |
 | `generate_annual_review` | read | — (`year` optional; returns a 1080×1440 PNG card plus a one-line summary; counts only readable **and** visible calendars, week start from the user's setting) |
 | `list_tags` | read | — (returns `id`, `name`, `emoji`, `group`, `count`) |
 | `create_tag` | tag write (proposal or direct — §2) | `emoji` (1 grapheme), `name` (1–12 characters), `groupId` optional |
 | `update_tag` | tag write (proposal or direct — §2) | `tag` (id or name); `emoji` / `name` / `groupId` optional |
 | `delete_tag` | tag write (proposal or direct — §2) | `tag` (id or name); returns `removed` + `affected` |
-| `create_event` | write | `calendarId`, plus `title`+start/end or a full `ics` (`tag` optional) |
-| `update_event` | write | `uid` (`ifMatch` optional, for ETag safety; `tag` optional, `""` clears it) |
+| `create_event` | write | `calendarId`, plus `title`+start/end or a full `ics`; `tag`, `recurrence`, `lunar` optional |
+| `update_event` | write | `uid` (`ifMatch` optional, for ETag safety; `tag` optional, `""` clears it; `recurrence`, `lunar` optional, `lunar: null` clears) |
 | `delete_event` | write | `uid` (proposal or trash — see §2) |
+| `create_task` | write | `calendarId` (a `vtodo` calendar), `title`, `due`; `allDay`, `notes`, `tag`, `recurrence`, `lunar` optional |
+| `update_task` | write | `uid`; `title` / `due` / `allDay` / `notes` / `done` / `tag` / `recurrence` / `lunar` (`null` clears) / `ifMatch` optional |
+| `complete_task` | write | `uid` (`calendarId` optional); a repeating task advances to its next due date |
+| `delete_task` | write | `uid` (proposal or trash — see §2) |
 | `list_proposals` | read (needs agent approval) | — |
 | `approve_proposal` | decide (needs agent approval; no popup → `approval_requires_ui` + `approvalUrl`) | `id` (`confirmed` deprecated) |
 | `reject_proposal` | decide (needs agent approval; no popup → `approval_requires_ui` + `approvalUrl`) | `id` (`reason` optional; `confirmed` deprecated) |
@@ -173,6 +179,39 @@ Two worked calls:
 
 // 2) 只看「工作」或「重要」标签的事件（并集，与时间窗取交集）
 {"name":"list_events","arguments":{"from":"2026-11-09","to":"2026-11-16","tags":["工作","重要"]}}
+```
+
+### 农历重复、公历重复与任务（0.8.37）
+
+`create_event` / `update_event` / `create_task` / `update_task` take two optional rule objects. They are **mutually exclusive**, and neither may be combined with `ics`:
+
+```json
+// 每年八月十五（农历）
+{"lunar": {"rule": "YEARLY-LUNAR", "month": 8, "day": 15}}
+// 每月初一（农历）；month/day 省略时取起始日的农历月日
+{"lunar": {"rule": "MONTHLY-LUNAR", "day": 1, "interval": 1, "until": "2030-12-31"}}
+// 每周一、周三（公历）
+{"recurrence": {"freq": "weekly", "byDay": ["MO", "WE"], "count": 10}}
+// 每月第 2 个周二（公历）
+{"recurrence": {"freq": "monthly", "setPos": 2, "weekday": "TU"}}
+```
+
+- `lunar.rule`：`YEARLY-LUNAR`（要 `month` + `day`）或 `MONTHLY-LUNAR`（只要 `day`）。`leap: true` 只有该年真有这个闰月时才成立。农历月里没有三十就跳过那个月，不补位、不顺延——这是 FnCal 的既定口径。
+- `lunar: null` 清除农历规则，事件回到单次。
+- `recurrence` 支持：每天、每周指定星期、每月第 N 天、每月第 N 个星期几、每年；可带 `interval` / `count` / `until`。其它组合返回 `recurrence_unsupported` 并列出支持范围。
+- `ics` 已经带 `RRULE` 时再给 `lunar` 返回 `lunar_conflicts_ics`，且**一个字节都不写**；要农历重复就只给结构化字段。
+- 读回的 `lunar` 是**该实例**的农历日期（`{year, month, day, leap, text: "八月十五"}`），`lunarRule` 是规则（没有则 `null`），`recurrence` 是公历规则（没有则 `null`）。
+- 任务只写在 `type: "vtodo"` 的日历里；`list_calendars` 的 `type` 就是判据。任务必须有 `due`，没有到期日的任务不能加重复（`task_due_required`）。
+- `complete_task` 与网页勾选同一口径：有重复就推进到严格晚于本次到期日的下一期并保持未完成，`count` / `until` 用尽才变已完成。返回 `completed` / `advanced`；农历小月照样跳过。
+
+```json
+// 建一个农历每月初一的重复任务
+{"name":"create_task","arguments":{
+  "calendarId":"tasks","title":"交房租","due":"2026-12-09T09:00:00+08:00",
+  "lunar":{"rule":"MONTHLY-LUNAR","day":1}}}
+
+// 勾完成 → 到期日推到下一个农历初一
+{"name":"complete_task","arguments":{"uid":"…"}}
 ```
 
 ### Approval receipts — do not poll

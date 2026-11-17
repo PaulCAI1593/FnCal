@@ -482,27 +482,30 @@ describe('0.2.12 C11-3 编辑器农历开关', () => {
   });
 
   /**
-   * 0.2.20（E6）：编辑器里唯一的语种入口是弹层日历右下角的「公历 | 农历」两段式
-   * （字段右侧的胶囊、顶部「农历」开关整行都已删除）。这里统一从它切。
+   * 0.8.35：编辑器里唯一的语种入口是「全天」行上方的「农历」开关——0.2.20（E6）
+   * 曾把入口收进弹层两段式，0.8.35 按用户要求收回开关、弹层不再有切换。这里统一
+   * 拨开关（改的是同一个 setLunarMode 状态）。
    */
-  const segButton = (label) =>
-    [...document.querySelectorAll('.date-pop__seg-btn')].find((b) => b.textContent === label);
-
   async function setDateMode(label) {
-    const trigger = document.querySelectorAll('.editor__date-btn')[0];
-    if (!document.querySelector('.date-pop')) trigger.click();
-    await flush();
-    const btn = segButton(label);
-    expect(btn).toBeTruthy();
-    btn.click();
-    await flush();
+    const toggle = document.querySelector('input[aria-label="农历"]');
+    expect(toggle).toBeTruthy();
+    const want = label === '农历';
+    if (toggle.checked !== want) {
+      toggle.checked = want;
+      toggle.dispatchEvent(new Event('change', { bubbles: true }));
+      await flush();
+    }
   }
 
-  it('农历态 → 保存载荷带 lunar 四字段、lunarRule=null（语种由弹层两段式决定）', async () => {
+  it('农历态 → 保存载荷带 lunar 四字段、lunarRule=null（语种由编辑器「农历」开关决定）', async () => {
     modal.openNew({ start: day(2026, 9, 25), allDay: true });
-    // E6：编辑器里不再有第二个语种入口
-    expect(document.querySelector('input[aria-label="农历"]')).toBeNull();
+    // 0.8.35：顶部「农历」开关按用户要求恢复（在「全天」行正上方），弹层两段式
+    // 已删——开关就是唯一入口。
+    const toggle = document.querySelector('input[aria-label="农历"]');
+    expect(toggle).toBeTruthy();
+    expect(toggle.closest('.field').nextElementSibling.textContent).toContain('全天');
     await setDateMode('农历');
+    expect(toggle.checked).toBe(true);
     // 0.2.18（C6②③）：「对应农历：…」行与农历副行都已删除且保持删除
     expect(document.querySelector('.modal__lunar-hint')).toBeNull();
     expect(document.querySelector('.modal__lunar-sub')).toBeNull();
@@ -521,6 +524,9 @@ describe('0.2.12 C11-3 编辑器农历开关', () => {
     expect(payload.lunarDay).toBe(15);
     expect(payload.lunarLeap).toBe(false);
     expect(payload.lunarRule).toBeNull();
+    // 0.8.35：自定义的间隔 / 结束日期跟着规则一起清空
+    expect(payload.lunarInterval).toBeNull();
+    expect(payload.lunarUntil).toBeNull();
     expect(payload.recurrence == null).toBe(true);
   });
 

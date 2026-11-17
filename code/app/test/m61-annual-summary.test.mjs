@@ -785,8 +785,10 @@ let otherId = '';
   check('每色对未分组 #6b5f52 ΔE ≥ 12', true, GROUP_PALETTE.every((c) => deH(c, UNGROUPED_COLOR) >= 12),
     Math.min(...GROUP_PALETTE.map((c) => deH(c, UNGROUPED_COLOR))).toFixed(1));
 
-  // 图例（用户 2026-11-15 20:35）：10 分组 + 聚合「其他」共 11 项，其他末位；
-  // 每行先试 5 项，长名放不下就退 4、再退 3，所以长名 11 项会排成多行（≥2 行）。
+  // 图例（用户 2026-11-15 20:35；0.8.35 §十一 改口径：「图例只保留出现的分类」）：
+  // 11 个标签按条数并列、名称 zh 排序后，「标签9」被并进「其他」，它属于第 10 组
+  // → 第 10 组不进图例，图例 = 9 组 + 末位「其他」= 10 项（旧口径会多出那个空组，11 项）。
+  // 每行先试 5 项，长名放不下就退 4、再退 3，所以这 10 项仍会排成多行（≥2 行）。
   const Y2H = 2029;
   const calsH = [{ id: 'k1', name: '日程一', color: '#3e6fe0' }];
   const groupsH = Array.from({ length: 10 }, (_, i) => ({ id: `h${i}`, name: `家庭事务第${i + 1}组`, order: i }));
@@ -809,11 +811,11 @@ let otherId = '';
   const layoutH = buildAnnualCardLayout(dataH);
   const dotsOf = (layout) => layout.els.filter((el) => el.t === 'arc' && Math.abs(el.r - 4.5) < 1e-9 && el.cx > 500);
   const legendDots = dotsOf(layoutH);
-  check('10 分组 + 聚合「其他」= 图例 11 项', 11, legendDots.length);
+  check('9 分组 + 聚合「其他」= 图例 10 项（被聚合走的第 10 组不出现）', 10, legendDots.length);
   check('「其他」在图例末位（末位色 = #98a2b3）', OTHER_COLOR.toLowerCase(), String(legendDots[legendDots.length - 1].fill).toLowerCase());
   const rowsH = [...new Set(legendDots.map((el) => Math.round(el.cy)))].sort((a, b) => a - b);
-  check('长名 11 项 → 换行（≥2 行）', true, rowsH.length >= 2, `${rowsH.length} 行`);
-  check('换行后组色按组序轮换（10 组各不同 + 其他灰）', 11, new Set(legendDots.map((el) => el.fill)).size);
+  check('长名 10 项 → 换行（≥2 行）', true, rowsH.length >= 2, `${rowsH.length} 行`);
+  check('换行后组色按组序轮换（9 组各不同 + 其他灰）', 10, new Set(legendDots.map((el) => el.fill)).size);
 
   // 10 个短名分组：5 + 5 两行，且不出现「其他」（无聚合）
   const groupsS = Array.from({ length: 10 }, (_, i) => ({ id: `s${i}`, name: `组${i + 1}`, order: i }));

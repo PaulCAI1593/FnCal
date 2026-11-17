@@ -1,12 +1,10 @@
 /**
  * 0.2.19（D3）：编辑器日期字段的弹层日历。
- * 0.2.20（E6/E7/E8/E11）：语种控制收口到这里，「公历 | 农历」两段式；两态文案同结构；
- * 弹层单例；每周开始日跟随设置。
- *
- * 用户否决了 0.2.18（C6）的「年 / 月 / 日三个下拉按农历选」的形态，原话：
- * 「用回原来的形式啊，不是这样的；选择日期可以切换显示公历农历」。
- * 0.2.20（E6）用户又要求「去掉这些农历按钮，太重复了」「只留下这里一个就好了
- * 但做成公历/农历，左右切换的按钮」——所以全编辑器**只有这一个**语种入口。
+ * 0.2.20（E6/E7/E8/E11）：两态文案同结构；弹层单例；每周开始日跟随设置。
+ * 0.8.35（用户「在上面做开关，那么这里就不用切换了」）：语种入口收口到编辑器
+ * 的「农历」开关，弹层不再有「公历 | 农历」两段式——语种只由入参 `lunar` 决定。
+ * 0.8.35（用户「这里可以点击快速切换年月，和左边栏迷你日历类似」）：标题可点，
+ * 复用 `year-month-picker.js`。
  *
  * 真值仍是**公历** 'YYYY-MM-DD'：本模块只负责挑一个公历日期回来，
  * 存储、校验、.ics / CalDAV 全部沿用原来的管线。
@@ -21,6 +19,7 @@ import {
   toDateInputValue,
 } from './date-utils.js';
 import { icon } from './icons.js';
+import { openYearMonthPicker } from './year-month-picker.js';
 import {
   leapMonthDays,
   lunarDayLabel,
@@ -116,8 +115,12 @@ export function isInsideDatePopover(target) {
  * 打开日期弹层。
  * @param {{ anchor: HTMLElement, value?: string, lunar?: boolean, weekStartsOn?: number,
  *           showModeToggle?: boolean,
+ *           actions?: { onClear?: () => void, onToday?: () => void },
  *           onPick?: (value: string) => void,
  *           onModeChange?: (lunar: boolean) => void }} opts
+ *
+ * 0.8.35：`showModeToggle` 保留但不再生效（两段式已删，语种由编辑器开关决定）；
+ * `onModeChange` 同样保留以兼容旧调用方，弹层不会再调它。
  * @returns {{ close: () => void } | null} 同一锚点二次点击（收起）时返回 null
  */
 export function openDatePopover({
@@ -125,10 +128,14 @@ export function openDatePopover({
   value,
   lunar = false,
   weekStartsOn,
-  // 0.2.36（M1）：搜索筛选的「时间范围」没有农历概念，调用方传 false 收起「公历 | 农历」两段式。
-  showModeToggle = true,
+  // 0.2.36（M1）：搜索筛选的「时间范围」没有农历概念，调用方传 false 收起语种控件。
+  // 0.8.35：两段式已删，这个参数保留只为了让老调用方不用改签名（渲染分支不再看它）。
+  showModeToggle: _showModeToggle = true,
+  // 0.8.35 §10：自定义重复里的日期框要保留「清除 / 今天」，只有传了 actions 才显示。
+  actions,
   onPick,
-  onModeChange,
+  // 0.8.35：语种由编辑器开关决定，弹层不再调 onModeChange（保留参数兼容调用方）。
+  onModeChange: _onModeChange,
 }) {
   // 防双触发：同一锚点在极短时间里被连开两次（pointerdown + click）只按一次算。
   // 只在「面板确实还开着」时才算双触发——刚收起后 80ms 内的重新打开必须是新的一次，
@@ -163,9 +170,21 @@ export function openDatePopover({
   const selectedISO = value || toDateInputValue(initial);
 
   let closed = false;
+  let picker = null;
+  /** 选择器是否还活着。取消 / 确定 / 点外会让它自己关掉，这里的引用就过期了。 */
+  function pickerOpen() {
+    return Boolean(picker) && typeof picker.isOpen === 'function' && picker.isOpen();
+  }
+  function closeYearMonthPicker() {
+    if (!picker) return;
+    const current = picker;
+    picker = null;
+    current.close();
+  }
   function close({ restoreFocus = true } = {}) {
     if (closed) return;
     closed = true;
+    closeYearMonthPicker();
     if (currentPopover === api) currentPopover = null;
     document.removeEventListener('pointerdown', onOutside, true);
     document.removeEventListener('keydown', onKey, true);
@@ -174,18 +193,79 @@ export function openDatePopover({
   }
 
   function onOutside(ev) {
+    // 0.8.38：年月选择器是挂在 body 上的**独立**浮层，点它内部不算「点外部」。
+    // 不排除的话 pointerdown（capture，比 click 先跑）会先关掉日期弹层，连带
+    // closeYearMonthPicker() 拆掉选择器，滚轮的 click 永远落不到目标按钮上。
+    if (picker && typeof picker.contains === 'function' && picker.contains(ev.target)) return;
     if (box.contains(ev.target) || (anchor && anchor.contains(ev.target))) return;
     close({ restoreFocus: false });
   }
 
   function onKey(ev) {
     if (ev.key !== 'Escape') return;
+    // 0.8.35 §9：Esc 先关年月选择器，再关日期弹层。不靠监听顺序（两个监听都挂在
+    // document 上，谁先跑不由我们定），这里自己收：选择器开着就只关它。
+    if (pickerOpen()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      closeYearMonthPicker();
+      return;
+    }
     ev.preventDefault();
     ev.stopPropagation();
     close();
   }
 
-  const title = el('span', { class: 'date-pop__title' });
+  // 0.8.35 §9：标题可点，弹年月滚轮（与侧栏迷你日历同一套 openYearMonthPicker）。
+  const titleText = el('span', { class: 'date-pop__title-text' });
+  const titleCaret = el('span', {
+    class: 'date-pop__title-caret',
+    'aria-hidden': 'true',
+    text: '▾',
+  });
+  const title = el(
+    'button',
+    {
+      class: 'date-pop__title',
+      type: 'button',
+      'aria-haspopup': 'dialog',
+      'aria-label': t('editor.pickYearMonth'),
+      on: { click: () => toggleYearMonthPicker() },
+    },
+    [titleText, titleCaret],
+  );
+
+  function toggleYearMonthPicker() {
+    if (document.querySelector('.ym-popover')) {
+      closeYearMonthPicker();
+      return;
+    }
+    const base =
+      mode === 'lunar'
+        ? lunarMonthStart(lunarCursor.year, lunarCursor.month, lunarCursor.leap)
+        : solarCursor;
+    picker = openYearMonthPicker({
+      anchor: title,
+      year: base.getFullYear(),
+      month: base.getMonth(),
+      // 0.8.38：`.date-pop` 的 z-index 是 140，选择器默认 85 会被压在下面（点标题
+      // 看着毫无反应）——这里显式抬到 150，高于日期弹层。
+      zIndex: 150,
+      onPick: ({ year, month }) => {
+        picker = null;
+        if (mode === 'lunar') {
+          // 农历态：年月选择器给的是公历年月，取该月 15 日的农历月定位。
+          const parts = solarToLunar(new Date(year, month, 15).getTime());
+          if (!parts) return;
+          lunarCursor = { year: parts.year, month: parts.month, leap: parts.leap };
+        } else {
+          // 公历态：只换视图，不改已选日期（选中格若在当月仍高亮）。
+          solarCursor = new Date(year, month, 1);
+        }
+        render();
+      },
+    });
+  }
   const weekdayRow = el('div', { class: 'date-pop__weekdays', 'aria-hidden': 'true' });
   const orderedWeekdays = [];
   for (let i = 0; i < 7; i += 1) orderedWeekdays.push((weekStart + i) % 7);
@@ -214,7 +294,7 @@ export function openDatePopover({
     const offset = (first.getDay() - weekStart + 7) % 7;
     const start = addDays(first, -offset);
     // 0.2.20（E7）：标题「2026年10月」——年 + 月，与农历态「2026年九月」同结构。
-    title.textContent = t('editor.dateTitle.solar', { year, month: month + 1 });
+    titleText.textContent = t('editor.dateTitle.solar', { year, month: month + 1 });
     const cells = [];
     for (let i = 0; i < CELLS; i += 1) {
       const date = addDays(start, i);
@@ -250,7 +330,7 @@ export function openDatePopover({
     const length = lunarMonthLength(year, month, leap);
     const offset = (startDate.getDay() - weekStart + 7) % 7;
     // 0.2.20（E7）：标题「2026年九月」——不加「农历」前缀，由两段式控件表达语种。
-    title.textContent = t('editor.dateTitle.lunar', {
+    titleText.textContent = t('editor.dateTitle.lunar', {
       year,
       month: lunarMonthLabel(month, leap),
     });
@@ -296,9 +376,6 @@ export function openDatePopover({
   function render() {
     if (mode === 'lunar') renderLunar();
     else renderSolar();
-    // 0.2.20（E6）：两段式 —— 当前态高亮（aria-pressed），语种由它表达。
-    solarBtn.setAttribute('aria-pressed', String(mode === 'solar'));
-    lunarBtn.setAttribute('aria-pressed', String(mode === 'lunar'));
   }
 
   const prevBtn = el('button', {
@@ -328,42 +405,36 @@ export function openDatePopover({
     },
   });
 
-  /** 0.2.20（E6）：唯一的语种控制 —— 「公历 | 农历」两段式。 */
-  function setMode(next, announce = true) {
-    if (mode === next) return;
-    mode = next;
-    if (mode === 'lunar') {
-      lunarCursor = solarToLunar(solarCursor.getTime()) || lunarCursor;
-    } else {
-      solarCursor = lunarMonthStart(lunarCursor.year, lunarCursor.month, lunarCursor.leap);
-    }
-    if (announce && typeof onModeChange === 'function') onModeChange(mode === 'lunar');
-    render();
-  }
-
-  const solarBtn = el('button', {
-    class: 'date-pop__seg-btn',
-    type: 'button',
-    'data-popover-stop': '1',
-    text: t('editor.dateMode.solar'),
-    on: { click: () => setMode('solar') },
-  });
-  const lunarBtn = el('button', {
-    class: 'date-pop__seg-btn',
-    type: 'button',
-    'data-popover-stop': '1',
-    text: t('editor.dateMode.lunar'),
-    on: { click: () => setMode('lunar') },
-  });
-  const modeGroup = el(
-    'div',
-    {
-      class: 'segmented date-pop__seg',
-      role: 'group',
-      'aria-label': t('editor.dateModeLabel'),
-    },
-    [solarBtn, lunarBtn],
-  );
+  // 0.8.35 §10：自定义重复里的日期框要「清除 / 今天」；编辑器既有字段不传 actions，
+  // 渲染结果与以前完全一致。
+  const actionsRow = actions
+    ? el('div', { class: 'date-pop__foot' }, [
+        el('button', {
+          class: 'btn btn--ghost',
+          type: 'button',
+          'data-popover-stop': '1',
+          text: t('common.clear'),
+          on: {
+            click: () => {
+              close({ restoreFocus: false });
+              if (typeof actions.onClear === 'function') actions.onClear();
+            },
+          },
+        }),
+        el('button', {
+          class: 'btn btn--ghost',
+          type: 'button',
+          'data-popover-stop': '1',
+          text: t('common.today'),
+          on: {
+            click: () => {
+              pick(startOfDay(new Date()));
+              if (typeof actions.onToday === 'function') actions.onToday();
+            },
+          },
+        }),
+      ])
+    : null;
 
   const box = el(
     'div',
@@ -377,8 +448,7 @@ export function openDatePopover({
       el('div', { class: 'date-pop__head' }, [prevBtn, title, nextBtn]),
       weekdayRow,
       grid,
-      // 0.2.36（M1）：showModeToggle=false（搜索时间范围）时不渲染语种两段式。
-      showModeToggle ? el('div', { class: 'date-pop__foot' }, [modeGroup]) : null,
+      actionsRow,
     ],
   );
 

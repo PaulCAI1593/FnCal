@@ -105,3 +105,23 @@ tools/call approve_proposal { "id": "…" }
 - 全年 0 条也会出图（空态「今年还没有日程，明年继续记录」），这不是失败，直接交付。
 - 如果第二段是 SVG 而不是图片，回包文字第一句已写明原因（缺渲染依赖 / 缺字体 / 缺字）；把 SVG 存成 `.svg` 再打开或转 PNG，不要说「生成失败」。
 - 用户指定年份就传 `year`（1970–2100），例如「去年的」→ 传上一年。不要为了「看起来更好看」改数据或挑别的年份。
+
+## 10 「每年中秋前一天提醒我买月饼 / 每月初一交房租」
+
+```
+{"name":"create_event","arguments":{
+  "calendarId":"default","title":"买月饼",
+  "start":"2026-09-24T20:00:00+08:00","end":"2026-09-24T21:00:00+08:00",
+  "lunar":{"rule":"YEARLY-LUNAR","month":8,"day":15}}}
+```
+
+```
+{"name":"create_task","arguments":{
+  "calendarId":"tasks","title":"交房租","due":"2026-12-09T09:00:00+08:00",
+  "lunar":{"rule":"MONTHLY-LUNAR","day":1}}}
+```
+
+- 农历月里没有三十就跳过那个月，不补位、不顺延。
+- 勾完成用 `complete_task`：到期日推进到下一个农历初一并保持未完成；`completed: true` 表示 `count` / `until` 已经用尽、这一条真的完成了。不要自己算下一期再 `update_task`。
+- 想清掉农历规则：`update_event` / `update_task` 传 `"lunar": null`。
+- 老事件要在原有 `ics` 上加规则是拿不到的：`ics` 与 `lunar` 一起给会返回 `lunar_conflicts_ics`，一个字节都不写。先读出来，再用结构化字段重建。

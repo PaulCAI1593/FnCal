@@ -452,8 +452,14 @@ function openEditor({ start = new Date(2026, 8, 25) } = {}) {
   return modal;
 }
 
-const segButton = (label) =>
-  [...document.querySelectorAll('.date-pop__seg-btn')].find((b) => b.textContent === label);
+/** 0.8.35：语种只有一个入口——编辑器「农历」开关（弹层两段式已删）。 */
+const setLunarModeByToggle = (on) => {
+  const toggle = document.querySelector('input[aria-label="农历"]');
+  expect(toggle).toBeTruthy();
+  if (toggle.checked === on) return;
+  toggle.checked = on;
+  toggle.dispatchEvent(new Event('change', { bubbles: true }));
+};
 
 describe('0.2.20 E6/E7：编辑器语种只剩弹层一处', () => {
   let modal;
@@ -462,45 +468,40 @@ describe('0.2.20 E6/E7：编辑器语种只剩弹层一处', () => {
     modal = null;
   });
 
-  it('字段里没有「公历|农历」胶囊，也没有顶部农历开关整行', () => {
+  it('字段里没有「公历|农历」胶囊；顶部「农历」开关按 0.8.35 恢复并排在「全天」行上方', () => {
     modal = openEditor();
     expect(document.querySelector('.editor__date-mode')).toBeNull();
-    expect(document.querySelector('input[aria-label="农历"]')).toBeNull();
+    const toggle = document.querySelector('input[aria-label="农历"]');
+    expect(toggle).toBeTruthy();
+    expect(toggle.closest('.field').nextElementSibling.textContent).toContain('全天');
     expect(document.querySelectorAll('.editor__date-field')).toHaveLength(2);
     expect(document.querySelectorAll('.editor__date-btn')).toHaveLength(2);
   });
 
-  it('弹层里是「公历|农历」两段式，任何时刻只有一个弹出层', () => {
+  it('弹层里不再有语种切换（0.8.35），任何时刻只有一个弹出层', () => {
     modal = openEditor();
     document.querySelectorAll('.editor__date-btn')[0].click();
-    const segs = [...document.querySelectorAll('.date-pop__seg-btn')];
-    expect(segs.map((b) => b.textContent)).toEqual(['公历', '农历']);
-    expect(segs[0].getAttribute('aria-pressed')).toBe('true');
-    expect(segs[1].getAttribute('aria-pressed')).toBe('false');
+    expect(document.querySelector('.date-pop__seg')).toBeNull();
+    expect(document.querySelectorAll('.date-pop__seg-btn')).toHaveLength(0);
     expect(document.querySelectorAll('.date-pop')).toHaveLength(1);
   });
 
   it('切到农历：字段与弹层标题都走农历，且不加「农历」前缀', () => {
     modal = openEditor();
+    setLunarModeByToggle(true);
     document.querySelectorAll('.editor__date-btn')[0].click();
-    segButton('农历').click();
     const mains = [...document.querySelectorAll('.editor__date-main')].map((n) => n.textContent);
     expect(mains).toEqual(['2026年八月十五', '2026年八月十五']);
-    expect(document.querySelector('.date-pop__title').textContent).toBe('2026年八月');
-    // 弹层里农历那一段是高亮态
-    expect(segButton('农历').getAttribute('aria-pressed')).toBe('true');
-    expect(segButton('公历').getAttribute('aria-pressed')).toBe('false');
+    expect(document.querySelector('.date-pop__title-text').textContent).toBe('2026年八月');
   });
 
   it('两态文案同结构（年+月+日，公历用阿拉伯数字、农历用汉字），副行只在农历态有', () => {
     modal = openEditor();
-    const btn = document.querySelectorAll('.editor__date-btn')[0];
-    btn.click();
     const solarMain = document.querySelectorAll('.editor__date-main')[0].textContent;
     const solarSub = document.querySelectorAll('.editor__date-sub')[0].textContent;
     expect(solarMain).toBe('2026年9月25日');
     expect(solarSub).toBe('');
-    segButton('农历').click();
+    setLunarModeByToggle(true);
     const lunarMain = document.querySelectorAll('.editor__date-main')[0].textContent;
     const lunarSub = document.querySelectorAll('.editor__date-sub')[0].textContent;
     expect(lunarMain).toBe('2026年八月十五');

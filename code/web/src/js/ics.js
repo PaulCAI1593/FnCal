@@ -29,8 +29,10 @@ import {
 } from './date-utils.js';
 import { resolveTzid } from './windows-zones.js';
 import {
+  LUNAR_RULE_MONTHLY,
   LUNAR_RULE_YEARLY,
   lunarMonthDayText,
+  lunarMonthlyDates,
   lunarYearlyDates,
   parseLunarMonthDay,
   solarDigits,
@@ -254,9 +256,18 @@ function emitVevent(lines, ev, { uid, stamp, tzid, sequence, status, alarms, rec
     if (lunar) {
       lines.push(`X-FNCAL-LUNAR-DATE:${lunarMonthDayText(lunar.month, lunar.day)}`);
       if (lunar.leap) lines.push('X-FNCAL-LUNAR-LEAP:1');
-      if (ev.lunarRule === LUNAR_RULE_YEARLY) {
-        lines.push(`X-FNCAL-LUNAR-RULE:${LUNAR_RULE_YEARLY}`);
-        const rdate = lunarRdateLine(ev, lunar);
+      // 0.8.35：农历重复有三种态——每年、每月、以及「自定义」（仍属这两种之一，
+      // 只多出间隔与结束日期）。间隔 1 / 不结束时不写额外行，文件与老版本等价。
+      const rule = ev.lunarRule === LUNAR_RULE_YEARLY
+        ? LUNAR_RULE_YEARLY
+        : ev.lunarRule === LUNAR_RULE_MONTHLY ? LUNAR_RULE_MONTHLY : '';
+      if (rule) {
+        lines.push(`X-FNCAL-LUNAR-RULE:${rule}`);
+        const interval = Number(ev.lunarInterval);
+        if (Number.isInteger(interval) && interval > 1) lines.push(`X-FNCAL-LUNAR-INTERVAL:${interval}`);
+        const untilDigits = lunarUntilDigits(ev.lunarUntil);
+        if (untilDigits) lines.push(`X-FNCAL-LUNAR-UNTIL:${untilDigits}`);
+        const rdate = lunarRdateLine(ev, lunar, rule);
         if (rdate) lines.push(rdate);
       }
     }
@@ -299,18 +310,33 @@ function lunarFieldsOf(ev) {
 }
 
 /**
- * 「每年（农历）」的 `RDATE` 行。展开函数与服务端是同一份 `lunar-core`
- * （`lunarYearlyDates`），所以导出的日期集合与 DAV 返回的必然一致；全天写
- * `VALUE=DATE`，定时沿用起始时刻——前端导出整体是 floating 本地时间，与服务端
- * 写出的形态相同。
+ * 农历 `-UNTIL` 的 `YYYYMMDD`（本地日）。没有结束日期（或值非法）返回空串。
  */
-function lunarRdateLine(ev, lunar) {
-  const { dates } = lunarYearlyDates({
+function lunarUntilDigits(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  const d = new Date(n);
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+}
+
+/**
+ * 农历重复（每年 / 每月）的 `RDATE` 行。展开函数与服务端是同一份 `lunar-core`
+ * （`lunarYearlyDates` / `lunarMonthlyDates`），所以导出的日期集合与 DAV 返回的
+ * 必然一致；全天写 `VALUE=DATE`，定时沿用起始时刻——前端导出整体是 floating
+ * 本地时间，与服务端写出的形态相同。
+ */
+function lunarRdateLine(ev, lunar, rule) {
+  const interval = Number(ev && ev.lunarInterval);
+  const until = Number(ev && ev.lunarUntil);
+  const options = {
     startMs: ev.start,
     month: lunar.month,
     day: lunar.day,
     leap: lunar.leap,
-  });
+    interval: Number.isInteger(interval) && interval >= 1 ? interval : 1,
+    until: Number.isFinite(until) && until > 0 ? until : null,
+  };
+  const { dates } = rule === LUNAR_RULE_MONTHLY ? lunarMonthlyDates(options) : lunarYearlyDates(options);
   if (!dates.length) return null;
   if (ev.allDay) return `RDATE;VALUE=DATE:${dates.map(solarDigits).join(',')}`;
   const anchor = new Date(ev.start);
@@ -730,7 +756,21 @@ function blockToEvent(b) {
       ev.lunarDay = parts.day;
     }
     if (valueOf(b, 'X-FNCAL-LUNAR-LEAP') === '1') ev.lunarLeap = true;
-    if (valueOf(b, 'X-FNCAL-LUNAR-RULE') === LUNAR_RULE_YEARLY) ev.lunarRule = LUNAR_RULE_YEARLY;
+    const lunarRule = valueOf(b, 'X-FNCAL-LUNAR-RULE');
+    if (lunarRule === LUNAR_RULE_YEARLY || lunarRule === LUNAR_RULE_MONTHLY) ev.lunarRule = lunarRule;
+    const lunarInterval = Number(valueOf(b, 'X-FNCAL-LUNAR-INTERVAL'));
+    if (Number.isInteger(lunarInterval) && lunarInterval > 1) ev.lunarInterval = lunarInterval;
+    const untilDigits = String(valueOf(b, 'X-FNCAL-LUNAR-UNTIL') || '').trim();
+    if (/^\d{8}$/.test(untilDigits)) {
+      // 结束日期按那一整天算：存本地当天 23:59:59.999，导出时再写回同一个 YYYYMMDD。
+      const until = new Date(
+        Number(untilDigits.slice(0, 4)),
+        Number(untilDigits.slice(4, 6)) - 1,
+        Number(untilDigits.slice(6, 8)),
+        23, 59, 59, 999,
+      );
+      if (Number.isFinite(until.getTime())) ev.lunarUntil = until.getTime();
+    }
   }
   return ev;
 }

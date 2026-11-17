@@ -10,11 +10,12 @@ All times are ISO 8601 strings. Send offsets (`2026-10-29T14:00:00+08:00`) or UT
 No arguments.
 
 ```json
-{ "calendars": [ { "id": "my-calendar", "name": "我的日历", "color": "#4f7cff", "access": "write" } ] }
+{ "calendars": [ { "id": "my-calendar", "name": "我的日历", "color": "#4f7cff", "access": "write", "type": "calendar" } ] }
 ```
 
 - Only calendars at `read` or `write` appear. `hidden` calendars are absent entirely — no placeholder, no count.
 - `access` is `"read"` or `"write"`. Use it to decide whether a write tool call is even worth attempting.
+- `type` is `"calendar"` (events) or `"vtodo"` (tasks, 0.8.37). The task tools only write into a `vtodo` calendar.
 
 ## list_tags
 
@@ -90,6 +91,9 @@ Governed by `tagDeleteMode`. Deleting removes the tag from the registry **and cl
                 "allDay": false, "allDayDate": null, "allDayEndDate": null,
                 "status": "confirmed", "recurring": false, "busy": true,
                 "location": "…",
+                "lunar": { "year": 2026, "month": 8, "day": 15, "leap": false, "text": "八月十五" },
+                "lunarRule": null,
+                "recurrence": null,
                 "tag": { "id": "tag_1a2b3c4d", "name": "出行", "emoji": "🚄" } } ] }
 ```
 
@@ -98,19 +102,21 @@ Governed by `tagDeleteMode`. Deleting removes the tag from the registry **and cl
 - `location`, `description`, `attendees` appear **only** if the credential's field mask allows them. A missing key means "not granted".
 - A calendar id that is hidden or unknown → not-found (not an empty list).
 - `tag` is `null` when the event has none; it is not filtered by the field mask.
+- **Lunar repeats (0.8.40):** a lunar series (yearly / monthly) is returned **per occurrence** inside the range — one row per date, not just the master. Each row carries `recurring: true` and `recurrenceId` (a number: the millisecond start of that occurrence's rule slot, which stays the same even after a single occurrence is moved). `lunar` is that occurrence's own lunar date.
+- `lunar` (0.8.37) is the **instance's** lunar date, `{year, month, day, leap, text}`; `lunarRule` is the rule (`{rule, month, day, leap, interval, until}`) or `null`; `recurrence` is the Gregorian rule (`{freq, interval, byDay, monthlyMode, setPos, count, until}`) or `null`. None of the three is filtered by the field mask.
 
 ## get_event
 
 | arg | type | notes |
 |---|---|---|
-| `uid` | string | **required** |
+| `uid` | string | **required**; `<uid>::<ms>` fetches one lunar occurrence (`ms` = the `recurrenceId` from `list_events`) |
 | `calendarId` | string | optional; disambiguates when the same uid exists in several calendars |
 
 ```json
 { "event": { "uid": "…", "calendarId": "…", "title": "…", "start": "…", "end": "…", "location": "…" } }
 ```
 
-Same not-found answer for: hidden calendar, outside the window, no such uid, another user's calendar. The text is identical on purpose — never infer which case you hit.
+Same not-found answer for: hidden calendar, outside the window, no such uid, another user's calendar, and a `<uid>::<ms>` whose millisecond value is not one of that series' rule slots. The text is identical on purpose — never infer which case you hit.
 
 ## find_free_slots
 
@@ -166,6 +172,8 @@ The reply has **two content parts**: one text summary, then the card image.
 | `uid` | string | optional, auto-generated; must equal the `UID:` inside `ics` if both are given |
 | `note` | string | short explanation shown to the human on the proposal |
 | `tag` | string | optional; tag name or id, must already exist; one tag per event |
+| `recurrence` | object | optional (0.8.37); Gregorian rule — see below |
+| `lunar` | object | optional (0.8.37); lunar rule — see below; `null` clears it |
 
 ```json
 // direct mode
@@ -187,11 +195,102 @@ The reply has **two content parts**: one text summary, then the card image.
 | `title` `start` `end` `allDay` `location` `description` | | only the fields you pass change |
 | `ifMatch` | string | ETag you last saw; mismatch → conflict instead of overwriting |
 | `tag` | string | tag name or id; an empty string clears the tag; omitted leaves it unchanged |
+| `recurrence` | object | optional; Gregorian rule, replaces the current one |
+| `lunar` | object | optional; lunar rule, replaces the current one; `null` clears it |
 | `note` | string | proposal explanation |
 
 Same result shape as `create_event`, including `approvalUrl` in proposal mode for clients without elicitation. Changing the UID is rejected (`400` class) — cancel and create instead.
 
 Pass `ifMatch` whenever you read the event first; it turns a silent overwrite into a `409 stale` you can recover from.
+
+### Rules: `recurrence` and `lunar` (0.8.37)
+
+Both are optional; they are mutually exclusive and neither may be combined with `ics`.
+
+```json
+{"recurrence": {"freq": "weekly", "byDay": ["MO", "WE"], "interval": 2, "count": 10}}
+{"recurrence": {"freq": "monthly", "monthDay": 15}}
+{"recurrence": {"freq": "monthly", "setPos": 2, "weekday": "TU"}}
+{"lunar": {"rule": "YEARLY-LUNAR", "month": 8, "day": 15}}
+{"lunar": {"rule": "MONTHLY-LUNAR", "day": 1, "interval": 1, "until": "2030-12-31"}}
+```
+
+| field | type | notes |
+|---|---|---|
+| `freq` | string | `daily` / `weekly` / `monthly` / `yearly` |
+| `interval` | number | 1–99; default 1 |
+| `byDay` | string[] | weekly only; `SU MO TU WE TH FR SA` |
+| `monthDay` | number | monthly only; 1–31 (with `setPos` → 二选一) |
+| `setPos` | number | monthly only; 1–5 or -1 (last) |
+| `weekday` | string | monthly only; with `setPos` |
+| `count` | number | 1–999 |
+| `until` | string | ISO instant or `YYYY-MM-DD` |
+| `rule` | string | lunar only; `YEARLY-LUNAR` needs `month` + `day`, `MONTHLY-LUNAR` needs `day` (missing month/day = the start date's lunar month/day) |
+| `leap` | bool | lunar only; only valid when that year really has that leap month |
+
+- 农历小月没有三十就跳过那一个月（不补位、不顺延）。
+- Errors (structured, `isError: true`, `code` on the payload): `lunar_conflicts_ics` (ics + lunar; nothing written), `recurrence_unsupported` (unsupported combination, lists what is supported), `task_due_required` (task repeat without a due date), `invalid` (lunar + recurrence together).
+- Read back: `lunar` is the instance's lunar date; `lunarRule` is the rule or `null`; `recurrence` is the Gregorian rule or `null`.
+
+## list_tasks
+
+| arg | type | notes |
+|---|---|---|
+| `from` / `to` | string | ISO 8601; filter by due date (intersected with the credential window) |
+| `calendar` | string | optional vtodo calendar id |
+| `tags` | string or string[] | union, same as `list_events` |
+| `done` | bool | optional; filter by completion |
+
+```json
+{ "from": "…", "to": "…", "generatedAt": "…",
+  "tasks": [ { "uid": "…", "calendarId": "…", "title": "…", "due": "…", "allDay": false,
+               "done": false, "status": "NEEDS-ACTION", "recurring": true,
+               "lunar": { "year": 2026, "month": 10, "day": 1, "leap": false, "text": "十月初一" },
+               "lunarRule": { "rule": "MONTHLY-LUNAR", "day": 1, "leap": false, "interval": 1, "until": null },
+               "recurrence": null } ] }
+```
+
+- A task with **no** due date is always returned, whatever `from`/`to` say.
+- `generatedAt` (0.8.37) stamps the rolling lunar window; do not cache the list for long when lunar rules are involved.
+
+## get_task
+
+| arg | type | notes |
+|---|---|---|
+| `uid` | string | **required** |
+| `calendarId` | string | optional |
+
+```json
+{ "calendarId": "tasks", "etag": "…", "task": { … } }
+```
+
+Same not-found text for hidden/unknown/out-of-window — never infer which case you hit.
+
+## create_task
+
+| arg | type | notes |
+|---|---|---|
+| `calendarId` | string | **required**, a `vtodo` calendar with `write` |
+| `title` | string | **required** |
+| `due` | string | **required** ISO 8601 |
+| `allDay` | bool | all-day task |
+| `notes` | string | optional; hidden when the credential's field mask hides `description` |
+| `tag` / `uid` / `note` | string | as on `create_event` |
+| `recurrence` / `lunar` | object | optional; same rules as events |
+
+Same result shape as `create_event` (`applied`, `etag`, `task`, or `applied:false` + `proposal`).
+
+## update_task
+
+`uid` required; `title` / `due` / `allDay` / `notes` / `done` / `tag` / `recurrence` / `lunar` (`null` clears) / `ifMatch` optional. Only the fields you pass change.
+
+## complete_task
+
+`uid` required, `calendarId` optional. Same rule as ticking it in the web UI: a repeating task advances to the next due date strictly after the current one and stays unfinished; when `count` / `until` runs out it becomes completed. The reply carries `completed` (true when it finished for good) and `advanced` (true when it moved). A task without a due date → `task_due_required`.
+
+## delete_task
+
+`uid` required. Proposal mode returns `applied:false` + `proposal`; direct mode moves it to the trash (recoverable), same as `delete_event`.
 
 ## delete_event
 
@@ -330,7 +429,8 @@ Every settlement on the FnCal approval page produces a hidden receipt retained f
 
 ## Error classes
 
-- Tool level (`isError: true`): not-found (hidden/absent), `read`-level write refusal, out-of-window write refusal, bad time range (`结束时间必须晚于开始时间。`), validation, conflict. Reads keep one identical not-found text for hidden/absent/out-of-window; **writes** separate the three causes so the human can act on the message.
+- Tool level (`isError: true`): not-found (hidden/absent), `read`-level write refusal, out-of-window write refusal, bad time range (`结束时间必须晚于开始时间。`), validation, conflict.
+- Structured rule errors (0.8.37) carry a `code` on the payload: `lunar_conflicts_ics` (ics + lunar, nothing written), `recurrence_unsupported` (combination not supported; `message` lists what is), `task_due_required` (repeating task without a due date), `invalid` (lunar + recurrence together, or a bad field). Reads keep one identical not-found text for hidden/absent/out-of-window; **writes** separate the three causes so the human can act on the message.
 - HTTP level (outside JSON-RPC): `401` bad/revoked/missing token, `404` MCP disabled or HTTPS required (also `code: "session_not_found"` for a missing or expired `Mcp-Session-Id`), `429` rate limited (+`Retry-After`), `413` body over 256 KB, `405` for methods other than `POST` / `GET` / `DELETE`.
 - Proxy approval gate: `list_proposals` / `approve_proposal` / `reject_proposal` / `decide_proposals` answer `凭据未开启 AI 端代办批准，请到 FnCal 设置里打开，或在日历界面批准` (`isError`, code `agent_approval_disabled`) when the credential has the switch off. Even with the switch on, approval requires the FnCal popup click; without elicitation the tools answer `approval_requires_ui` and execute nothing.
 - JSON-RPC errors: `-32700` bad JSON, `-32600` malformed request, `-32601` unknown method, `-32602` invalid params — including **calling a write tool the credential does not have**, which is indistinguishable from a typo on purpose.

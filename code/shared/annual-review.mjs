@@ -656,16 +656,17 @@ export function buildAnnualReviewData({
     row.percent = catPct(row.count);
   });
 
-  // 分组图例：用**全部分类**（含后被并进「其他」的那几行）聚合，图例合计 = 全年总数，
-  // 否则第 11 个起的分类会在图例里丢条数。用户分组按组序升序；「未分类」固定末位、
-  // 已按 04:17 口径：未分类 = 沙金 #d3a35f，只有聚合「其他」= 灰 #98a2b3。
-  // 分组图例（2026-11-15 03:50）：0 条目的分类一律不显示，分组也只按**实际有日程的分类**
-  // 聚合；某分组下所有分类都是 0 条时，该分组图例一起隐藏，不再保留空占位。
-  // 「未分类」固定末位、用沙金 #d3a35f（灰色只留给聚合「其他」，用户 04:17 口径）。
+  // 分组图例：0.8.35 §十一（用户：「图例只保留出现的分类」）——只按**条带里真正画出来的
+  // 分类**聚合，不再用全部分类。某分组下的分类全被并进「其他」时，该分组不再单列图例，
+  // 条数只计入末位的灰色「其他」（由 buildLegendItems 补）。没有未分类条带就不出现「未分类」。
+  // 4 条旧口径保持不变：分组按组序升序；「未分类」固定末位、沙金 #d3a35f；
+  // 「其他」永远末位、灰 #98a2b3（只在真的聚合时出现）。
   const groupRows = [];
   const groupSeen = new Map();
   let ungroupedRow = null;
-  for (const row of catRows) {
+  for (const row of categories) {
+    // 「其他」是聚合出来的行，没有所属分组：它自己的图例项由 buildLegendItems 补。
+    if (row.other) continue;
     if (!(row.count > 0)) continue;
     const isUngrouped = row.groupOrder < 1;
     const key = isUngrouped ? UNGROUPED_NAME : row.group;

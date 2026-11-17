@@ -22,9 +22,18 @@ import {
   materializeOccurrence,
   countScheduledBefore,
   isScheduledOccurrence,
+  materializeLunarOccurrence,
 } from './recurrence.js';
 import { startOfDay, endOfDay, addDays, MS_PER_DAY } from './date-utils.js';
 import { withTagEmoji } from './tag-display.js';
+// 0.8.36：任务重复「完成即推进」（规则展开与事件同一套，见 task-repeat.js）。
+import { nextTaskDue, taskRepeats } from './task-repeat.js';
+// 0.8.38：农历系列（不写 RRULE）在视图里的展开，见 lunar-repeat.js。
+import {
+  isLunarSeries,
+  expandLunarOccurrences,
+  isLunarOccurrence,
+} from './lunar-repeat.js';
 import { getHolidaysInRange } from './holidays.js';
 import { solarTermItemsInRange } from './lib/solar-terms.js';
 // 0.4.6：KV 写链诊断与「保存后回读」留痕（详见 kv-rest.js 顶部注释）。
@@ -677,7 +686,15 @@ export function applyLunarFields(target, input) {
   if (Number.isInteger(month) && month >= 1 && month <= 12) target.lunarMonth = month;
   if (Number.isInteger(day) && day >= 1 && day <= 30) target.lunarDay = day;
   if (input.lunarLeap === true) target.lunarLeap = true;
-  if (input.lunarRule === 'YEARLY-LUNAR') target.lunarRule = 'YEARLY-LUNAR';
+  // 0.8.36：农历重复规则（每年 / 每月）与「自定义」的间隔、结束日期同样要落库。
+  // 0.8.35 只放行 YEARLY-LUNAR，导致「每月（农历）」与自定义参数保存后被丢弃。
+  if (input.lunarRule === 'YEARLY-LUNAR' || input.lunarRule === 'MONTHLY-LUNAR') {
+    target.lunarRule = input.lunarRule;
+    const interval = Math.round(Number(input.lunarInterval));
+    if (Number.isInteger(interval) && interval > 1) target.lunarInterval = Math.min(interval, 99);
+    const until = Math.round(Number(input.lunarUntil));
+    if (Number.isFinite(until)) target.lunarUntil = until;
+  }
   return target;
 }
 
@@ -766,8 +783,13 @@ export function normalizeEvent(input = {}, now = Date.now()) {
   if (invite) base.invite = invite;
 
   const recurrence = normalizeRecurrence(input.recurrence, start);
-  if (recurrence) {
-    base.recurrence = recurrence;
+  if (recurrence) base.recurrence = recurrence;
+  // 0.8.38：农历系列（YEARLY-LUNAR / MONTHLY-LUNAR）不写 RRULE，但「删掉某一次」
+  // 「只改某一次」同样靠 exdates / overrides 表达（.ics 里是 EXDATE 与覆盖实例）。
+  // 以前这对字段只跟着公历 recurrence 走，农历系列的单次取消/改动会被静默丢掉。
+  const lunarSeries =
+    input.lunarRule === 'YEARLY-LUNAR' || input.lunarRule === 'MONTHLY-LUNAR';
+  if (recurrence || lunarSeries) {
     base.exdates = Array.isArray(input.exdates)
       ? [...new Set(input.exdates.filter(Number.isFinite).map(Math.round))].sort((a, b) => a - b)
       : [];
@@ -829,8 +851,21 @@ export function normalizeTask(input = {}, now = Date.now()) {
   if (input.colorOverride === true) task.colorOverride = true;
   // 0.2.0: 任务默认落在「任务」日历；同一「按需添加」策略保持旧键形状不变。
   if (typeof input.calendarId === 'string' && input.calendarId) task.calendarId = input.calendarId;
-  // 0.2.12（C11-3）：任务同样可以标农历日期（任务没有「每年」规则）。
+  // 0.2.12（C11-3）：任务同样可以标农历日期。
   applyLunarFields(task, input);
+  // 0.8.36：任务重复。公历规则以「原始锚点」为准（count / 周几都相对它），
+  // 农历重复走 lunarRule（与 recurrence 互斥）。老任务两者都没有，记录形状不变。
+  if (!task.lunar) {
+    const anchor = Number.isFinite(input.repeatAnchor) ? Math.round(input.repeatAnchor) : due;
+    const recurrence = normalizeRecurrence(input.recurrence, anchor);
+    if (recurrence) {
+      task.recurrence = recurrence;
+      task.repeatAnchor = anchor;
+    }
+  } else if (task.lunarRule) {
+    task.repeatAnchor = Number.isFinite(input.repeatAnchor) ? Math.round(input.repeatAnchor) : due;
+  }
+  if (Number.isFinite(input.lastCompleted)) task.lastCompleted = Math.round(input.lastCompleted);
   // 0.7.0：任务也能带一个标签，字段与事件同口径（只增）。
   const tagId = normalizeTagId(input.tagId);
   if (tagId) task.tagId = tagId;
@@ -1399,14 +1434,20 @@ export function createStore(backend, options = {}) {
       // or out-of-bounds rid (Number('') is 0!) must read as "no such event",
       // not materialize a phantom no view renders — and a cancelled (exdated)
       // occurrence doesn't exist either.
-      if (
-        master &&
-        master.recurrence &&
-        Number.isFinite(rid) &&
-        isScheduledOccurrence(master, rid) &&
-        !(master.exdates || []).includes(rid)
-      ) {
-        return materializeOccurrence(master, rid);
+      if (Number.isFinite(rid)) {
+        if (
+          master &&
+          master.recurrence &&
+          isScheduledOccurrence(master, rid) &&
+          !(master.exdates || []).includes(rid)
+        ) {
+          return materializeOccurrence(master, rid);
+        }
+        // 0.8.38：农历系列没有 recurrence，rid 必须属于规则真的会产出的日期集合，
+        // 否则（外来 / 越界 / 已取消）一律当作「没有这个实例」。
+        if (master && isLunarSeries(master) && isLunarOccurrence(master, rid)) {
+          return materializeLunarOccurrence(master, rid);
+        }
       }
       return null;
     }
@@ -1430,6 +1471,13 @@ export function createStore(backend, options = {}) {
     for (const ev of events.values()) {
       if (ev.recurrence) {
         for (const occ of expandOccurrences(ev, from, to)) out.push(occ);
+      } else if (isLunarSeries(ev)) {
+        // 0.8.38：农历系列不写 RRULE，实例由 lunar-repeat.js 展开；DTSTART 本身
+        // （主事件）仍在原范围内原样放进结果，算第 1 次。被 EXDATE 取消的
+        // DTSTART 与公历口径一致：不出现。
+        const cancelledStart = (ev.exdates || []).includes(ev.start);
+        if (!cancelledStart && eventInRange(ev, from, to)) out.push(ev);
+        for (const occ of expandLunarOccurrences(ev, from, to)) out.push(occ);
       } else if (eventInRange(ev, from, to)) {
         out.push(ev);
       }
@@ -1490,6 +1538,11 @@ export function createStore(backend, options = {}) {
       if (ev.readOnly) continue;
       if (ev.recurrence) {
         for (const occ of expandOccurrences(ev, from, to)) add(eventsOut, occ, calendarIdOfEvent(occ));
+      } else if (isLunarSeries(ev)) {
+        if ((ev.exdates || []).includes(ev.start) === false && eventInRange(ev, from, to)) {
+          add(eventsOut, ev, calendarIdOfEvent(ev));
+        }
+        for (const occ of expandLunarOccurrences(ev, from, to)) add(eventsOut, occ, calendarIdOfEvent(occ));
       } else if (eventInRange(ev, from, to)) {
         add(eventsOut, ev, calendarIdOfEvent(ev));
       }
@@ -1751,11 +1804,13 @@ export function createStore(backend, options = {}) {
   /** Edit a single occurrence (this-occurrence scope) by writing an override. */
   async function updateOccurrence(seriesId, recurrenceId, patch) {
     const master = events.get(seriesId);
-    if (!master || !master.recurrence) return null;
+    // 0.8.38：农历系列也是系列（不写 RRULE，但每次实例都能单独改），以前这里
+    // 只认公历 `recurrence`，「仅本次」编辑对农历事件等于静默失败。
+    if (!master || !(master.recurrence || isLunarSeries(master))) return null;
     const rid = Number(recurrenceId);
     // Refuse a rid the schedule never produces: the override would be junk the
     // views filter out, silently accumulating on the master forever.
-    if (!isScheduledOccurrence(master, rid)) return null;
+    if (!isScheduledOccurrence(master, rid) && !isLunarOccurrence(master, rid)) return null;
     // Capture only this occurrence's prior slice so undo can't clobber a sibling.
     const prevOverride = master.overrides ? master.overrides[rid] : undefined;
     const wasExdate = (master.exdates || []).includes(rid);
@@ -1781,7 +1836,13 @@ export function createStore(backend, options = {}) {
     const updated = normalizeEvent(applySlice(master));
     events.set(updated.id, updated);
     emit();
-    const written = await writeSliced(seriesId, updated, (m) => Boolean(m.recurrence), applySlice, master);
+    const written = await writeSliced(
+      seriesId,
+      updated,
+      (m) => Boolean(m.recurrence) || isLunarSeries(m),
+      applySlice,
+      master,
+    );
     if (!sameEventContent(written, updated)) emit();
     return { event: written, undo: () => revertOccurrence(seriesId, rid, prevOverride, wasExdate, snap) };
   }
@@ -1789,11 +1850,11 @@ export function createStore(backend, options = {}) {
   /** Cancel a single occurrence (this-occurrence scope). */
   async function deleteOccurrence(seriesId, recurrenceId) {
     const master = events.get(seriesId);
-    if (!master || !master.recurrence) return null;
+    if (!master || !(master.recurrence || isLunarSeries(master))) return null;
     const rid = Number(recurrenceId);
     // Same guard as updateOccurrence: an off-pattern rid would write an inert
     // exdate onto the master and report a deletion that never happened.
-    if (!isScheduledOccurrence(master, rid)) return null;
+    if (!isScheduledOccurrence(master, rid) && !isLunarOccurrence(master, rid)) return null;
     const prevOverride = master.overrides ? master.overrides[rid] : undefined;
     const wasExdate = (master.exdates || []).includes(rid);
     const snap = cloneEvent(master);
@@ -1806,7 +1867,13 @@ export function createStore(backend, options = {}) {
     const updated = normalizeEvent(applySlice(master));
     events.set(updated.id, updated);
     emit();
-    const written = await writeSliced(seriesId, updated, (m) => Boolean(m.recurrence), applySlice, master);
+    const written = await writeSliced(
+      seriesId,
+      updated,
+      (m) => Boolean(m.recurrence) || isLunarSeries(m),
+      applySlice,
+      master,
+    );
     if (!sameEventContent(written, updated)) emit();
     return { event: written, undo: () => revertOccurrence(seriesId, rid, prevOverride, wasExdate, snap) };
   }
@@ -2346,11 +2413,23 @@ export function createStore(backend, options = {}) {
     return t;
   }
 
-  /** Flip a task's done flag; returns the updated task (or null if unknown). */
+  /** Flip a task's done flag; returns the updated task (or null if unknown).
+   *  0.8.36：重复任务「完成即推进」——勾完成时把到期日推到下一个实例并保持未完成；
+   *  没有下一个（count / until 用尽、农历到表外）才真的标成已完成。 */
   async function toggleTask(id) {
     const existing = tasks.get(id);
     if (!existing) return null;
-    return saveTask({ ...existing, done: !existing.done });
+    if (existing.done) return saveTask({ ...existing, done: false });
+    if (!taskRepeats(existing)) return saveTask({ ...existing, done: true });
+    const next = nextTaskDue(existing);
+    if (next == null) return saveTask({ ...existing, done: true });
+    return saveTask({
+      ...existing,
+      done: false,
+      due: next,
+      repeatAnchor: Number.isFinite(existing.repeatAnchor) ? existing.repeatAnchor : existing.due,
+      lastCompleted: Date.now(),
+    });
   }
 
   async function deleteTask(id) {

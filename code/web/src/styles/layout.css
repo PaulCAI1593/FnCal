@@ -1036,7 +1036,8 @@
 }
 .view__title-row {
   display: flex;
-  align-items: flex-start;
+  /* 0.8.39：标题色块 / 节日图标靠 flex 居中，不再用 margin-top 目测。 */
+  align-items: center;
   gap: var(--sp-3);
   margin-bottom: var(--sp-1);
 }
@@ -1045,8 +1046,6 @@
   width: 14px;
   height: 14px;
   border-radius: var(--r-xs);
-  /* Optically center on the title's first line. */
-  margin-top: 5px;
 }
 .view__title-main {
   min-width: 0;
@@ -1057,7 +1056,6 @@
   display: inline-flex;
   width: auto;
   height: auto;
-  margin-top: 4px;
   /* 0.6.11（用户：节日/节气各一套颜色，图标与文字同色）：详情卡的节日图标与世界
      其它界面对齐成主题色；此前是 --text-3 灰，和月视图/全天条/日程列表不一致。 */
   color: var(--accent);
@@ -1070,7 +1068,6 @@
   display: inline-flex;
   width: auto;
   height: auto;
-  margin-top: 4px;
   color: var(--term-ink);
   background: none;
   border-radius: 0;
@@ -1097,13 +1094,19 @@
 }
 .view__row {
   display: flex;
+  /* 0.8.39：多行行（时间 + 重复 + 农历说明等）图标贴首行中线，不靠 margin 猜。 */
+  align-items: flex-start;
   gap: var(--sp-3);
   font-size: var(--fs-md);
 }
 .view__row-icon {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 行盒高按 token 推：1.45em 跟随 --fs-md 变化，写死 px 会随字号失准。 */
+  height: 1.45em;
   color: var(--text-3);
-  margin-top: 1px;
 }
 .view__row-main {
   min-width: 0;
@@ -1593,6 +1596,9 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.editor__date-main.is-placeholder {
+  color: var(--text-3);
+}
 .editor__date-main {
   /* 0.2.20（E9）：主文案与「重复 / 地点 / 时间」同一字号（14px），副行仍是 11px 小字；
      主 14 + 副 11 + 1px 间隙在 38px 内放得下，不撑高。 */
@@ -1607,7 +1613,7 @@
 .editor__date-sub:empty {
   display: none;
 }
-/* 0.2.20（E6）：日期框右侧的「公历/农历」胶囊删掉（语种唯一入口在弹层两段式）。 */
+/* 0.8.35：日期真值仍是隐藏的原生 input（语种入口在编辑器「农历」开关）。 */
 .editor__date-native {
   position: absolute;
   width: 1px;
@@ -1632,15 +1638,39 @@
   gap: var(--sp-2);
   margin-bottom: var(--sp-1);
 }
+/* 0.8.35 §9：标题可点，弹年月选择器（用户「这里可以点击快速切换年月」）。
+   可点区按 32px 下限做，观感仍是标题而不是按钮。 */
 .date-pop__title {
   flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 var(--sp-1);
+  border: 0;
+  border-radius: var(--r-sm, 6px);
+  background: transparent;
   text-align: center;
-  font-size: var(--fs-sm);
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 650;
   color: var(--text);
   white-space: nowrap;
+  cursor: pointer;
+}
+.date-pop__title-text {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.date-pop__title-caret {
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 1;
+}
+@media (hover: hover) {
+  .date-pop__title:hover {
+    background: var(--surface-2);
+  }
 }
 .date-pop__nav {
   width: 30px;
@@ -1711,16 +1741,7 @@
   align-items: center;
   margin-top: var(--sp-1);
 }
-/* 0.2.20（E6）：唯一的语种控制——「公历 | 农历」两段式（复用 .segmented 的选中态）。 */
-.date-pop__seg {
-  padding: 2px;
-}
-.date-pop__seg-btn {
-  height: 26px;
-  padding: 0 var(--sp-2);
-  font-size: var(--fs-xs);
-  font-weight: 550;
-}
+/* 0.8.35：语种两段式已删——语种只由编辑器的「农历」开关决定。 */
 
 /* 0.2.18（C6①）：「农历」这种行内开关作为 .field 的控件子项时，标签已经由
    .field 的第 1 列给出——这里不能再套一层标签列，否则整行会右移一个标签宽度，

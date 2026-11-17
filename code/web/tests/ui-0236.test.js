@@ -117,11 +117,13 @@ describe('M1 搜索时间范围：日期字段空态「年/月/日」', () => {
     expect(nativeDateInputs().every((n) => n.value === '')).toBe(true);
   });
 
-  it('弹层语种两段式默认仍在（编辑器日期字段没被这次改动影响）', () => {
+  it('弹层不再有语种两段式：0.8.35 起语种只由编辑器「农历」开关决定', () => {
     const anchor = document.createElement('button');
     document.body.append(anchor);
+    // 连默认参数（不给 showModeToggle）也不再有切换——参数保留只为兼容调用方。
     openDatePopover({ anchor });
-    expect(document.querySelector('.date-pop__seg')).toBeTruthy();
+    expect(document.querySelector('.date-pop__seg')).toBeNull();
+    expect(document.querySelector('.date-pop__seg-btn')).toBeNull();
   });
 
   it('源码口径：日期字段走 openDatePopover，且没有裸 input 的 type=date 直接渲染', () => {

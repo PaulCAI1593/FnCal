@@ -18,6 +18,7 @@ import { randomUUID } from 'node:crypto';
 
 import { uidOf } from '../store/file-store.mjs';
 import {
+  LUNAR_RULE_MONTHLY,
   LUNAR_RULE_YEARLY,
   dateDigitsOf,
   lunarInfoOf,
@@ -134,6 +135,102 @@ function overlaps(start, end, rangeStart, rangeEnd) {
   return e > rangeStart && s < rangeEnd;
 }
 
+/* ------------------------------------------------------- 农历重复（0.8.40） */
+
+// 农历年表到 2100 年；聚合窗口不能越过它，否则 lunar-core 只能返回 null。
+const LUNAR_SERIES_END = Date.UTC(2099, 11, 1);
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 某次农历落在公历哪一天，再套上主事件的时分秒（全天取本地零点）。 */
+function lunarSlotStart(ev, date) {
+  if (ev && ev.allDay) return new Date(date.y, date.m - 1, date.d).getTime();
+  const base = new Date(Number(ev && ev.start));
+  return new Date(
+    date.y,
+    date.m - 1,
+    date.d,
+    base.getHours(),
+    base.getMinutes(),
+    base.getSeconds(),
+    base.getMilliseconds(),
+  ).getTime();
+}
+
+/**
+ * 农历重复（每年 / 每月）系列在 `[rangeStart, rangeEnd)` 内的各次。
+ *
+ * 0.8.40：农历系列不写 RRULE（0.2.12 口径），`expandOccurrences` 看不见它，所以
+ * `matchesTimeRange` / `occurrencesInRange` / MCP 的 `list_events` 都只能用
+ * `overlaps(ev.start, …)` 判主事件——主事件不在区间时整条丢，区间内的各次也读不回来。
+ * 这里用与 RDATE 同一套 `lunar-core` 展开，按调用方给的区间算跨度（不是「现在 + 24 个月」）。
+ *
+ * 返回 `[{ start, end, recurrenceId }]`，升序；不含 DTSTART 当天（它由主事件自己承担），
+ * 已跳过 EXDATE，单次覆盖按它自己的时间算、`recurrenceId` 仍是原规则槽位。
+ */
+export function lunarOccurrencesInRange(ev, rangeStart, rangeEnd) {
+  const from = Number.isFinite(rangeStart) ? rangeStart : MIN_TIME;
+  const to = Number.isFinite(rangeEnd) ? Math.min(rangeEnd, LUNAR_SERIES_END) : LUNAR_SERIES_END;
+  return lunarSlotOccurrences(ev, from, to)
+    .filter((occ) => occ.end > from && occ.start < to)
+    .map(({ start, end, recurrenceId }) => ({ start, end, recurrenceId }));
+}
+
+/**
+ * 按**规则槽位**取各次（槽位落在 `[spanStart, spanEnd)`），不看覆盖挪到哪一天。
+ * 单次覆盖的时间照它自己的算，`recurrenceId` 仍是原槽位；EXDATE 与 DTSTART 当天跳过。
+ */
+export function lunarSlotOccurrences(ev, spanStart, spanEnd) {
+  if (!ev) return [];
+  const info = lunarInfoOf(ev);
+  if (!info.yearly && !info.monthly) return [];
+  const masterStart = Number(ev.start);
+  if (!Number.isFinite(masterStart) || !info.month || !info.day) return [];
+  const from = Number.isFinite(spanStart) ? spanStart : MIN_TIME;
+  const to = Number.isFinite(spanEnd) ? Math.min(spanEnd, LUNAR_SERIES_END) : LUNAR_SERIES_END;
+  if (!(to > from)) return [];
+  const startLunar = lunarOfInstant(masterStart);
+  if (!startLunar) return [];
+
+  const endLunar = lunarOfInstant(to);
+  const endYear = endLunar ? endLunar.year : startLunar.year + 200;
+  const endMonth = endLunar ? endLunar.month : startLunar.month;
+  const years = Math.max(0, endYear - startLunar.year) + 1;
+  const months = Math.max(0, (endYear - startLunar.year) * 12 + (endMonth - startLunar.month)) + 1;
+
+  // 0.2.12 的老系列可能只有 X-FNCAL-LUNAR-RULE/-DATE、没有 MARK，lunarRepeatDates 会因
+  // `info.mark` 为空直接返回空表；这里补上标记，字段本身仍取事件上的值。
+  const record = { ...ev, lunar: true };
+  let dates = [];
+  try {
+    dates = lunarRepeatDates(record, { now: masterStart, years, months }).dates;
+  } catch {
+    return [];
+  }
+
+  const exdates = new Set((Array.isArray(ev.exdates) ? ev.exdates : []).map(Number));
+  const overrides = ev.overrides && typeof ev.overrides === 'object' ? ev.overrides : {};
+  const duration = Number.isFinite(ev.end) && ev.end > masterStart
+    ? ev.end - masterStart
+    : (ev.allDay ? DAY_MS : 0);
+
+  const out = [];
+  const seen = new Set();
+  for (const date of dates) {
+    const slot = lunarSlotStart(ev, date);
+    if (!Number.isFinite(slot) || slot <= masterStart) continue;
+    if (slot < from || slot >= to) continue;
+    if (exdates.has(slot)) continue;
+    const override = overrides[slot] || overrides[String(slot)] || null;
+    const startMs = override && Number.isFinite(override.start) ? override.start : slot;
+    const endMs = override && Number.isFinite(override.end) ? override.end : startMs + duration;
+    if (seen.has(slot)) continue;
+    seen.add(slot);
+    out.push({ start: startMs, end: endMs, recurrenceId: slot });
+  }
+  out.sort((a, b) => a.start - b.start);
+  return out;
+}
+
 /* -------------------------------------------------------------- time ranges */
 
 /**
@@ -147,7 +244,7 @@ export async function eventsOf(text) {
     try {
       const parsed = parser(text);
       if (Array.isArray(parsed)) {
-        return parsed.filter((e) => e && Number.isFinite(e.start));
+        return withLunarFields(parsed.filter((e) => e && Number.isFinite(e.start)), text);
       }
     } catch {
       /* fall through to the line-level reader */
@@ -155,7 +252,35 @@ export async function eventsOf(text) {
   }
   const start = parseIcsDate(lineValue(text, 'DTSTART'));
   const end = parseIcsDate(lineValue(text, 'DTEND'));
-  return [{ start, end, allDay: !/T/.test(lineValue(text, 'DTSTART')), recurrence: null }];
+  return withLunarFields(
+    [{ start, end, allDay: !/T/.test(lineValue(text, 'DTSTART')), recurrence: null }],
+    text,
+  );
+}
+
+/**
+ * 0.8.40：农历标记只写在 `X-FNCAL-LUNAR*` 属性上，vendored 解析器不认识它们，
+ * 所以 `eventsOf` 出来的实例没有 `lunarRule` / `lunarMonth` / `lunarDay`。
+ * 这里把主实例的农历字段补回（覆盖实例不动，与 ai-service 的 `attachRuleFields` 同口径），
+ * 让 DAV 时间范围判定、忙碌区间、MCP 读端点都能认农历重复。
+ */
+function withLunarFields(events, text) {
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length || !/X-FNCAL-LUNAR/i.test(String(text || ''))) return list;
+  let master = null;
+  try {
+    master = lunarOfBlock(childComponents(calendarTree(text), 'VEVENT')[0] || null);
+  } catch {
+    master = null;
+  }
+  if (!master) return list;
+  for (const ev of list) {
+    if (!ev || ev.recurrenceId) continue;
+    for (const key of Object.keys(master)) {
+      if (ev[key] === undefined || ev[key] === null) ev[key] = master[key];
+    }
+  }
+  return list;
 }
 
 /**
@@ -199,6 +324,8 @@ export async function matchesTimeRange(text, timeRange) {
       if (overlaps(start, end, rangeStart, rangeEnd)) return true;
       continue;
     }
+    // 0.8.40：农历重复没有 RRULE，按区间自己展开，否则起始日不在区间就整条漏。
+    if (lunarOccurrencesInRange(ev, rangeStart, rangeEnd).length > 0) return true;
     if (overlaps(start, end, rangeStart, rangeEnd)) return true;
   }
 
@@ -231,6 +358,8 @@ export async function occurrencesInRange(text, timeRange) {
         /* fall through */
       }
     }
+    // 0.8.40：农历各次不算进主事件那一条，要单独计数。
+    count += lunarOccurrencesInRange(ev, rangeStart, rangeEnd).length;
     if (overlaps(ev.start, Number.isFinite(ev.end) ? ev.end : ev.start, rangeStart, rangeEnd)) count += 1;
   }
   return count;
@@ -591,6 +720,12 @@ const localDateDigits = (ms) => {
   return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
 };
 
+/** 本地当天最后一毫秒（`UNTIL;VALUE=DATE` 读回用）。 */
+const endOfLocalDay = (ms) => {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+};
+
 /**
  * 0.4.12：`YYYYMMDD` / `YYYY-MM-DD` -> RFC 5545 要求的压缩 8 位 `YYYYMMDD`。
  * 无法识别返回空串（调用方据此回退）。写 ICS 前必须过这一步：`startDate`/`endDate`
@@ -774,9 +909,27 @@ function rruleText(record) {
   const parts = [`FREQ=${freq.toUpperCase()}`];
   if (Number(rule.interval) > 1) parts.push(`INTERVAL=${Number(rule.interval)}`);
   if (freq === 'weekly') {
-    const days = (Array.isArray(rule.byWeekday) ? rule.byWeekday : [])
-      .map((n) => WEEKDAY_TOKENS[Math.trunc(Number(n))])
-      .filter(Boolean);
+    let indexes = (Array.isArray(rule.byWeekday) ? rule.byWeekday : [])
+      .map((n) => Math.trunc(Number(n)))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+    const startMs = Number.isFinite(record.start) ? Number(record.start) : NaN;
+    if (indexes.length && Number.isFinite(startMs) && !record.allDay) {
+      // BYDAY 的星期名属于 DTSTART 自己的时区。DTSTART 无可用 TZID 时按 UTC
+      // 写出，东八区的 16:26Z 已经是次日——不先反向旋转，导出再读回时整条
+      // 星期的序列会漂一天（解析器 `vendor/ical/ics.js:610-628` 会正向旋转）。
+      const zone = record.timezone && record.timezone !== 'UTC' && isIanaTimeZone(record.timezone)
+        ? record.timezone
+        : '';
+      const digits = zone ? wallDigits(startMs, zone) : utcDigits(startMs);
+      const digitDay = new Date(Date.UTC(
+        Number(digits.slice(0, 4)),
+        Number(digits.slice(4, 6)) - 1,
+        Number(digits.slice(6, 8)),
+      )).getUTCDay();
+      const rot = (new Date(startMs).getDay() - digitDay + 7) % 7;
+      if (rot) indexes = indexes.map((d) => (d - rot + 7) % 7);
+    }
+    const days = indexes.map((n) => WEEKDAY_TOKENS[n]).filter(Boolean);
     if (days.length) parts.push(`BYDAY=${days.join(',')}`);
   } else if (freq === 'monthly' && rule.monthlyMode === 'weekday') {
     const start = new Date(Number.isFinite(record.start) ? record.start : Date.now());
@@ -793,18 +946,98 @@ function rruleText(record) {
   return parts.join(';');
 }
 
+/**
+ * 0.8.36：VTODO 的 RRULE → store.js recurrence 规则。
+ *
+ * `taskFromIcs` 是同步函数，而仓库里的 VEVENT 解析器是异步加载的，所以这里自己
+ * 解析（只认 FREQ / INTERVAL / BYDAY / COUNT / UNTIL，其余片段忽略，第三方规则
+ * 退化成 FnCal 能表达的那部分，绝不抛错——老任务读回必须稳）。
+ *
+ * @param {string} text RRULE 的值（不含 `RRULE:`）
+ * @param {{start?: number, allDay?: boolean}} [anchor] 规则锚点（任务的到期时刻）
+ */
+export function rruleToRecurrence(text, { start = Date.now(), allDay = false } = {}) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const parts = new Map();
+  for (const chunk of raw.split(';')) {
+    const i = chunk.indexOf('=');
+    if (i < 0) continue;
+    parts.set(chunk.slice(0, i).trim().toUpperCase(), chunk.slice(i + 1).trim());
+  }
+  const freq = String(parts.get('FREQ') || '').toLowerCase();
+  if (!['daily', 'weekly', 'monthly', 'yearly'].includes(freq)) return null;
+  const out = {
+    freq,
+    interval: 1,
+    byWeekday: null,
+    wkst: null,
+    monthlyMode: null,
+    monthlyNth: null,
+    count: null,
+    until: null,
+  };
+  const interval = Math.round(Number(parts.get('INTERVAL')));
+  if (Number.isFinite(interval) && interval >= 1) out.interval = Math.min(interval, 999);
+  const byday = String(parts.get('BYDAY') || '')
+    .toUpperCase()
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (freq === 'weekly') {
+    const days = byday.map((token) => WEEKDAY_TOKENS.indexOf(token)).filter((n) => n >= 0);
+    out.byWeekday = days.length ? [...new Set(days)].sort((a, b) => a - b) : [new Date(start).getDay()];
+    out.wkst = 0;
+  } else if (freq === 'monthly') {
+    const m = /^([+-]?\d)(SU|MO|TU|WE|TH|FR|SA)$/.exec(byday[0] || '');
+    const nth = m ? Math.trunc(Number(m[1])) : NaN;
+    if (nth === -1 || (nth >= 1 && nth <= 5)) {
+      out.monthlyMode = 'weekday';
+      out.monthlyNth = nth;
+    }
+  }
+  const count = Math.round(Number(parts.get('COUNT')));
+  if (Number.isFinite(count) && count >= 1) out.count = Math.min(count, 999);
+  const untilMs = parseIcsDate(parts.get('UNTIL'));
+  if (Number.isFinite(untilMs)) {
+    // 全天任务的 UNTIL 是 `YYYYMMDD` 浮点日期，读回按本地当天末刻算，否则 GMT+8
+    // 下会把最后一个实例切掉。
+    out.until = allDay ? endOfLocalDay(untilMs) : untilMs;
+  }
+  return out;
+}
+
 /* ------------------------------------------------------- 0.2.12 农历（C11-4） */
 
 const LUNAR_MARK = 'X-FNCAL-LUNAR';
 const LUNAR_DATE = 'X-FNCAL-LUNAR-DATE';
 const LUNAR_LEAP = 'X-FNCAL-LUNAR-LEAP';
 const LUNAR_RULE = 'X-FNCAL-LUNAR-RULE';
+// 0.8.35：农历「自定义」只在间隔 >1 时写 INTERVAL，只有设了结束日期才写 UNTIL；
+// 默认（每 1 年/月、不结束）不写，两个属性都不影响不认识的客户端。
+const LUNAR_INTERVAL = 'X-FNCAL-LUNAR-INTERVAL';
+const LUNAR_UNTIL = 'X-FNCAL-LUNAR-UNTIL';
+
+/** 一个时间戳在本地日历上的 `YYYYMMDD`（农历 UNTIL 用，边界按本地日算）。 */
+function lunarUntilDigits(ms) {
+  const d = new Date(Number(ms));
+  return Number.isFinite(d.getTime()) ? dateDigitsOf({ y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() }) : '';
+}
+
+/** `YYYYMMDD` → UTC 毫秒（与 shared 侧 `solarMs` 同口径，只用于比较）。 */
+function lunarUntilMs(text) {
+  const s = String(text || '').trim();
+  if (!/^\d{8}$/.test(s)) return null;
+  const ms = Date.UTC(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
+  return Number.isFinite(ms) ? ms : null;
+}
 
 /**
  * 农历事件/任务的 `X-FNCAL-LUNAR*` 属性行。
  *
  * 单次：`X-FNCAL-LUNAR:1` + `X-FNCAL-LUNAR-DATE:M-D`（闰月再加 `-LEAP:1`）。
- * 每年农历：再加 `X-FNCAL-LUNAR-RULE:YEARLY-LUNAR` + 动态算出的 `RDATE` 列表。
+ * 农历重复：再加 `X-FNCAL-LUNAR-RULE:YEARLY-LUNAR|MONTHLY-LUNAR` + 动态算出的 `RDATE`
+ * 列表；「自定义」的间隔与结束日期写成 `-INTERVAL` / `-UNTIL`（默认不写）。
  * 公历 `DTSTART/DTEND` 一律不动，普通客户端不认识 X- 属性也会原样保留。
  */
 function lunarPropertyLines(record, { allDay = Boolean((record || {}).allDay), log = null } = {}) {
@@ -824,9 +1057,21 @@ function lunarPropertyLines(record, { allDay = Boolean((record || {}).allDay), l
   }
   const out = [`${LUNAR_MARK}:1`, `${LUNAR_DATE}:${month}-${day}`];
   if (leap) out.push(`${LUNAR_LEAP}:1`);
-  if (info.yearly) {
-    out.push(`${LUNAR_RULE}:${LUNAR_RULE_YEARLY}`);
-    const rdate = lunarRdateLine({ ...record, lunarMonth: month, lunarDay: day, lunarLeap: leap }, allDay, log);
+  const rule = info.yearly ? LUNAR_RULE_YEARLY : (info.monthly ? LUNAR_RULE_MONTHLY : '');
+  if (rule) {
+    out.push(`${LUNAR_RULE}:${rule}`);
+    if (info.interval > 1) out.push(`${LUNAR_INTERVAL}:${info.interval}`);
+    const untilDigits = info.until ? lunarUntilDigits(info.until) : '';
+    if (untilDigits) out.push(`${LUNAR_UNTIL}:${untilDigits}`);
+    const rdate = lunarRdateLine({
+      ...record,
+      lunarMonth: month,
+      lunarDay: day,
+      lunarLeap: leap,
+      lunarRule: rule,
+      lunarInterval: info.interval,
+      lunarUntil: info.until,
+    }, allDay, log);
     if (rdate) out.push(rdate);
   }
   return out;
@@ -866,29 +1111,38 @@ function lunarOfBlock(block) {
   if (leapProp && /^(1|TRUE)$/i.test(String(leapProp.value || '').trim())) out.lunarLeap = true;
   const ruleProp = propNamed(block, LUNAR_RULE);
   const rule = String((ruleProp || {}).value || '').trim().toUpperCase();
-  if (rule === LUNAR_RULE_YEARLY) out.lunarRule = LUNAR_RULE_YEARLY;
+  if (rule === LUNAR_RULE_YEARLY || rule === LUNAR_RULE_MONTHLY) out.lunarRule = rule;
+  const intervalProp = propNamed(block, LUNAR_INTERVAL);
+  const interval = Number(String((intervalProp || {}).value || '').trim());
+  if (Number.isInteger(interval) && interval > 1) out.lunarInterval = interval;
+  const until = lunarUntilMs((propNamed(block, LUNAR_UNTIL) || {}).value);
+  if (until != null) out.lunarUntil = until;
   return out;
 }
 
 /**
  * 把已落库的 .ics 里的 RDATE 列表按「当前年份 + 20 年」重算。
  *
- * 存储里的 ICS 是写库那一刻算出来的；农历每年重复的展开结果会随时间推进，
+ * 存储里的 ICS 是写库那一刻算出来的；农历重复（每年 / 每月）的展开结果会随时间推进，
  * 所以**对外提供内容时**（DAV GET / REPORT calendar-data / 导出）都要过一次这里。
- * 没有 `X-FNCAL-LUNAR-RULE:YEARLY-LUNAR` 的对象原样返回（零开销）。
+ * 没有 `X-FNCAL-LUNAR-RULE` 的对象原样返回（零开销）。
  */
 export function refreshLunarRdates(text, now = Date.now()) {
   const source = String(text || '');
   if (!source) return source;
   const unfolded = unfold(source);
-  if (!/^X-FNCAL-LUNAR-RULE:\s*YEARLY-LUNAR\s*$/im.test(unfolded)) return source;
+  const ruleHit = unfolded.match(/^X-FNCAL-LUNAR-RULE:\s*(YEARLY-LUNAR|MONTHLY-LUNAR)\s*$/im);
+  if (!ruleHit) return source;
+  const rule = ruleHit[1].toUpperCase();
   const sourceLines = unfolded.split(/\r?\n/);
-  const dtstartLine = sourceLines.find((line) => /^DTSTART/i.test(line));
-  if (!dtstartLine) return source;
-  const colon = dtstartLine.indexOf(':');
+  // 0.8.36：VTODO 没有 DTSTART，农历重复的锚点落在 DUE 上。
+  const startLine = sourceLines.find((line) => /^DTSTART/i.test(line))
+    || sourceLines.find((line) => /^DUE(?=[;:])/i.test(line));
+  if (!startLine) return source;
+  const colon = startLine.indexOf(':');
   if (colon < 0) return source;
-  const params = dtstartLine.slice(0, colon).toUpperCase();
-  const value = dtstartLine.slice(colon + 1).trim();
+  const params = startLine.slice(0, colon).toUpperCase();
+  const value = startLine.slice(colon + 1).trim();
   const allDay = params.includes('VALUE=DATE');
   const start = parseIcsDate(value);
   if (!Number.isFinite(start)) return source;
@@ -902,13 +1156,17 @@ export function refreshLunarRdates(text, now = Date.now()) {
     lunarMonth: lunarDate.month,
     lunarDay: lunarDate.day,
     lunarLeap: leap,
-    lunarRule: LUNAR_RULE_YEARLY,
+    lunarRule: rule,
   };
+  const interval = Number(fieldValue(sourceLines, LUNAR_INTERVAL));
+  if (Number.isInteger(interval) && interval > 1) record.lunarInterval = interval;
+  const until = lunarUntilMs(fieldValue(sourceLines, LUNAR_UNTIL));
+  if (until != null) record.lunarUntil = until;
   const rdate = lunarRdateLine(record, allDay, null, now);
   if (!rdate) return source;
   const kept = sourceLines.filter((line) => !/^RDATE(?=[;:])/i.test(line));
   const anchor = kept.findIndex((line) => new RegExp(`^${LUNAR_RULE}\\b`, 'i').test(line));
-  const insertAt = anchor >= 0 ? anchor + 1 : kept.findIndex((line) => /^END:VEVENT/i.test(line));
+  const insertAt = anchor >= 0 ? anchor + 1 : kept.findIndex((line) => /^END:(VEVENT|VTODO)/i.test(line));
   const at = insertAt >= 0 ? insertAt : kept.length;
   kept.splice(at, 0, rdate);
   return serialize(kept.filter((line) => line.length > 0));
@@ -1205,6 +1463,15 @@ export function taskToIcs(task = {}) {
   } else {
     body.push(`DUE:${utcDigits(due)}`);
   }
+  // 0.8.36：任务重复。公历写 RRULE；农历重复由 lunarPropertyLines 写
+  // X-FNCAL-LUNAR-RULE + RDATE（锚点必须是到期时刻，不是开始时刻——VTODO 没有
+  // DTSTART）。锚点与上次完成时间落在 X- 属性里，读回不丢。
+  if (!task.lunar && task.recurrence) {
+    const rule = rruleText({ ...task, start: due, allDay });
+    if (rule) body.push(`RRULE:${rule}`);
+  }
+  if (Number.isFinite(task.repeatAnchor)) body.push(`X-FNCAL-REPEAT-ANCHOR:${utcDigits(task.repeatAnchor)}`);
+  if (Number.isFinite(task.lastCompleted)) body.push(`X-FNCAL-LAST-COMPLETED:${utcDigits(task.lastCompleted)}`);
   if (task.reminders !== undefined) {
     body.push(...alarmLines({ ...task, alarms: [] }));
   }
@@ -1215,7 +1482,7 @@ export function taskToIcs(task = {}) {
   if (task.tagId) body.push(`X-FNCAL-TAG:${escapeIcsText(String(task.tagId))}`);
   if (Number.isFinite(task.createdAt)) body.push(`CREATED:${utcDigits(task.createdAt)}`);
   if (Number.isFinite(task.updatedAt)) body.push(`LAST-MODIFIED:${utcDigits(task.updatedAt)}`);
-  body.push(...lunarPropertyLines(task, { allDay }));
+  body.push(...lunarPropertyLines({ ...task, start: due }, { allDay }));
   body.push(...createdByLines(task));
   body.push('END:VTODO', 'END:VCALENDAR');
   return serialize([...header, ...body]);
@@ -1281,6 +1548,19 @@ export function taskFromIcs(text) {
   if (tagId) result.tagId = tagId;
   const lunar = lunarOfBlock(todo);
   if (lunar) Object.assign(result, lunar);
+  // 0.8.36：任务重复。RRULE 只写了公历规则；农历重复靠 X-FNCAL-LUNAR-RULE +
+  // RDATE（lunarOfBlock 已读回）。锚点两种规则都要读（农历没有 RRULE）。
+  // 老任务没有这些属性，结果与以前逐字节一致。
+  const anchor = parseIcsDate(value('X-FNCAL-REPEAT-ANCHOR'));
+  if (Number.isFinite(anchor)) result.repeatAnchor = anchor;
+  const rruleRaw = value('RRULE');
+  if (rruleRaw) {
+    const recurrence = rruleToRecurrence(rruleRaw, { start: result.due, allDay: result.allDay });
+    if (recurrence) result.recurrence = recurrence;
+  }
+  if (result.recurrence && !Number.isFinite(result.repeatAnchor)) result.repeatAnchor = result.due;
+  const lastCompleted = parseIcsDate(value('X-FNCAL-LAST-COMPLETED'));
+  if (Number.isFinite(lastCompleted)) result.lastCompleted = lastCompleted;
   return result;
 }
 
@@ -1359,6 +1639,11 @@ export async function busyIntervals(text, { start, end }) {
         } catch {
           /* fall through to the master window */
         }
+      }
+      // 0.8.40：农历重复的每一次都占时间；漏掉它们会把实际被占用的时段报成「空闲」。
+      for (const occ of lunarOccurrencesInRange(ev, range.start, range.end)) {
+        const [a, b] = ev.allDay ? allDayBounds(occ.start) : [occ.start, occ.end];
+        push(a, b);
       }
       const [a, b] = ev.allDay ? allDayBounds(ev.start) : [ev.start, Number.isFinite(ev.end) ? ev.end : ev.start];
       push(a, b);

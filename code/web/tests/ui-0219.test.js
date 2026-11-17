@@ -452,7 +452,7 @@ describe('0.2.19 D3 日期字段 + 弹层日历（公历/农历切换）', () =>
     });
   };
 
-  it('0.2.20（E6）：显示语种单源在编辑器——弹层切一次，开始与结束两个字段一起变', () => {
+  it('0.2.20（E6）+ 0.8.35：显示语种单源在编辑器——拨一次开关，开始与结束两个字段一起变', () => {
     openModal(new Date(2026, 9, 24, 9, 0), new Date(2026, 9, 24, 10, 0));
     const mains = () =>
       [...document.querySelectorAll('.modal-scrim .editor__date-main')].map((n) => n.textContent);
@@ -463,21 +463,17 @@ describe('0.2.19 D3 日期字段 + 弹层日历（公历/农历切换）', () =>
     // 字段右侧的「公历/农历」胶囊已删（E6：语种只留弹层一处）
     expect(document.querySelectorAll('.modal-scrim .editor__date-mode')).toHaveLength(0);
 
-    document.querySelector('.modal-scrim .editor__date-btn').click();
-    const segLunar = () =>
-      [...document.querySelectorAll('.date-pop__seg-btn')].find((b) => b.textContent === '农历');
-    segLunar().click();
+    // 0.8.35：语种入口只在编辑器「农历」开关；弹层不再有切换
+    const toggle = () => document.querySelector('.modal-scrim input[aria-label="农历"]');
+    toggle().checked = true;
+    toggle().dispatchEvent(new Event('change', { bubbles: true }));
     // 两个字段一起切农历；0.2.20（E7）文案同结构、不加「农历」前缀
     expect(mains()).toEqual(['2026年九月十五', '2026年九月十五']);
     expect(subs()).toEqual(['10/24', '10/24']);
-    // 两段式按钮自己反映当前语种
-    expect(segLunar().getAttribute('aria-pressed')).toBe('true');
-    const segSolar = [...document.querySelectorAll('.date-pop__seg-btn')].find(
-      (b) => b.textContent === '公历',
-    );
-    expect(segSolar.getAttribute('aria-pressed')).toBe('false');
+    expect(document.querySelectorAll('.date-pop__seg-btn')).toHaveLength(0);
 
-    segSolar.click();
+    toggle().checked = false;
+    toggle().dispatchEvent(new Event('change', { bubbles: true }));
     expect(mains()).toEqual(['2026年10月24日', '2026年10月24日']);
     expect(subs()).toEqual(['', '']);
   });

@@ -64,6 +64,19 @@ async function raw(p, { method = 'GET', body = undefined, cookie = '', csrf = ''
   return { status: res.status, text, body: parsed, headers: res.headers };
 }
 
+/**
+ * 0.8.31 起 CSRF 是双提交：`caldav_csrf` cookie 与 `x-csrf-token` 任一与预期相同即通过。
+ * 登录会把 `caldav_csrf` 一起下发，所以「缺 header」在这份 cookie 串上不算缺 CSRF——
+ * 要真正测「没有 CSRF」，必须把 cookie 里的 `caldav_csrf` 也摘掉（会话 cookie 保留）。
+ * 0.8.40 修正：这三处断言写于双提交之前，之前一直靠「登录不发 csrf cookie」才成立。
+ */
+function sessionOnly(cookie) {
+  return String(cookie || '')
+    .split('; ')
+    .filter((item) => !item.startsWith('caldav_csrf='))
+    .join('; ');
+}
+
 async function login(username, password) {
   const res = await fetch(`${BASE}/api/v1/auth/login`, {
     method: 'POST',
@@ -114,7 +127,7 @@ try {
   eq('设置默认关闭', false, settings0.body.settings.enabled);
   eq('设置返回 mcpPath', '/mcp', settings0.body.settings.mcpPath);
 
-  const noCsrf = await raw('/api/v1/ai/settings', { method: 'PUT', cookie: admin.cookie, body: { enabled: true } });
+  const noCsrf = await raw('/api/v1/ai/settings', { method: 'PUT', cookie: sessionOnly(admin.cookie), body: { enabled: true } });
   eq('PUT 设置缺 CSRF → 403 csrf', 'csrf', noCsrf.body && noCsrf.body.code);
 
   const wrongType = await raw('/api/v1/ai/settings', {
@@ -150,7 +163,7 @@ try {
 
   /* ------------------------------------------------------------ ③ 凭据 */
   const createNoCsrf = await raw('/api/v1/ai/credentials', {
-    method: 'POST', cookie: admin.cookie, body: { label: '缺 CSRF' },
+    method: 'POST', cookie: sessionOnly(admin.cookie), body: { label: '缺 CSRF' },
   });
   eq('创建凭据缺 CSRF → 403 csrf', 'csrf', createNoCsrf.body && createNoCsrf.body.code);
 
@@ -290,7 +303,7 @@ try {
   eq('已决提案再受理 → 409', 409, reAccept.status);
   ok('409 原因是已决（not_pending）', String(reAccept.body.reason).startsWith('not_pending'), reAccept.body.reason);
 
-  const rejectNoCsrf = await raw('/api/v1/ai/proposals/p-stale/reject', { method: 'POST', cookie: admin.cookie });
+  const rejectNoCsrf = await raw('/api/v1/ai/proposals/p-stale/reject', { method: 'POST', cookie: sessionOnly(admin.cookie) });
   eq('拒绝缺 CSRF → 403 csrf', 'csrf', rejectNoCsrf.body && rejectNoCsrf.body.code);
   const rejected = await raw('/api/v1/ai/proposals/p-stale/reject', {
     method: 'POST', cookie: admin.cookie, csrf: admin.csrf, body: { reason: '先不改' },

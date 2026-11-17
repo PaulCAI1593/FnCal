@@ -208,9 +208,20 @@ export const LUNAR_RDATE_YEARS = 20;
 /** 「农历每年重复」的规则标记（写进 `X-FNCAL-LUNAR-RULE`）。 */
 export const LUNAR_RULE_YEARLY = 'YEARLY-LUNAR';
 
+/** RDATE 往前展开的农历月数（相对当前农历月；0.8.35 农历每月）。 */
+export const LUNAR_RDATE_MONTHS = 24;
+
+/** 「农历每月重复」的规则标记（写进 `X-FNCAL-LUNAR-RULE`）。 */
+export const LUNAR_RULE_MONTHLY = 'MONTHLY-LUNAR';
+
+/** 公历日期 → UTC 毫秒（只用于与 `until` 比较，不参与时区语义）。 */
+function solarMs(solar) {
+  return Date.UTC(solar.y, solar.m - 1, solar.d);
+}
+
 /**
  * @param {{startMs?: number, month?: number, day?: number, leap?: boolean,
- *          now?: number, years?: number}} [options]
+ *          now?: number, years?: number, interval?: number, until?: number}} [options]
  * @returns {{dates: Array<{y:number,m:number,d:number}>, outOfRangeYears: number[]}}
  */
 export function lunarYearlyDates(options = {}) {
@@ -222,6 +233,9 @@ export function lunarYearlyDates(options = {}) {
   const leap = options.leap === true;
   const now = Number.isFinite(options.now) ? options.now : Date.now();
   const years = Number.isInteger(options.years) && options.years >= 0 ? options.years : LUNAR_RDATE_YEARS;
+  // 0.8.35：农历「自定义」只允许改间隔与结束日期（每 N 年 / 到某天为止）。
+  const interval = Number.isInteger(options.interval) && options.interval >= 1 ? options.interval : 1;
+  const until = Number.isFinite(options.until) ? Number(options.until) : null;
   if (!Number.isFinite(startMs) || !Number.isInteger(month) || month < 1 || month > 12) return { dates, outOfRangeYears };
   if (!Number.isInteger(day) || day < 1 || day > 30) return { dates, outOfRangeYears };
   const startLunar = solarToLunar(startMs);
@@ -231,7 +245,7 @@ export function lunarYearlyDates(options = {}) {
   const nowLunar = solarToLunar(now);
   const lastYear = (nowLunar ? nowLunar.year : startLunar.year) + years;
   const seen = new Set();
-  for (let year = startLunar.year; year <= lastYear; year += 1) {
+  for (let year = startLunar.year; year <= lastYear; year += interval) {
     if (!isValidLunarYear(year)) {
       outOfRangeYears.push(year);
       continue;
@@ -240,11 +254,78 @@ export function lunarYearlyDates(options = {}) {
     if (!solar) continue;
     const key = `${solar.y}-${solar.m}-${solar.d}`;
     if (key === startKey || seen.has(key)) continue;
+    if (until != null && solarMs(solar) > until) continue;
     seen.add(key);
     dates.push(solar);
   }
   dates.sort((a, b) => (a.y - b.y) || (a.m - b.m) || (a.d - b.d));
   return { dates, outOfRangeYears };
+}
+
+/**
+ * 「农历每月重复」的实例日期列表（公历日期，升序，已去重）。
+ *
+ * 口径（0.8.35 任务书 §C）：按「农历第 M 月第 D 天」逐月展开，
+ *   - 该月没有第 D 天（大月 30 日、小月 29 天）→ **该月跳过**，不补最后一天、
+ *     不顺延到月初，记一条 skipped（调用方翻成日志）；
+ *   - 闰月事件（`leap: true`）只在有同号闰月的年份展开，没有闰月的那年跳过；
+ *   - 超出 1900–2100 年表的月份丢弃并记 skipped；
+ *   - 与 DTSTART 相同的那一天不算 RDATE（DTSTART 本身是第一个实例）。
+ *
+ * @param {{startMs?: number, month?: number, day?: number, leap?: boolean,
+ *          now?: number, months?: number, interval?: number, until?: number}} [options]
+ * @returns {{dates: Array<{y:number,m:number,d:number}>,
+ *            skipped: Array<{year:number, month:number, leap:boolean, day:number,
+ *                            reason:'out_of_range'|'missing_leap_month'|'missing_day'}>}}
+ */
+export function lunarMonthlyDates(options = {}) {
+  const dates = [];
+  const skipped = [];
+  const startMs = Number(options.startMs);
+  const month = Number(options.month);
+  const day = Number(options.day);
+  const leap = options.leap === true;
+  const now = Number.isFinite(options.now) ? options.now : Date.now();
+  const months = Number.isInteger(options.months) && options.months >= 0 ? options.months : LUNAR_RDATE_MONTHS;
+  const interval = Number.isInteger(options.interval) && options.interval >= 1 ? options.interval : 1;
+  const until = Number.isFinite(options.until) ? Number(options.until) : null;
+  if (!Number.isFinite(startMs) || !Number.isInteger(month) || month < 1 || month > 12) return { dates, skipped };
+  if (!Number.isInteger(day) || day < 1 || day > 30) return { dates, skipped };
+  const startLunar = solarToLunar(startMs);
+  if (!startLunar) return { dates, skipped };
+  const startDay = new Date(startMs);
+  const startKey = `${startDay.getFullYear()}-${startDay.getMonth() + 1}-${startDay.getDate()}`;
+  const nowLunar = solarToLunar(now);
+  const anchor = nowLunar || startLunar;
+  const startIdx = startLunar.year * 12 + (startLunar.month - 1);
+  const endIdx = anchor.year * 12 + (anchor.month - 1) + months;
+  const seen = new Set();
+  for (let idx = startIdx; idx <= endIdx; idx += interval) {
+    const year = Math.floor(idx / 12);
+    const m = (idx % 12) + 1;
+    if (!isValidLunarYear(year)) {
+      skipped.push({ year, month: m, leap, day, reason: 'out_of_range' });
+      continue;
+    }
+    if (leap && (m !== month || leapMonth(year) !== month)) {
+      skipped.push({ year, month: m, leap: true, day, reason: 'missing_leap_month' });
+      continue;
+    }
+    const length = leap ? leapMonthDays(year) : lunarMonthDays(year, m);
+    if (day > length) {
+      skipped.push({ year, month: m, leap, day, reason: 'missing_day' });
+      continue;
+    }
+    const solar = lunarToSolar(year, m, day, { leap });
+    if (!solar) continue;
+    const key = `${solar.y}-${solar.m}-${solar.d}`;
+    if (key === startKey || seen.has(key)) continue;
+    if (until != null && solarMs(solar) > until) continue;
+    seen.add(key);
+    dates.push(solar);
+  }
+  dates.sort((a, b) => (a.y - b.y) || (a.m - b.m) || (a.d - b.d));
+  return { dates, skipped };
 }
 
 /** `YYYYMMDD`（`RDATE;VALUE=DATE` 用的数字形式）。 */

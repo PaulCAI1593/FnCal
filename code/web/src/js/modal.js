@@ -15,6 +15,8 @@ import { icon } from './icons.js';
 // 0.7.0：详情卡标题前显示「emoji 名称」；注册表镜像由 store.loadTags() 维护。
 import { categoryTagName, tagCategoryLabel, tagForRecord, tagDisplayName, titleWithoutTagEmoji } from './store.js';
 import { splitTagTitle } from './tag-display.js';
+// 0.8.39：农历日期 / 规则说明的唯一实现（详情卡与搜索结果共用）。
+import { lunarHintText } from './lunar-text.js';
 // 0.7.5（用户「下拉菜单的分组也可以折叠」）：与筛选面板下拉共用折叠状态。
 import { expandAllGroups, isGroupCollapsed, toggleGroupCollapsed } from './tag-dropdown-collapse.js';
 import { enhanceSelect } from './select-listbox.js';
@@ -31,6 +33,7 @@ import {
   normalizeRecurrence,
   isScheduledOccurrence,
   materializeOccurrence,
+  countScheduledBefore,
 } from './recurrence.js';
 import { openCustomRecurrence, openScopeDialog, mountDialog } from './recurrence-dialog.js';
 import { isBlocked, isOfflineError } from './offline.js';
@@ -56,13 +59,20 @@ import {
 } from './date-utils.js';
 import { createTimeField, ownsEscape } from './time-field.js';
 import { closeDatePopover, openDatePopover } from './date-popover.js';
+// 0.8.36：任务重复的推进判断（与 store.toggleTask 同一口径）。
+import { taskRepeats } from './task-repeat.js';
+// 0.8.39：农历系列的「第 N 次」按现存实例编号，槽位毫秒与展开函数同一份算法。
+import { lunarSlotMs } from './lunar-repeat.js';
 // 0.2.12（C11-3）：编辑器里的农历标注/重复走同一份农历换算（与后端同源）。
 // 0.2.19（D3）：日期字段改回「一个日期按钮 + 弹层日历」，农历显示/选择在
 // date-popover.js 里；这里只需要公历 → 农历的换算来写字段文案。
 import {
+  LUNAR_RULE_MONTHLY,
+  LUNAR_RULE_YEARLY,
   lunarDayLabel,
-  lunarLabel,
   lunarMonthLabel,
+  lunarMonthlyDates,
+  lunarYearlyDates,
   solarToLunar,
 } from './lib/lunar-core.js';
 import { t } from '../i18n/index.js';
@@ -113,13 +123,17 @@ export function createEventModal({
   let preOooState = null; // event-mode config snapshot, so returning from OOO restores it
   let lastRepeatValue = 'none'; // last committed <select> value (to revert on cancel)
   let openedRuleJson = 'null'; // the rule as shown at open, to detect a Repeat change on save
-  let openedLunarYearly = false; // 0.2.12：「每年（农历）」开关在打开时的状态
-  // 0.2.12（C11-3）：农历开关。`lunar` 落地为记录上的农历标记；`lunarYearly`
-  // 表示「按农历每年重复」——它不写 RRULE，而是在 ICS 里写 X-FNCAL-LUNAR-RULE
-  // 与 RDATE 列表（服务端权威），所以 recurrence 在这里被刻意置空。
+  let openedLunarRule = 'null'; // 0.8.35：打开时的农历重复（规则 + 间隔 + 结束日期）快照
+  // 0.2.12（C11-3）：农历开关。`lunar` 落地为记录上的农历标记；`lunarYearly` /
+  // `lunarMonthly` 表示「按农历每年 / 每月重复」——它们不写 RRULE，而是在 ICS 里写
+  // X-FNCAL-LUNAR-RULE 与 RDATE 列表（服务端权威），所以 recurrence 在这里被刻意置空。
+  // 0.8.35：`lunarInterval` / `lunarUntil` 是农历「自定义」的两项，默认 1 / 不结束。
   let lunarYear = 0;
   let lunar = false;
   let lunarYearly = false;
+  let lunarMonthly = false;
+  let lunarInterval = 1;
+  let lunarUntil = null;
   let lunarMonth = 0;
   let lunarDay = 0;
   let lunarLeap = false;
@@ -427,14 +441,19 @@ export function createEventModal({
   /** Show only the fields each mode uses. Event: everything. Out of office: no
    *  guests / meeting link / notifications (Repeat stays — a recurring away
    *  block is a common need). Task: a single "Due" instant (no end row), a
-   *  Completed toggle, and notes — no repeat, notifications, or location. */
+   *  Completed toggle, Repeat (0.8.36：任务也能重复，没有到期日时不可用) and
+   *  notes — no notifications or location. */
   function applyMode() {
     const isOoo = mode === 'ooo';
     const isTask = mode === 'task';
     fields.startLabel.textContent = isTask ? t('editor.label.due') : t('editor.label.start');
     fields.endRow.style.display = isTask ? 'none' : '';
     fields.doneRow.style.display = isTask ? '' : 'none';
-    fields.repeatField.style.display = isTask ? 'none' : '';
+    // 0.8.36：任务模式同样显示重复行（任务书 §C）；外出本就有重复，行照旧显示。
+    fields.repeatField.style.display = '';
+    // 0.8.35：「农历」开关服务事件；0.8.36 起任务也能按农历重复，任务模式同样显示。
+    // 外出一律隐藏（与 0.8.35 一致）。
+    if (fields.lunarRow) fields.lunarRow.style.display = isOoo ? 'none' : '';
     fields.locationField.style.display = isTask ? 'none' : '';
     // Guests belong to plain events only — an out-of-office block marks you
     // away (it has no invitees) and tasks are personal. Meeting links follow
@@ -456,6 +475,7 @@ export function createEventModal({
     // stale (e.g. a task showing a start–end range, or an event missing it).
     syncLunarRow();
     syncCalendarField();
+    syncRepeatAvailability();
   }
 
   /* ---- 0.2.19（D3）：日期字段 + 弹层日历 -------------------------------- */
@@ -466,10 +486,9 @@ export function createEventModal({
   /**
    * 日期字段：一个「日期」按钮（点开是日历）+ 隐藏的公历真值。
    *
-   * 0.2.20（E6）：用户要求「去掉这些农历按钮，太重复了」——字段右侧的「公历/农历」
-   * 胶囊删掉，语种唯一入口在弹层日历右下角的「公历 | 农历」两段式；顶部「农历」开关
-   * 整行也删掉。农历态由两段式表达，并**等价于**原来的农历标记：保存仍写
-   * X-FNCAL-LUNAR 与农历月日，「每年」在农历态仍走 lunarRule。
+   * 0.8.35：语种唯一入口是编辑器「全天」行上方的「农历」开关（0.2.20 E6 曾把入口
+   * 收进弹层两段式，0.8.35 按用户要求收回开关、弹层不再有切换）。农历态等价于原来的
+   * 农历标记：保存仍写 X-FNCAL-LUNAR 与农历月日，「每年 / 每月」在农历态走 lunarRule。
    *
    * 对外返回 `{ node, input, sync }`：`input` 仍是视觉隐藏的
    * `<input type="date">`，是整个编辑器的**公历真值**（校验 / 保存 / .ics /
@@ -501,15 +520,6 @@ export function createEventModal({
                 if (next === input.value) return;
                 input.value = next;
                 input.dispatchEvent(new Event('change', { bubbles: true }));
-              },
-              onModeChange: (lunarMode) => {
-                // 0.2.20（E6）：两段式是唯一语种入口；农历态 == 原来勾上「农历」开关。
-                dateFieldLunar = lunarMode;
-                lunar = lunarMode;
-                if (lunar) adoptLunarFromStart();
-                else lunarYearly = false;
-                refreshRepeatOptions();
-                syncDatePickers();
               },
             }),
         },
@@ -900,6 +910,35 @@ export function createEventModal({
       }),
     ]);
 
+    // --- Lunar switch（0.8.35）---
+    // 0.2.20（E6）曾把顶部「农历」整行删掉，只留日期弹层的两段式；0.8.35 用户
+    // 要求「在全天按钮上面加一个农历的开关」，这行按新口径恢复：开关与两段式
+    // 双向同步（同一个 setLunarMode），农历态下重复下拉换成农历四档。
+    // 开关行用 .field 的两列网格（标签列 + 控件列），与上下各行的标签对齐。
+    fields.lunarToggle = el('input', {
+      type: 'checkbox',
+      role: 'switch',
+      'aria-label': t('editor.lunar'),
+    });
+    fields.lunarToggle.addEventListener('change', () => setLunarMode(fields.lunarToggle.checked));
+    fields.lunarStatus = el('p', {
+      class: 'cal-hint',
+      role: 'status',
+      style: { display: 'none' },
+      text: t('editor.lunarOutOfRange'),
+    });
+    fields.lunarRow = el('div', { class: 'field' }, [
+      el('span', { class: 'field__label', text: t('editor.lunar') }),
+      el('label', { class: 'inline-field', style: { cursor: 'pointer' } }, [
+        el('span', { class: 'switch' }, [
+          fields.lunarToggle,
+          el('span', { class: 'switch__track' }),
+          el('span', { class: 'switch__thumb' }),
+        ]),
+      ]),
+      fields.lunarStatus,
+    ]);
+
     // --- All-day switch ---
     // Label before switch: the label text sits in the editor's shared label
     // column, so the row lines up with Starts / Ends below it.
@@ -968,6 +1007,18 @@ export function createEventModal({
     fields.repeatField = el('div', { class: 'field' }, [
       el('span', { class: 'field__label', text: t('editor.repeat') }),
       enhanceSelect(fields.repeat)?.wrapper || fields.repeat,
+      // 0.8.36（任务书 §C）：任务没有到期日时重复不可用，原因写在这里。
+      (fields.repeatHint = el('span', {
+        class: 'field__label field__hint',
+        style: { display: 'none' },
+        text: '',
+      })),
+      // 0.8.38：农历态没有自定义入口，既有系列的间隔 / 结束日期在这行只读说明。
+      (fields.lunarKeptHint = el('span', {
+        class: 'field__label field__hint',
+        style: { display: 'none' },
+        text: '',
+      })),
     ]);
 
     // 0.2.20（E6）：顶部「农历」开关整行删掉——语种唯一入口在弹层日历的两段式，
@@ -1167,6 +1218,7 @@ export function createEventModal({
         fields.modeToggle,
         fields.titleField,
         fields.calendarField,
+        fields.lunarRow,
         allDayRow,
         startRow,
         fields.endRow,
@@ -1295,6 +1347,7 @@ export function createEventModal({
         // 0.2.18（C6④）：任一日期变更后两个农历控件都要重读真值——改开始日期会
         // 连带把结束日期推走（shiftEndWithStart），那次重写不派发 change。
         syncDatePickers();
+        syncRepeatAvailability();
       }),
     );
 
@@ -1320,10 +1373,109 @@ export function createEventModal({
   }
 
   /**
-   * 0.2.20（E6）：顶部「农历」开关与它的行状态同步一起删掉（语种只在弹层里）。
-   * 保留一个空实现，避免调用点散落判断；ooo 模式没有农历语义的逻辑随行一起消失。
+   * 0.8.35：农历态的唯一入口（只有「全天」行上方的开关走这里；弹层两段式已删）。
+   *
+   * 打开：记下当前开始日期的农历月日；公历重复规则在农历态下看不见（下拉只留
+   * 四项），静默保留会变成一条用户改不掉的隐形 RRULE，所以按任务书 B 项回落为
+   * 「不重复」。关闭：清掉农历重复与自定义的间隔/结束日期，公历预设恢复原样。
    */
-  function syncLunarRow() {}
+  function setLunarMode(next) {
+    const on = Boolean(next);
+    if (on === lunar) {
+      if (fields.lunarToggle) fields.lunarToggle.checked = lunar;
+      return;
+    }
+    lunar = on;
+    dateFieldLunar = on;
+    // 0.8.35 §8：弹层开着时切语种，先把弹层关掉——它以构建时的语种渲染，留着会
+    // 出现「标题农历、格内公历」的错位（用户要求语种只有一个入口）。
+    closeDatePopover();
+    if (on) {
+      adoptLunarFromStart();
+      if (recurrence) recurrence = null;
+    } else {
+      lunarYearly = false;
+      lunarMonthly = false;
+      lunarInterval = 1;
+      lunarUntil = null;
+    }
+    if (fields.lunarToggle) fields.lunarToggle.checked = lunar;
+    refreshRepeatOptions();
+    syncDatePickers();
+    syncLunarRow();
+  }
+
+  /** 农历重复的可比较形态（规则 + 间隔 + 结束日期），保存时判断是否改过。 */
+  function lunarRuleOf() {
+    if (!lunar) return 'null';
+    const rule = lunarYearly ? LUNAR_RULE_YEARLY : lunarMonthly ? LUNAR_RULE_MONTHLY : null;
+    return JSON.stringify({
+      rule,
+      interval: rule ? lunarInterval || 1 : 1,
+      until: rule ? lunarUntil || null : null,
+    });
+  }
+
+  /**
+   * 0.8.38：农历态没有「自定义…」入口（用户 2026-11-18 定：只有每月 / 每年）。
+   * 既有系列带着间隔或结束日期时，参数原样保留写回，只在重复下拉下方显示一行
+   * **只读**说明，不提供编辑入口：「保留既有设置：每 2 个农历月 · 至 2028-05-01」。
+   * 两项都没设时返回空串（说明行不出现）。
+   */
+  function lunarKeptHintText() {
+    const rule = lunarYearly || lunarMonthly;
+    if (!lunar || !rule) return '';
+    const every = lunarInterval > 1;
+    const parts = [];
+    if (every) {
+      parts.push(
+        t(lunarYearly ? 'editor.repeat.lunarEveryYear' : 'editor.repeat.lunarEveryMonth', {
+          n: lunarInterval,
+        }),
+      );
+    }
+    if (lunarUntil) {
+      parts.push(t('editor.repeat.lunarUntil', { date: toDateInputValue(new Date(lunarUntil)) }));
+    }
+    if (!parts.length) return '';
+    return t('editor.repeat.lunarKept', { detail: parts.join(' · ') });
+  }
+
+  function syncLunarKeptHint() {
+    if (!fields.lunarKeptHint) return;
+    const text = lunarKeptHintText();
+    fields.lunarKeptHint.textContent = text;
+    fields.lunarKeptHint.style.display = text ? '' : 'none';
+  }
+
+  /**
+   * 0.8.35：「农历」开关行与开始日期同步。
+   *
+   * - 外出一律隐藏（外出的保存本来就不带农历字段）；
+   * - 开始日期超出 1900–2100 年表时开关禁用并显示一行说明（任务书 A 项：不阻塞
+   *   保存、不弹错误条）；
+   * - 已经处在农历态但日期被改到年表外时，安静地退回公历态，不留一条打不开的
+   *   农历记录（保存时 lunar:false，不会写半截标记）。
+   */
+  function syncLunarRow() {
+    if (!fields.lunarRow) return;
+    const isOoo = mode === 'ooo';
+    fields.lunarRow.style.display = isOoo ? 'none' : '';
+    if (isOoo) return;
+    const inRange = Boolean(startLunar());
+    if (!inRange && lunar) {
+      lunar = false;
+      lunarYearly = false;
+      lunarMonthly = false;
+      lunarInterval = 1;
+      lunarUntil = null;
+      dateFieldLunar = false;
+      refreshRepeatOptions();
+    }
+    fields.lunarToggle.disabled = !inRange;
+    fields.lunarToggle.checked = lunar;
+    fields.lunarStatus.style.display = inRange ? 'none' : '';
+  }
 
   /**
    * 把两个隐藏的公历真值同步到日期字段（open / writeStart / writeEnd / 任一日期
@@ -1477,11 +1629,54 @@ export function createEventModal({
     refreshRepeatOptions();
   }
 
+  /**
+   * 0.8.35：农历态的重复下拉只有三项——不重复 / 每年（农历）/ 每月（农历）。
+   *
+   * 0.8.38（用户 2026-11-18 定）：农历不再提供「自定义…」，也没有间隔与结束日期
+   * 的编辑入口——「重复-农历就不需要自定义了，就只有每月每年的概念」。公历的
+   * 每天、每周X、每月第N个周X、每周工作日在农历里同样没有对应语义，全部不出现，
+   * 免得「看着是公历、实际按农历跑」。已有系列若带 lunarInterval / lunarUntil，
+   * 选中项仍是每年 / 每月，参数原样保留（保存时写回），只多一行只读说明。
+   */
+  function refreshLunarRepeatOptions() {
+    const key = lunarMonthly ? 'monthly' : lunarYearly ? 'yearly' : 'none';
+    clear(fields.repeat);
+    [
+      ['none', t('recurrence.preset.none')],
+      ['yearly', t('editor.repeat.yearlyLunar')],
+      ['monthly', t('editor.repeat.monthlyLunar')],
+    ].forEach(([value, label]) => {
+      const opt = el('option', { value, text: label });
+      if (value === key) opt.selected = true;
+      fields.repeat.append(opt);
+    });
+    fields.repeat.value = key;
+    syncLunarKeptHint();
+  }
+
+  /**
+   * 0.8.36（任务书 §C）：任务的重复规则以到期日为锚——没有（或非法）到期日就
+   * 不能选重复，下拉禁用并在行下写明原因。事件不受影响（它的锚是开始时间，
+   * 清空后由 onRepeatChange 自己拦）。
+   */
+  function syncRepeatAvailability() {
+    if (!fields.repeat || !fields.repeatHint) return;
+    const unusable = mode === 'task' && Number.isNaN(readStart().getTime());
+    fields.repeat.disabled = unusable;
+    fields.repeatHint.style.display = unusable ? '' : 'none';
+    fields.repeatHint.textContent = unusable ? t('editor.repeatNeedDue') : '';
+  }
+
   /** Rebuild the Repeat <select> options + selection for the current start. */
   function refreshRepeatOptions() {
     const start = readStart();
     if (Number.isNaN(start.getTime())) return;
     const startMs = start.getTime();
+    if (lunar) {
+      refreshLunarRepeatOptions();
+      lastRepeatValue = fields.repeat.value;
+      return;
+    }
     const presets = buildPresets(startMs);
     // 0.2.12：「每年（农历）」在数据上不是 recurrence（不写 RRULE），选中项由
     // lunarYearly 单独表示；其余情况仍按规则匹配。
@@ -1508,6 +1703,8 @@ export function createEventModal({
       fields.repeat.append(opt);
     });
     lastRepeatValue = fields.repeat.value;
+    // 公历态不该出现农历的只读说明（关开关、换到公历预设都要立刻收掉）。
+    syncLunarKeptHint();
   }
 
   function onRepeatChange() {
@@ -1532,6 +1729,20 @@ export function createEventModal({
       // role="alert" and sits directly above this row.
       fields.repeat.value = lastRepeatValue;
       showError(t('editor.error.repeatNeedsStart'));
+      return;
+    }
+    // 0.8.35 / 0.8.38：农历态只有三项，规则由 lunarYearly / lunarMonthly 表示
+    // （不写 RRULE）。没有「自定义…」入口，也就没有间隔 / 结束日期的改动路径：
+    // 已有系列上的 lunarInterval / lunarUntil 原样留着，选「不重复」才随规则一起清空。
+    if (lunar) {
+      lunarYearly = val === 'yearly';
+      lunarMonthly = val === 'monthly';
+      if (!lunarYearly && !lunarMonthly) {
+        lunarInterval = 1;
+        lunarUntil = null;
+      }
+      refreshRepeatOptions();
+      syncLunarRow();
       return;
     }
     if (val === 'custom') {
@@ -1943,10 +2154,19 @@ export function createEventModal({
       // 并在真的换日历时重写键空间（新键落地后再删旧键）。
       ...(multiCalendar() && calendarId ? { calendarId } : {}),
       // 0.2.12（C11-3）：农历标记。单次=记下农历月日、公历时间点不变；
-      // 「每年（农历）」另写 lunarRule，服务端据此展开 RDATE（绝不写 RRULE）。
+      // 「每年（农历）」「每月（农历）」另写 lunarRule，服务端据此展开 RDATE
+      // （绝不写 RRULE）。0.8.35 的「自定义」= 规则 + 间隔 + 结束日期（不结束为 null）。
       ...(lunar && !isOoo
-        ? { lunar: true, lunarMonth, lunarDay, lunarLeap, lunarRule: lunarYearly ? 'YEARLY-LUNAR' : null }
-        : { lunar: false, lunarRule: null }),
+        ? {
+            lunar: true,
+            lunarMonth,
+            lunarDay,
+            lunarLeap,
+            lunarRule: lunarYearly ? LUNAR_RULE_YEARLY : lunarMonthly ? LUNAR_RULE_MONTHLY : null,
+            lunarInterval: (lunarYearly || lunarMonthly) && lunarInterval > 1 ? lunarInterval : null,
+            lunarUntil: (lunarYearly || lunarMonthly) && lunarUntil ? lunarUntil : null,
+          }
+        : { lunar: false, lunarRule: null, lunarInterval: null, lunarUntil: null }),
     };
 
     // Editing one occurrence of a recurring series: ask which occurrences the
@@ -1963,7 +2183,8 @@ export function createEventModal({
       const ruleChanged =
         JSON.stringify(normalizeRecurrence(rule, start.getTime()) ?? null) !== openedRuleJson
         // 0.2.12：切到/切走「每年（农历）」也是一次重复规则变更。
-        || lunarYearly !== openedLunarYearly;
+        // 0.8.35：农历态比整组（规则 + 间隔 + 结束日期），每月与自定义同样算改动。
+        || lunarRuleOf() !== openedLunarRule;
       // A per-occurrence override can't carry a guest list either (guests live
       // on the series master), so a guest change also rules out "This event".
       const guestsChanged = guestsJsonBeforeAutoAdd !== openedGuestsJson;
@@ -1979,7 +2200,7 @@ export function createEventModal({
           // 0.2.12：农历每年重复不写 RRULE，规则在这里显式置空。
           // 0.2.16（A1）：close() 交给 applySeriesSave 在成功后执行——写失败时
           // 范围对话框已关，但编辑窗口必须带着字段留在原地。
-          applySeriesSave(occ, fieldsPayload, lunarYearly ? null : rule, scope);
+          applySeriesSave(occ, fieldsPayload, (lunarYearly || lunarMonthly) ? null : rule, scope);
         },
       });
       return;
@@ -2000,10 +2221,10 @@ export function createEventModal({
         ? { ...recurrence, until: endOfDay(start).getTime() }
         : recurrence;
     // 0.2.12：「每年（农历）」不写公历 RRULE，重复规则必须显式置空，否则服务端
-    // 会按公历同日展开，和农历同月同日对不上。
-    const effectiveRule = lunarYearly ? null : clampedRule;
+    // 会按公历同日展开，和农历同月同日对不上。0.8.35：「每月（农历）」同理。
+    const effectiveRule = (lunarYearly || lunarMonthly) ? null : clampedRule;
     if (effectiveRule) payload.recurrence = effectiveRule;
-    else if ((current && current.recurrence) || lunarYearly) payload.recurrence = null;
+    else if ((current && current.recurrence) || lunarYearly || lunarMonthly) payload.recurrence = null;
 
     setSaving(true);
     showError('');
@@ -2046,6 +2267,12 @@ export function createEventModal({
    *  prefix), so this never touches event logic — it reuses this window's shared
    *  fields: title, all-day, the start inputs (as the single "Due" instant),
    *  the description textarea (as notes), and color. */
+  /** 0.8.36：重复任务的锚点——编辑已有重复任务时保留原锚点，新建用这次到期日。 */
+  function taskRepeatAnchor(dueMs) {
+    if (current && Number.isFinite(current.repeatAnchor)) return Math.round(current.repeatAnchor);
+    return Math.round(dueMs);
+  }
+
   function handleSaveTask() {
     if (saving) return; // 0.2.16（A1）：保存中再按一次不重复提交
     const allDay = fields.allDay.checked;
@@ -2064,8 +2291,25 @@ export function createEventModal({
       done: fields.doneToggle.checked,
       color,
       colorOverride: colorPicked,
-      // 0.2.12（C11-3）：任务同样可以只标农历日期（没有「每年」——任务没有重复）。
-      ...(lunar ? { lunar: true, lunarMonth, lunarDay, lunarLeap } : { lunar: false }),
+      // 0.8.36（任务书 §A）：任务重复。公历规则写 recurrence，农历重复写
+      // lunarRule（互斥）；锚点只在新建时定一次，编辑沿用原锚点，count 与周几
+      // 才不会随每次推进漂移。
+      ...(lunar
+        ? {
+            lunar: true,
+            lunarMonth,
+            lunarDay,
+            lunarLeap,
+            lunarRule: lunarYearly ? LUNAR_RULE_YEARLY : lunarMonthly ? LUNAR_RULE_MONTHLY : null,
+            lunarInterval: (lunarYearly || lunarMonthly) && lunarInterval > 1 ? lunarInterval : null,
+            lunarUntil: (lunarYearly || lunarMonthly) && lunarUntil ? lunarUntil : null,
+            repeatAnchor: taskRepeatAnchor(due.getTime()),
+          }
+        : {
+            lunar: false,
+            recurrence: recurrence ? normalizeRecurrence(recurrence, due.getTime()) : null,
+            repeatAnchor: recurrence ? taskRepeatAnchor(due.getTime()) : null,
+          }),
       ...(multiCalendar() && calendarId ? { calendarId } : {}),
       // 0.7.0（用户）：任务同样单标签。
       ...(formApi ? formApi.tagPayload() : {}),
@@ -2321,6 +2565,10 @@ export function createEventModal({
     // the field's own handler, so it has to step aside here rather than rely
     // on the field stopping propagation.
     if (e.key === 'Escape' && ownsEscape(e.target)) return;
+    // 0.8.35 §9：日期弹层开着时 Escape 先归它（关年月选择器 → 关弹层），
+    // 不能把整个编辑器一起关掉。弹层自己的 capture 监听在它打开时才挂上，
+    // 排在本监听之后，所以这里必须主动让开。
+    if (e.key === 'Escape' && document.querySelector('.date-pop')) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       close();
@@ -2395,8 +2643,12 @@ export function createEventModal({
     // 时按开始日期反推（老数据只有 lunar:true 时也能显示对）。
     // 注意「每年（农历）」不写 RRULE，所以 recurrence 这里仍是 null，由
     // lunarYearly 单独表示，保存时再决定写哪一边。
+    // 0.8.35：每月（农历）与「自定义」的间隔/结束日期同样从记录回读。
     lunar = Boolean(event && event.lunar);
     lunarYearly = Boolean(event && event.lunarRule === 'YEARLY-LUNAR');
+    lunarMonthly = Boolean(event && event.lunarRule === 'MONTHLY-LUNAR');
+    lunarInterval = (event && event.lunarInterval) || 1;
+    lunarUntil = (event && event.lunarUntil) || null;
     lunarYear = (event && event.lunarYear) || 0;
     lunarMonth = (event && event.lunarMonth) || 0;
     lunarDay = (event && event.lunarDay) || 0;
@@ -2514,7 +2766,7 @@ export function createEventModal({
     // Normalized, so shape differences (store's 6-key canonical form vs the
     // custom dialog's sparse rebuild) never read as a change.
     openedRuleJson = JSON.stringify(normalizeRecurrence(recurrence, readStart().getTime()) ?? null);
-    openedLunarYearly = lunarYearly;
+    openedLunarRule = lunarRuleOf();
     // 0.2.19（D3）：打开时日期字段的显示语种 = 这条事件的农历标记（新建为公历）；
     // 之后仍可由字段右侧的「公历/农历」按钮单独切换。
     dateFieldLunar = lunar;
@@ -2666,23 +2918,105 @@ export function createEventModal({
    *  moved on its own (a this-event edit) would otherwise relabel the whole
    *  series after the day it was moved to. */
   function viewRepeat(item) {
-    if (item.isTask) return '';
+    // 0.8.36：任务也能重复（任务书 §C）——只写规则说明，不加「第 N 次」。
+    if (item.isTask) {
+      return item.recurrence ? describeRecurrence(item.recurrence, item.due) : '';
+    }
     const master = item.seriesId ? store.getEvent(item.seriesId) || {} : item;
-    return master.recurrence ? describeRecurrence(master.recurrence, master.start) : '';
+    const text = master.recurrence ? describeRecurrence(master.recurrence, master.start) : '';
+    return withOccurrenceIndex(item, text);
+  }
+
+  /**
+   * 0.8.35 §7（用户「重复事件在这里显示一下是第几次重复」）：在详情卡的重复
+   * 说明行末尾补「第 N 次」。第 1 次不显示（避免噪音），算不出来时原样返回。
+   *
+   * - 公历：槽位序号（`countScheduledBefore`）减去该槽位之前被 EXDATE 排除的
+   *   条数——删掉的实例不占号，按现存实例的原始规则时间连续编号；单次覆盖的
+   *   实例确实存在，仍按原槽位算。只有 `rule.count` 有值时才补「/ 共 M 次」，
+   *   M = count − EXDATE 条数；只给 until 的系列不猜总数。
+   * - 农历每年 / 每月：槽位序号（展开结果下标 + 2，起点是第 1 次）减去该实例
+   *   之前被 EXDATE 排除的条数——与公历同口径，删掉的实例不占号（0.8.39）。
+   */
+  function withOccurrenceIndex(item, text) {
+    if (!text || !item || item.isTask || item.ooo) return text;
+    let n = 0;
+    let total = null;
+    try {
+      if (item.lunarRule === LUNAR_RULE_YEARLY || item.lunarRule === LUNAR_RULE_MONTHLY) {
+        // 0.8.39（总监 m00890 ①）：单次挪过时间的实例 `start` 已变，序号必须
+        // 按原始规则槽位算——`recurrenceId` 才是槽位，`start` 只是显示时间。
+        const slotMs = Number(item.recurrenceId ?? item.start);
+        if (!Number.isFinite(slotMs)) return text;
+        const master = item.seriesId ? store.getEvent(item.seriesId) || item : item;
+        const month = Number(master.lunarMonth);
+        const day = Number(master.lunarDay);
+        const anchorMs = Number(master.start);
+        const startLunar = solarToLunar(anchorMs);
+        const occLunar = solarToLunar(slotMs);
+        if (!month || !day || !startLunar || !occLunar) return text;
+        const monthsDiff =
+          occLunar.year * 12 + occLunar.month - 1 - (startLunar.year * 12 + startLunar.month - 1);
+        if (monthsDiff < 0) return text;
+        const base = {
+          startMs: anchorMs,
+          month,
+          day,
+          leap: Boolean(master.lunarLeap),
+          now: slotMs,
+          interval: Number(master.lunarInterval) || 1,
+          until: master.lunarUntil || null,
+        };
+        const dates =
+          item.lunarRule === LUNAR_RULE_MONTHLY
+            ? lunarMonthlyDates({ ...base, months: monthsDiff + 1 }).dates
+            : lunarYearlyDates({ ...base, years: occLunar.year - startLunar.year }).dates;
+        const occ = new Date(slotMs);
+        const idx = dates.findIndex(
+          (d) => d.y === occ.getFullYear() && d.m === occ.getMonth() + 1 && d.d === occ.getDate(),
+        );
+        if (idx < 0) return text;
+        // 0.8.39（总监 m00829）：删掉的农历实例不占号，与公历同一口径——
+        // 槽位序号减去该槽位之前被 EXDATE 取消的条数。EXDATE 存的是实例
+        // 起始毫秒（全天为本地零点），与展开函数共用 lunarSlotMs。
+        const exdates = (Array.isArray(master.exdates) ? master.exdates : [])
+          .map(Number)
+          .filter(Number.isFinite);
+        const excludedBefore = dates
+          .slice(0, idx)
+          .map((d) => lunarSlotMs(master, d))
+          .filter((ms) => exdates.includes(ms)).length;
+        n = idx + 2 - excludedBefore;
+      } else {
+        const master = item.seriesId ? store.getEvent(item.seriesId) || {} : item;
+        if (!master.recurrence) return text;
+        const rule = normalizeRecurrence(master.recurrence, master.start);
+        if (!rule) return text;
+        const slot = Number(item.recurrenceId ?? item.start);
+        if (!Number.isFinite(slot)) return text;
+        const exdates = (Array.isArray(master.exdates) ? master.exdates : [])
+          .map(Number)
+          .filter(Number.isFinite);
+        const excludedBefore = exdates.filter((ms) => ms < slot).length;
+        n = countScheduledBefore(rule, Number(master.start), slot) + 1 - excludedBefore;
+        total = Number.isInteger(rule.count) ? Math.max(n, rule.count - exdates.length) : null;
+      }
+    } catch {
+      return text;
+    }
+    if (!(n >= 2)) return text;
+    const label =
+      total != null ? t('view.occurrenceIndexTotal', { n, m: total }) : t('view.occurrenceIndex', { n });
+    return `${text} · ${label}`;
   }
 
   /** 0.2.12（C11-3）：详情卡里的农历一行——「农历八月十五」，按农历每年
-   *  重复时再补「每年重复」。没有农历标记的条目返回空串（整行不显示）。 */
+   *  重复时再补「每年重复」。0.8.35 增加「每月（农历）」与自定义的间隔/结束日期。
+   *  没有农历标记的条目返回空串（整行不显示）。 */
   function viewLunarHint(item) {
-    if (!item || !item.lunar) return '';
-    const parts = item.lunarMonth
-      ? { year: item.lunarYear || solarToLunar(item.start || item.due)?.year, month: item.lunarMonth, day: item.lunarDay, leap: Boolean(item.lunarLeap) }
-      : solarToLunar(item.start || item.due);
-    if (!parts || !parts.month || !parts.day) return '';
-    const label = lunarLabel(parts.year, parts.month, parts.day, Boolean(parts.leap), false);
-    return item.lunarRule === 'YEARLY-LUNAR'
-      ? t('view.lunarYearly', { label })
-      : t('view.lunar', { label });
+    // 0.8.39：农历文案抽到 `lunar-text.js`，与搜索结果同一套措辞。
+    // 日期按实例自己落在哪一天换算，不再只看主事件的规则锚点。
+    return withOccurrenceIndex(item, lunarHintText(item, { endsOn: toDateInputValue }));
   }
 
   function viewRow(iconName, children) {
@@ -2822,11 +3156,32 @@ export function createEventModal({
       });
   }
 
+  /**
+   * 0.8.36（任务书 §B）：勾完成后 3 秒提示——推进到下一次，或说明这就是最后一次。
+   * 只在「这条任务本来带重复、且这次是勾上完成」时提示；取消勾选与普通任务不提示。
+   */
+  function announceTaskRepeat(task, before) {
+    if (!task || !before || before.done || !taskRepeats(before)) return;
+    if (!task.done && task.due !== before.due) {
+      const due = new Date(task.due);
+      const opts = { hour12: store.getSettings().hour12 };
+      const date = task.allDay ? formatFullDate(due) : `${formatFullDate(due)} ${formatTime(due, opts)}`;
+      toast(t('view.taskNext', { date }), { duration: 3000 });
+    } else if (task.done) {
+      toast(t('view.taskLast'), { duration: 3000 });
+    }
+  }
+
   function toggleTaskDone() {
     if (isBlocked()) return void toast(t('editor.error.offlineWrite'));
     const id = current.id;
+    const before = store.getTask(id) || null;
     Promise.resolve(store.toggleTask(id))
-      .then(() => refreshView(store.getTask(id)))
+      .then((updated) => {
+        const task = updated || store.getTask(id);
+        announceTaskRepeat(task, before);
+        refreshView(task);
+      })
       .catch((err) => {
         if (isOfflineError(err)) return;
         console.error(err);
@@ -3199,6 +3554,9 @@ export function createEventModal({
         calendarId,
         lunar,
         lunarYearly,
+        lunarMonthly,
+        lunarInterval,
+        lunarUntil,
         lunarYear,
         lunarMonth,
         lunarDay,
@@ -3231,6 +3589,9 @@ export function createEventModal({
     if (v.calendarId) calendarId = v.calendarId;
     lunar = Boolean(v.lunar);
     lunarYearly = Boolean(v.lunarYearly);
+    lunarMonthly = Boolean(v.lunarMonthly);
+    lunarInterval = v.lunarInterval || 1;
+    lunarUntil = v.lunarUntil || null;
     lunarYear = v.lunarYear || 0;
     lunarMonth = v.lunarMonth || 0;
     lunarDay = v.lunarDay || 0;

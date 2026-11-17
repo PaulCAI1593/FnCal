@@ -16,6 +16,7 @@ import { icon } from './icons.js';
 import { ownsEscape } from './time-field.js';
 import { ordinalLabel } from './recurrence.js';
 import { closeOnBackdrop } from './scrim.js';
+import { closeDatePopover, openDatePopover } from './date-popover.js';
 import { t } from '../i18n/index.js';
 import {
   toDateInputValue,
@@ -27,6 +28,82 @@ import {
   WEEKDAYS_NARROW,
   WEEKDAYS_LONG,
 } from './date-utils.js';
+
+/**
+ * 0.8.35 §10：重复弹层里的日期框改用编辑器同款弹层日历。
+ *
+ * 原生 `<input type="date">` 的日历由浏览器画，深色主题下是白底浮层、中文语言
+ * 也跟系统走，和编辑器其它日期框不一致。这里换成「按钮 + 隐藏公历真值 + FnCal
+ * 弹层」，并带上「清除 / 今天」两个动作（结束日期清空 = 结束方式回「不限」）。
+ *
+ * 返回值里 `input` 仍是**公历真值**（`YYYY-MM-DD`），上一层的 buildRule 逻辑不用改。
+ */
+function popoverDateField({ value = '', ariaLabel, minMs = null, onChange }) {
+  const input = el('input', {
+    class: 'editor__date-native',
+    type: 'date',
+    value,
+    tabindex: '-1',
+    'aria-label': ariaLabel,
+  });
+  if (minMs != null) input.min = toDateInputValue(new Date(minMs));
+  const text = el('span', { class: 'editor__date-main' });
+
+  function paint() {
+    if (!input.value) {
+      text.textContent = t('editor.pickDate');
+      text.classList.add('is-placeholder');
+      return;
+    }
+    const date = fromDateTimeInputs(input.value, '00:00');
+    text.classList.remove('is-placeholder');
+    text.textContent = Number.isNaN(date.getTime())
+      ? input.value
+      : t('editor.dateTitle.solarFull', {
+          year: date.getFullYear(),
+          month: date.getMonth() + 1,
+          day: date.getDate(),
+        });
+  }
+
+  function commit(next) {
+    if (next === input.value) return;
+    input.value = next;
+    paint();
+    if (typeof onChange === 'function') onChange(next);
+  }
+
+  const trigger = el(
+    'button',
+    {
+      class: 'editor__date-btn',
+      type: 'button',
+      'aria-label': ariaLabel,
+      on: {
+        click: () =>
+          openDatePopover({
+            anchor: trigger,
+            value: input.value,
+            lunar: false,
+            showModeToggle: false,
+            actions: { onClear: () => commit('') },
+            onPick: (next) => commit(next),
+          }),
+      },
+    },
+    [text],
+  );
+
+  const node = el('div', { class: 'editor__date-field' }, [trigger, input]);
+  paint();
+  return {
+    input,
+    node,
+    setDisabled(flag) {
+      trigger.disabled = Boolean(flag);
+    },
+  };
+}
 
 const UNITS = [
   { unit: 'day', freq: 'daily', key: 'recurrence.unit.day' },
@@ -42,6 +119,8 @@ export function mountDialog(dialog, onClose) {
 
   function close() {
     document.removeEventListener('keydown', onKey, true);
+    // 0.8.35 §10：日期弹层是挂在 body 上的单例，关弹窗时一起收起，免得留在半空。
+    closeDatePopover();
     scrim.remove();
     if (lastFocused && lastFocused.focus) lastFocused.focus();
     onClose && onClose();
@@ -218,16 +297,23 @@ export function openCustomRecurrence({ rule, startMs, anchorMs = startMs, weekSt
   const defaultUntil = rule && rule.until ? new Date(rule.until) : addWeeks(start, 13);
   const endsMode = rule && rule.count != null ? 'after' : rule && rule.until != null ? 'on' : 'never';
 
-  const untilInput = el('input', {
-    class: 'input',
-    type: 'date',
+  // 0.8.35 §10：结束日期走 FnCal 弹层日历；清空 = 结束方式回「不限」。
+  const untilField = popoverDateField({
     value: toDateInputValue(defaultUntil),
     // An "Ends on" date before the series' first occurrence would leave it
-    // with zero occurrences — the event would vanish from every view. Keep
-    // the picker from offering such dates (buildRule clamps typed ones).
-    min: toDateInputValue(anchor),
-    'aria-label': t('recurrence.field.endDate'),
+    // with zero occurrences — the event would vanish from every view.
+    //（buildRule 仍会把早于起始的输入夹回去。）
+    minMs: anchor.getTime(),
+    ariaLabel: t('recurrence.field.endDate'),
+    onChange: (next) => {
+      if (!next) {
+        radios.on.checked = false;
+        radios.never.checked = true;
+        syncEnds();
+      }
+    },
   });
+  const untilInput = untilField.input;
   const countInput = el('input', {
     class: 'input rr-num',
     type: 'number',
@@ -250,7 +336,7 @@ export function openCustomRecurrence({ rule, startMs, anchorMs = startMs, weekSt
     endsRadio('never', el('span', { text: t('recurrence.ends.never') })),
     endsRadio(
       'on',
-      el('span', { class: 'rr-ends-line' }, [el('span', { text: t('recurrence.ends.on') }), untilInput]),
+      el('span', { class: 'rr-ends-line' }, [el('span', { text: t('recurrence.ends.on') }), untilField.node]),
     ),
     endsRadio(
       'after',
@@ -262,7 +348,7 @@ export function openCustomRecurrence({ rule, startMs, anchorMs = startMs, weekSt
     ),
   ]);
   function syncEnds() {
-    untilInput.disabled = !radios.on.checked;
+    untilField.setDisabled(!radios.on.checked);
     countInput.disabled = !radios.after.checked;
   }
 

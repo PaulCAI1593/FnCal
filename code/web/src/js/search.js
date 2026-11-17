@@ -25,6 +25,9 @@ import { createFloatingLayer } from './floating-layer.js';
 // 0.7.5（用户「搜索里的任务没带emoji」）：结果标题与详情卡共用同一套拆分。
 import { splitTagTitle } from './tag-display.js';
 import { describeRecurrence, occurrenceNear } from './recurrence.js';
+// 0.8.39：农历系列不写 RRULE，重复判定要连 lunarRule 一起认；日期文案与详情卡同源。
+import { isLunarSeries } from './lunar-repeat.js';
+import { isLunarRecord, lunarDateLabel, lunarRuleLabel } from './lunar-text.js';
 import {
   formatFullDate,
   formatTime,
@@ -217,7 +220,7 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
    *  events first GLOBALLY, so a per-occurrence all-day override would otherwise
    *  pull a distant occurrence to fwd[0]/back[last] and mis-date the series. */
   function representative(ev, fwd, back, now) {
-    if (!ev.recurrence) return ev;
+    if (!ev.recurrence && !isLunarSeries(ev)) return ev;
     if (fwd && fwd.length) return fwd.reduce((a, b) => (b.start < a.start ? b : a));
     if (back && back.length) return back.reduce((a, b) => (b.start > a.start ? b : a));
     // No occurrence within the ±window (e.g. a count/until series that ended
@@ -265,7 +268,7 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     // one entry per occurrence whose override changes searchable text, dated at
     // that exact occurrence (no repeat badge: it is a one-off exception).
     for (const ev of store.getAllEvents()) {
-      if (!ev.recurrence) continue;
+      if (!ev.recurrence && !isLunarSeries(ev)) continue;
       const exdates = new Set((ev.exdates || []).map(Number));
       for (const [rid, o] of Object.entries(ev.overrides || {})) {
         if (!o) continue;
@@ -1239,9 +1242,18 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
     } else {
       timeText = rep.allDay ? t('editor.allDay') : formatTimeRange(start, end, { hour12 });
     }
-    let meta = ev.recurrence
-      ? `${describeRecurrence(ev.recurrence, ev.start)} · ${timeText}`
-      : `${formatFullDate(start)} · ${timeText}`;
+    // 0.8.39（用户 01:56）：农历记录按农历显示日期。公历记录与非农历单次记录
+    // 保持原样：公历重复仍用 describeRecurrence，单次仍是 formatFullDate。
+    let meta;
+    if (isLunarRecord(ev)) {
+      const dateLabel = lunarDateLabel(ev, rep.start ?? rep.due);
+      const ruleLabel = lunarRuleLabel(ev);
+      meta = [dateLabel || formatFullDate(start), ruleLabel, timeText].filter(Boolean).join(' · ');
+    } else if (ev.recurrence) {
+      meta = `${describeRecurrence(ev.recurrence, ev.start)} · ${timeText}`;
+    } else {
+      meta = `${formatFullDate(start)} · ${timeText}`;
+    }
     if (ev.location) meta += ` · ${ev.location}`;
     if (isTask && ev.done) meta += ` ${t('search.result.done')}`;
 
@@ -1288,7 +1300,7 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
           titleEl,
           el('span', { class: 'search__meta', text: meta }),
         ]),
-        ev.recurrence
+        ev.recurrence || isLunarSeries(ev)
           ? el('span', { class: 'search__badge', html: icon('repeat', { size: 'sm' }), title: t('search.badge.repeats') })
           : null,
       ],

@@ -33,7 +33,22 @@ import {
   writeModeOf,
 } from './ai-grants.mjs';
 import { tagErrorOf, tagProposalCard } from './ai-store.mjs';
-import { busyIntervals, dateDigitsInZone, eventFromIcs, eventToIcs, eventsOf, matchesTimeRange, proposalFieldsOfIcs, uidOf } from './ical.mjs';
+import { busyIntervals, dateDigitsInZone, eventFromIcs, eventToIcs, eventsOf, lunarOccurrencesInRange, lunarSlotOccurrences, matchesTimeRange, proposalFieldsOfIcs, taskFromIcs, taskToIcs, uidOf } from './ical.mjs';
+// 0.8.40：农历系列在 MCP 读端点要按区间逐次返回，判定规则与网页 lunar-repeat.js 同口径。
+import { lunarInfoOf } from './lunar.mjs';
+// 0.8.37（任务书 §A）：MCP 的「重复 + 农历」参数与对外形态只在这一层映射，
+// REST 与 MCP 写出来的 ICS 必须与网页导出的一致。
+import {
+  AiInputError,
+  applyLunarFields,
+  lunarRuleViewOf,
+  lunarViewOf,
+  parseLunarRequest,
+  parseRecurrenceRequest,
+  recurrenceViewOf,
+} from './ai-model.mjs';
+// 0.8.37（任务书 §B）：任务「完成即推进」与网页 task-repeat.js 同口径。
+import { nextTaskDue, taskRepeats } from './task-repeat.mjs';
 // 0.8.0（任务书 §十）：年度总结与网页共用同一份统计与文案。
 import { annualSummarySentence, buildAnnualReviewData } from './annual-review.mjs';
 import { collectAnnualEvents, loadExpander, yearRange, YEAR_MAX, YEAR_MIN } from './annual-collect.mjs';
@@ -360,9 +375,17 @@ export function createAiService({
       allDayDate: event.allDay && event.startDate ? event.startDate : null,
       allDayEndDate: event.allDay && event.endDate ? event.endDate : null,
       status: event.status || 'CONFIRMED',
-      recurring: Boolean(event.recurrence || event.rruleRaw),
+      // 0.8.40：农历重复也是重复系列（对外 recurring 必须为 true，否则客户端当成单次）。
+      recurring: Boolean(event.recurrence || event.rruleRaw || event.lunarRule),
       busy: String(event.transp || '').toUpperCase() !== 'TRANSPARENT' && String(event.status || '').toUpperCase() !== 'CANCELLED',
     };
+    // 0.8.40：农历各次的身份 = 该次开始毫秒（与 store.js 的 `<seriesId>::<ms>` 同口径）。
+    if (Number.isFinite(event.recurrenceId)) payload.recurrenceId = event.recurrenceId;
+    // 0.8.37（任务书 §A3）：每个实例都带自己的农历日；规则与公历重复没有时为 null。
+    // 都是新增键：老客户端忽略未知键，字段掩码只裁 location/description/attendees。
+    payload.lunar = lunarViewOf(event.start);
+    payload.lunarRule = lunarRuleViewOf(event);
+    payload.recurrence = recurrenceViewOf(event.recurrence);
     if (event.location) payload.location = event.location;
     if (event.description) payload.description = event.description;
     const guests = Array.isArray(event.guests) ? event.guests : [];
@@ -373,6 +396,33 @@ export function createAiService({
         return entry;
       });
     }
+    return maskEventForCredential(credential, payload);
+  }
+
+  /**
+   * 任务对外形态（0.8.37 §B）。与 `eventPayload` 同风格：日期一律 ISO，全天任务
+   * 另给 `allDayDate`；`notes` 受凭据的「备注」字段掩码约束（与事件 description 同一条）。
+   */
+  function taskPayload(credential, task, calendarId) {
+    const due = Number.isFinite(task.due) ? task.due : null;
+    const payload = {
+      // 文件名用的是裸 uid；taskToIcs 会把 UID 行补成 `<uid>@caldav.local`，读回后再去掉，
+      // 否则客户端拿返回值去 get_task / complete_task 会找不到（存储层不允许 `@`）。
+      uid: String(task.uid || task.id || '').replace(/@caldav\.local$/, ''),
+      calendarId,
+      title: task.title || '',
+      due: due === null ? null : isoOf(due),
+      allDay: Boolean(task.allDay),
+      allDayDate: task.allDay && task.dueDate ? task.dueDate : null,
+      done: Boolean(task.done),
+      status: task.done ? 'COMPLETED' : 'NEEDS-ACTION',
+      recurring: taskRepeats(task),
+      lunar: due === null ? null : lunarViewOf(due),
+      lunarRule: lunarRuleViewOf(task),
+      recurrence: recurrenceViewOf(task.recurrence),
+    };
+    const masked = maskEventForCredential(credential, { description: task.notes || '' });
+    if (masked.description) payload.notes = task.notes;
     return maskEventForCredential(credential, payload);
   }
 
@@ -732,8 +782,48 @@ export function createAiService({
     return icsForUid(draft, wantedUid || draft.uid);
   }
 
-  function proposalView(proposal, nowMs) {
-    return {
+  /**
+   * 0.8.37（任务书 §A）：把 `lunar` / `recurrence` 参数写进事件模型（新建与修改共用）。
+   *
+   *  - `ics` 与 `lunar` 同时给 → `lunar_conflicts_ics`，不静默取舍；
+   *  - `ics` 与 `recurrence` 同时给 → `invalid`（ics 自带规则，叠一层会互相覆盖）；
+   *  - `lunar` 与 `recurrence` 互斥：农历规则本身用 RDATE 展开，不再写公历 RRULE；
+   *  - `lunar: null` / `recurrence: null` = 清除，退回单次。
+   *
+   * @returns {boolean} 是否动过模型（调用方据此决定要不要重新序列化 ICS）
+   */
+  function applyRuleParams(model, body, { hasIcs = false } = {}) {
+    const wantsLunar = body.lunar !== undefined;
+    const wantsRecurrence = body.recurrence !== undefined;
+    if (!wantsLunar && !wantsRecurrence) return false;
+    if (hasIcs && wantsLunar) {
+      throw new AiInputError(
+        'lunar_conflicts_ics',
+        '同时给了 ics 与 lunar。ics 里已经有重复规则时不能再加农历规则；要农历重复就只给结构化字段',
+      );
+    }
+    if (hasIcs && wantsRecurrence) {
+      throw new AiInputError('invalid', '同时给了 ics 与 recurrence；请只给一个', 'recurrence');
+    }
+    if (wantsLunar && body.lunar !== null && wantsRecurrence && body.recurrence !== null) {
+      throw new AiInputError('invalid', '农历规则与公历重复只能二选一', 'recurrence');
+    }
+    const anchor = Number.isFinite(model.start) ? model.start : Date.now();
+    if (wantsRecurrence) {
+      const recurrence = parseRecurrenceRequest(body.recurrence, anchor);
+      model.recurrence = recurrence;
+      if (!recurrence) model.rruleRaw = '';
+    }
+    if (wantsLunar) {
+      const lunar = parseLunarRequest(body.lunar, { startMs: anchor });
+      applyLunarFields(model, lunar);
+      // 农历规则用 RDATE 展开，不能同时留公历 RRULE（会变成两套实例）。
+      if (lunar) model.recurrence = null;
+    }
+    return true;
+  }
+
+  function proposalView(proposal, nowMs) {    return {
       id: proposal.id,
       action: proposal.action,
       status: proposalEffectiveStatus(proposal, nowMs),
@@ -762,6 +852,8 @@ export function createAiService({
         name: meta.displayName || meta.name || meta.id,
         color: meta.color || null,
         access: grantLevel(ctx.credential, meta.id),
+        // 0.8.37（任务书 §C）：日历类型 —— calendar（事件）或 vtodo（任务）。
+        type: meta.type === 'vtodo' ? 'vtodo' : 'calendar',
         // 0.8.28（总监 m01069 ②）：`list_calendars` 仍返回全部可读日历，
         // 只多一个只读布尔 —— 该日历在网页侧栏是否**显示**（用户关掉的为 false）。
         // 授权仍是 hidden 优先：这里不会让 hidden 日历出现。
@@ -809,6 +901,26 @@ export function createAiService({
     return ids;
   }
 
+  /**
+   * 0.8.37：按日历**类型**取可读日历（任务工具只认 vtodo 日历）。
+   * 返回 `{ ids, metas }`；`wanted` 不存在/不可见 → null（与 targetCalendars 同口径）。
+   */
+  async function targetCalendarsOfType(ctx, wanted, type) {
+    const metas = await aiStore.listCalendarMetasFor(ctx.userId);
+    const ids = [];
+    const picked = [];
+    for (const meta of Array.isArray(metas) ? metas : []) {
+      if (!meta) continue;
+      if (wanted && meta.id !== wanted) continue;
+      if (!isReadable(ctx.credential, meta.id)) continue;
+      if ((meta.type === 'vtodo' ? 'vtodo' : 'calendar') !== type) continue;
+      ids.push(meta.id);
+      picked.push(meta);
+    }
+    if (wanted && ids.length === 0) return null;
+    return { ids, metas: picked };
+  }
+
   /* --------------------------------------------------------------- 读端点 */
 
   async function listEvents(ctx, { fromMs = null, toMs = null, calendar = '', tags: tagFilter = [] } = {}) {
@@ -830,9 +942,35 @@ export function createAiService({
           } catch {
             continue;
           }
+          const masterFields = await ruleFieldsOfText(object.content);
           for (const event of parsed) {
             if (!Number.isFinite(event.start)) continue;
+            attachRuleFields(event, masterFields);
             const end = Number.isFinite(event.end) ? event.end : event.start;
+            // 0.8.40：农历重复不写 RRULE，`matchesTimeRange` 只回答「区间内有没有落点」，
+            // 拿不到是哪几次。这里按同一套 lunar-core 逐次返回：主实例算第 1 次，
+            // 其余每次一条，`recurrenceId` = 该次原规则槽位的开始毫秒。
+            const lunarInfo = lunarInfoOf(event);
+            if (lunarInfo.yearly || lunarInfo.monthly) {
+              const shown = [];
+              if (overlapsRange(event.start, end, range.startMs, range.endMs + 1)
+                && isWithinWindow(ctx.credential, event.start, end, ctx.nowMs)) {
+                shown.push(event);
+              }
+              for (const occ of lunarOccurrencesInRange(event, range.startMs, range.endMs + 1)) {
+                if (!isWithinWindow(ctx.credential, occ.start, occ.end, ctx.nowMs)) continue;
+                const instance = { ...event, start: occ.start, end: occ.end, recurrenceId: occ.recurrenceId };
+                if (event.allDay) {
+                  instance.startDate = dateDigitsInZone(occ.start, event.timezone);
+                  instance.endDate = dateDigitsInZone(occ.end, event.timezone);
+                }
+                shown.push(instance);
+              }
+              for (const item of shown) {
+                events.push(withTagPayload(eventPayload(ctx.credential, item, calendarId, object.uid), tagFields, undefined));
+              }
+              continue;
+            }
             // 递归事件：用 DAV REPORT 同一套展开判定，问「本区间内有没有落点」。
             // 有效区间本身已收在凭据时间窗内，所以这次判定同时回答了「在窗内吗」。
             const overlaps = event.recurrence
@@ -849,19 +987,57 @@ export function createAiService({
     return { from: isoOf(range.startMs), to: isoOf(range.endMs), events };
   }
 
+  /**
+   * 0.8.37：`eventsOf` 走的是递归展开器，返回的实例不带 `X-FNCAL-LUNAR*` 字段，
+   * 而农历规则只写在主实例上。这里用 `eventFromIcs` 读原文一次，把农历字段补回主实例；
+   * 覆盖实例（RECURRENCE-ID）不动，避免把主实例的规则错挂到某一次改期上。
+   */
+  async function ruleFieldsOfText(text) {
+    try {
+      return await eventFromIcs(text);
+    } catch {
+      return null;
+    }
+  }
+
+  const RULE_FIELD_KEYS = ['lunar', 'lunarMonth', 'lunarDay', 'lunarLeap', 'lunarRule', 'lunarInterval', 'lunarUntil'];
+
+  function attachRuleFields(event, master) {
+    if (!event || !master || event.recurrenceId) return event;
+    for (const key of RULE_FIELD_KEYS) {
+      if (master[key] !== undefined) event[key] = master[key];
+    }
+    return event;
+  }
+
   /** 在可读日历里找某个 uid 的对象（多日历同名 uid 时只取可见那份）。 */
   async function locateEvent(ctx, uid, calendarId) {
     const ids = await targetCalendars(ctx, calendarId || '');
     if (!ids) return null;
     for (const id of ids) {
-      const object = await aiStore.getObjectFor(ctx.userId, id, uid);
-      if (object && typeof object.content === 'string') return { calendarId: id, object };
+      // 0.8.41：存储层收到含 `::` 的 uid 会抛错（`::<ms>` 只是取单次的后缀，不是真 uid）。
+      // 这里吞掉异常并继续找下一个日历，统一落「未找到」，不让它冒成 JSON-RPC -32603。
+      try {
+        const object = await aiStore.getObjectFor(ctx.userId, id, uid);
+        if (object && typeof object.content === 'string') return { calendarId: id, object };
+      } catch {
+        continue;
+      }
     }
     return null;
   }
 
   async function getEvent(ctx, uid, { calendarId = '' } = {}) {
-    const located = await locateEvent(ctx, uid, calendarId);
+    // 0.8.40：`<uid>::<ms>` 取农历系列的某一次（ms = 该次原规则槽位的开始时间，
+    // 与 `list_events` 返回的 `recurrenceId` 同一个值）。裸 uid 仍取主实例。
+    const rawUid = String(uid || '');
+    // 后缀放宽到任意位数字：够不够长都按「未找到」处理，绝不把带 `::` 的整串交给存储层。
+    const occurrenceMatch = /^(.*)::(\d{1,})$/.exec(rawUid);
+    const baseUid = occurrenceMatch ? occurrenceMatch[1] : rawUid;
+    const wantedSlot = occurrenceMatch ? Number(occurrenceMatch[2]) : null;
+    if (!baseUid) return null;
+    if (occurrenceMatch && (!Number.isSafeInteger(wantedSlot) || wantedSlot <= 0)) return null;
+    const located = await locateEvent(ctx, baseUid, calendarId);
     if (!located) return null;
     let parsed = [];
     try {
@@ -869,6 +1045,34 @@ export function createAiService({
     } catch {
       return null;
     }
+    const masterFields = await ruleFieldsOfText(located.object.content);
+    for (const event of parsed) attachRuleFields(event, masterFields);
+
+    if (wantedSlot !== null) {
+      for (const event of parsed) {
+        if (!Number.isFinite(event.start)) continue;
+        const hit = lunarSlotOccurrences(event, wantedSlot, wantedSlot + 1)
+          .find((occ) => occ.recurrenceId === wantedSlot);
+        if (!hit) continue;
+        if (!isWithinWindow(ctx.credential, hit.start, hit.end, ctx.nowMs)) continue;
+        const instance = { ...event, start: hit.start, end: hit.end, recurrenceId: hit.recurrenceId };
+        if (event.allDay) {
+          instance.startDate = dateDigitsInZone(hit.start, event.timezone);
+          instance.endDate = dateDigitsInZone(hit.end, event.timezone);
+        }
+        return {
+          calendarId: located.calendarId,
+          etag: located.object.etag || null,
+          event: withTagPayload(
+            eventPayload(ctx.credential, instance, located.calendarId, baseUid),
+            tagFieldsOfText(located.object.content),
+            undefined,
+          ),
+        };
+      }
+      return null;
+    }
+
     const visible = [];
     for (const event of parsed) {
       if (!Number.isFinite(event.start)) continue;
@@ -884,7 +1088,7 @@ export function createAiService({
       calendarId: located.calendarId,
       etag: located.object.etag || null,
       event: withTagPayload(
-        eventPayload(ctx.credential, master, located.calendarId, uid),
+        eventPayload(ctx.credential, master, located.calendarId, baseUid),
         tagFieldsOfText(located.object.content),
         undefined,
       ),
@@ -932,7 +1136,21 @@ export function createAiService({
     if (!isReadable(ctx.credential, calendarId)) throw writeReject('not-found');
     if (!(await aiStore.calendarExistsFor(ctx.userId, calendarId))) throw writeReject('not-found');
     if (!isWritable(ctx.credential, calendarId)) throw writeReject('not-writable');
-    const tagged = await withTag(buildIcs(body), body.tag, ctx);
+    const hasIcs = typeof body.ics === 'string' && body.ics.trim().length > 0;
+    let baseIcs = buildIcs(body);
+    // 0.8.37（§A）：先把结构化字段落成模型，再交给同一份 eventToIcs 写重复与农历行，
+    // 这样 MCP 写出来的 RRULE / RDATE 与网页保存的完全一致。
+    if (body.lunar !== undefined || body.recurrence !== undefined) {
+      const model = await eventFromIcs(baseIcs);
+      if (applyRuleParams(model, body, { hasIcs })) {
+        const uidLine = /^UID:[^\r\n]*/m.exec(baseIcs);
+        let next = eventToIcs(model);
+        // eventToIcs 会给裸 uid 补 `@caldav.local`；文件名必须与请求里的 UID 逐字一致。
+        if (uidLine) next = next.replace(/^UID:[^\r\n]*/m, uidLine[0]);
+        baseIcs = next;
+      }
+    }
+    const tagged = await withTag(baseIcs, body.tag, ctx);
     const ics = tagged.ics;
     const event = await eventFromIcs(ics);
     // 文件名必须与 ICS 里的 UID 一致（与 DAV PUT 同一约束），否则下次按 uid 取不到。
@@ -996,6 +1214,8 @@ export function createAiService({
     let ics;
     if (typeof payload.ics === 'string' && payload.ics.trim()) {
       ics = payload.ics;
+      // 与新建同口径：`ics` 和 lunar 同时给就是冲突，不能一边解析一边覆盖。
+      applyRuleParams(current, payload, { hasIcs: true });
     } else {
       const merged = { ...current, uid };
       if (payload.title !== undefined) merged.title = String(payload.title).slice(0, 500);
@@ -1010,13 +1230,15 @@ export function createAiService({
         merged.end = Date.parse(String(payload.end));
         if (!Number.isFinite(merged.end)) throw invalidError('end', 'end 必须是 ISO 时间');
       }
-      ics = icsForUid(merged, uid);
-    }
+      // 0.8.37（§A）：重复与农历参数走同一份模型；序列化统一走 icsForUid，
+      // 它会把 UID 行固定回原值（eventToIcs 会给裸 uid 补 @caldav.local）。
+      applyRuleParams(merged, payload, { hasIcs: false });
+      ics = icsForUid(merged, uid);    }
 
     const tagged = await withTag(ics, payload.tag, ctx);
     ics = tagged.ics;
     const next = await eventFromIcs(ics);
-    if (next.uid && String(next.uid) !== uid) throw invalidError('uid', 'UID 不可修改');
+    if (next.uid && String(next.uid).replace(/@caldav\.local$/, '') !== uid) throw invalidError('uid', 'UID 不可修改');
     if (isBadRange(next)) throw writeReject('bad-range');
     if (!writeWithinWindow(ctx.credential, next, ctx.nowMs)) throw writeReject('out-of-window');
     ctx.action = 'update';
@@ -1117,6 +1339,388 @@ export function createAiService({
       before: { etag: located.object.etag || null, ics: located.object.content, title: current.title || '' },
       after: null,
       note: note || 'AI 请求删除',
+    });
+    return { applied: false, proposal: proposalView(proposal, ctx.nowMs) };
+  }
+
+  /* ------------------------------------------------------- 0.8.37：任务（VTODO） */
+
+  /** 对象里有没有 DUE 行（`taskFromIcs` 缺 DUE 时会回落成 now，读不回「没有到期日」）。 */
+  function taskHasDue(content) {
+    return /^DUE(?:;[^:\r\n]*)?:/im.test(String(content || ''));
+  }
+
+  async function locateTask(ctx, uid, calendarId) {
+    const targets = await targetCalendarsOfType(ctx, calendarId || '', 'vtodo');
+    if (!targets) return null;
+    // 兼容两种写法：文件 uid（裸）与 ICS 里的完整 UID（`<uid>@caldav.local`）。
+    const wanted = String(uid || '').trim().replace(/@caldav\.local$/, '');
+    for (const id of targets.ids) {
+      // 与 locateEvent 同理：畸形 uid 不交给存储层，落「未找到」。
+      try {
+        const object = await aiStore.getObjectFor(ctx.userId, id, wanted);
+        if (object && typeof object.content === 'string') return { calendarId: id, object };
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  /** 无到期日的任务不受时间窗限制（任务书 §B：list_tasks 始终返回）。 */
+  function taskInWindow(ctx, task, content) {
+    if (!taskHasDue(content)) return true;
+    return isWithinWindow(ctx.credential, task.due, task.due, ctx.nowMs);
+  }
+
+  /**
+   * 任务重复 / 农历参数（新建、修改共用）。农历与公历重复互斥；两种规则都必须
+   * 有到期日当锚点 —— VTODO 没有 DTSTART，RDATE 只能从 DUE 展开。
+   */
+  function applyTaskRules(task, body) {
+    const wantsLunar = body.lunar !== undefined;
+    const wantsRecurrence = body.recurrence !== undefined;
+    if (!wantsLunar && !wantsRecurrence) return false;
+    if (!Number.isFinite(task.due)) {
+      throw new AiInputError('task_due_required', '任务没有到期日，无法按重复规则展开；请先设置 due');
+    }
+    if (wantsLunar && body.lunar !== null && wantsRecurrence && body.recurrence !== null) {
+      throw new AiInputError('invalid', '农历规则与公历重复只能二选一', 'recurrence');
+    }
+    if (wantsRecurrence) {
+      const recurrence = parseRecurrenceRequest(body.recurrence, task.due);
+      task.recurrence = recurrence;
+      if (recurrence && !Number.isFinite(task.repeatAnchor)) task.repeatAnchor = task.due;
+    }
+    if (wantsLunar) {
+      const lunar = parseLunarRequest(body.lunar, { startMs: task.due });
+      applyLunarFields(task, lunar);
+      if (lunar) {
+        task.recurrence = null;
+        task.repeatAnchor = task.due;
+      }
+    }
+    return true;
+  }
+
+  async function listTasks(ctx, { fromMs = null, toMs = null, calendar = '', tags: tagFilter = [], done = null } = {}) {
+    const wantedTags = (Array.isArray(tagFilter) ? tagFilter : []).map((item) => String(item || '').trim()).filter(Boolean);
+    const range = effectiveRange(ctx, { fromMs, toMs });
+    const targets = await targetCalendarsOfType(ctx, calendar, 'vtodo');
+    if (!targets) return null;
+    const tasks = [];
+    for (const calendarId of targets.ids) {
+      const objects = await aiStore.listObjectsFor(ctx.userId, calendarId);
+      for (const object of Array.isArray(objects) ? objects : []) {
+        if (!object || typeof object.content !== 'string') continue;
+        const tagFields = tagFieldsOfText(object.content);
+        if (!tagMatches(tagFields, wantedTags)) continue;
+        let task = null;
+        try {
+          task = await taskFromIcs(object.content);
+        } catch {
+          continue;
+        }
+        if (!task || !task.isTask) continue;
+        if (done !== null && Boolean(task.done) !== done) continue;
+        // 有到期日的落在范围内才算；没有到期日的任务始终返回（不进时间窗判定）。
+        if (taskHasDue(object.content) && !range.empty && (task.due < range.startMs || task.due > range.endMs)) continue;
+        tasks.push(withTagPayload(taskPayload(ctx.credential, task, calendarId), tagFields, undefined));
+      }
+    }
+    tasks.sort((a, b) => (a.due ? String(a.due) : '\uffff').localeCompare(b.due ? String(b.due) : '\uffff')
+      || String(a.uid).localeCompare(String(b.uid)));
+    return { from: isoOf(range.startMs), to: isoOf(range.endMs), generatedAt: isoOf(ctx.nowMs), tasks };
+  }
+
+  async function getTask(ctx, uid, { calendarId = '' } = {}) {
+    const located = await locateTask(ctx, uid, calendarId);
+    if (!located) return null;
+    let task = null;
+    try {
+      task = await taskFromIcs(located.object.content);
+    } catch {
+      return null;
+    }
+    if (!task || !task.isTask) return null;
+    if (!taskInWindow(ctx, task, located.object.content)) return null;
+    return {
+      calendarId: located.calendarId,
+      etag: located.object.etag || null,
+      task: withTagPayload(
+        taskPayload(ctx.credential, task, located.calendarId),
+        tagFieldsOfText(located.object.content),
+        undefined,
+      ),
+    };
+  }
+
+  /** due 参数 → 任务模型（ISO 时间；全天任务取该日零点并写 dueDate）。 */
+  function applyDueFields(task, body) {
+    const due = Date.parse(String(body.due));
+    if (!Number.isFinite(due)) throw invalidError('due', 'due 必须是 ISO 时间');
+    task.due = due;
+    const allDay = body.allDay === undefined ? Boolean(task.allDay) : Boolean(body.allDay);
+    task.allDay = allDay;
+    if (allDay) {
+      const zone = typeof body.timezone === 'string' && body.timezone.trim() ? body.timezone.trim() : '+08:00';
+      task.timezone = zone;
+      task.dueDate = dateDigitsInZone(due, zone);
+    }
+  }
+
+  async function createTask(ctx, body) {
+    const payload = body || {};
+    const calendarId = String(payload.calendarId || '').trim();
+    if (!calendarId) throw invalidError('calendarId', '需要 calendarId');
+    if (!isReadable(ctx.credential, calendarId)) throw writeReject('not-found');
+    if (!(await aiStore.calendarExistsFor(ctx.userId, calendarId))) throw writeReject('not-found');
+    if (!isWritable(ctx.credential, calendarId)) throw writeReject('not-writable');
+    const targets = await targetCalendarsOfType(ctx, calendarId, 'vtodo');
+    if (!targets) throw invalidError('calendarId', '该日历不是任务日历：任务只能建在「任务」类型的日历里');
+    const uid = payload.uid === undefined || payload.uid === null ? randomUUID() : String(payload.uid).trim();
+    if (!UID_RE.test(uid)) throw invalidError('uid', 'uid 只允许字母数字与 . _ - @，长度 ≤255');
+    if (payload.due === undefined || payload.due === null) {
+      throw invalidError('due', 'due 必填：任务需要到期日（重复规则也从它展开）');
+    }
+    const nowMs = ctx.nowMs;
+    const task = {
+      id: uid,
+      uid,
+      title: payload.title === undefined ? '' : String(payload.title).slice(0, 500),
+      notes: payload.notes === undefined ? '' : String(payload.notes).slice(0, 8000),
+      done: false,
+      status: 'NEEDS-ACTION',
+      isTask: true,
+      createdAt: nowMs,
+      updatedAt: nowMs,
+    };
+    applyDueFields(task, payload);
+    applyTaskRules(task, payload);
+    if (!isWithinWindow(ctx.credential, task.due, task.due, nowMs)) throw writeReject('out-of-window');
+    const tagged = await withTag(taskToIcs(task), payload.tag, ctx);
+    const saved = await taskFromIcs(tagged.ics);
+    if (!saved || !saved.isTask) throw invalidError('ics', '生成的任务对象不合法');
+    ctx.action = 'create';
+
+    if (writeModeOf(ctx.credential) === WRITE_MODE_DIRECT) {
+      const applied = await aiStore.applyChange(ctx.userId, {
+        action: 'create',
+        calendarId,
+        uid,
+        ics: tagged.ics,
+        expectEtag: null,
+        source: ctx.source || 'ai',
+        credentialId: ctx.credential.id,
+      });
+      return {
+        applied: true,
+        etag: applied.etag,
+        calendarId,
+        task: withTagPayload(taskPayload(ctx.credential, saved, calendarId), null, tagged.tag),
+      };
+    }
+    const proposal = await aiStore.createProposal(ctx.userId, {
+      action: 'create',
+      calendarId,
+      uid,
+      credentialId: ctx.credential.id,
+      before: null,
+      after: { etag: null, ics: tagged.ics, title: saved.title || '' },
+      note: typeof payload.note === 'string' ? payload.note : '',
+    });
+    return { applied: false, proposal: proposalView(proposal, ctx.nowMs) };
+  }
+
+  async function updateTask(ctx, uid, body, { ifMatch = null } = {}) {
+    const payload = body || {};
+    // 存储层的文件名用裸 uid；ICS 里的 UID 带 `@caldav.local`，两种写法都接受。
+    uid = String(uid || '').trim().replace(/@caldav\.local$/, '');
+    const located = await locateTask(ctx, uid, payload.calendarId || '');
+    if (!located) return null;
+    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    let current = null;
+    try {
+      current = await taskFromIcs(located.object.content);
+    } catch {
+      return null;
+    }
+    if (!taskInWindow(ctx, current, located.object.content)) throw writeReject('out-of-window');
+
+    const hadDue = taskHasDue(located.object.content);
+    const merged = { ...current, uid, id: uid };
+    if (payload.title !== undefined) merged.title = String(payload.title).slice(0, 500);
+    if (payload.notes !== undefined) merged.notes = String(payload.notes).slice(0, 8000);
+    if (payload.due !== undefined) applyDueFields(merged, payload);
+    else if (!hadDue) throw new AiInputError('task_due_required', '任务没有到期日，请先设置 due');
+    if (payload.done !== undefined) merged.done = Boolean(payload.done);
+    applyTaskRules(merged, payload);
+    merged.status = merged.done ? 'COMPLETED' : 'NEEDS-ACTION';
+    merged.updatedAt = ctx.nowMs;
+    if (!isWithinWindow(ctx.credential, merged.due, merged.due, ctx.nowMs)) throw writeReject('out-of-window');
+
+    const tagged = await withTag(taskToIcs(merged), payload.tag, ctx);
+    const next = await taskFromIcs(tagged.ics);
+    if (next.uid && String(next.uid).replace(/@caldav\.local$/, '') !== uid) throw invalidError('uid', 'UID 不可修改');
+    ctx.action = 'update';
+
+    if (writeModeOf(ctx.credential) === WRITE_MODE_DIRECT) {
+      const applied = await aiStore.applyChange(ctx.userId, {
+        action: 'update',
+        calendarId: located.calendarId,
+        uid,
+        ics: tagged.ics,
+        expectEtag: ifMatch || located.object.etag || null,
+        source: ctx.source || 'ai',
+        credentialId: ctx.credential.id,
+      });
+      return {
+        applied: true,
+        etag: applied.etag,
+        calendarId: located.calendarId,
+        task: withTagPayload(taskPayload(ctx.credential, next, located.calendarId), null, tagged.tag),
+      };
+    }
+    const proposal = await aiStore.createProposal(ctx.userId, {
+      action: 'update',
+      calendarId: located.calendarId,
+      uid,
+      credentialId: ctx.credential.id,
+      before: { etag: located.object.etag || null, ics: located.object.content, title: current.title || '' },
+      after: { etag: null, ics: tagged.ics, title: next.title || '' },
+      note: typeof payload.note === 'string' ? payload.note : '',
+    });
+    return { applied: false, proposal: proposalView(proposal, ctx.nowMs) };
+  }
+
+  /**
+   * `complete_task`：勾完成并按 0.8.36 口径推进到下一个实例。
+   * 用尽（count / until / 农历表到头）→ 变成已完成，不再推进。
+   */
+  async function completeTask(ctx, uid, { calendarId = '', note = '' } = {}) {
+    // 存储层的文件名用裸 uid；ICS 里的 UID 带 `@caldav.local`，两种写法都接受。
+    uid = String(uid || '').trim().replace(/@caldav\.local$/, '');
+    const located = await locateTask(ctx, uid, calendarId);
+    if (!located) return null;
+    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    let current = null;
+    try {
+      current = await taskFromIcs(located.object.content);
+    } catch {
+      return null;
+    }
+    if (!taskInWindow(ctx, current, located.object.content)) throw writeReject('out-of-window');
+    if (!taskHasDue(located.object.content)) {
+      throw new AiInputError('task_due_required', '任务没有到期日；先在 update_task 里设置 due，再完成');
+    }
+
+    const merged = { ...current, uid, id: uid };
+    const next = current.done ? null : nextTaskDue(current, ctx.nowMs);
+    if (next === null) {
+      merged.done = true;
+      merged.status = 'COMPLETED';
+    } else {
+      merged.done = false;
+      merged.status = 'NEEDS-ACTION';
+      merged.due = next;
+      if (merged.allDay) merged.dueDate = dateDigitsInZone(next, merged.timezone || '+08:00');
+      merged.lastCompleted = ctx.nowMs;
+    }
+    merged.updatedAt = ctx.nowMs;
+    const ics = taskToIcs(merged);
+    ctx.action = 'update';
+
+    if (writeModeOf(ctx.credential) === WRITE_MODE_DIRECT) {
+      const applied = await aiStore.applyChange(ctx.userId, {
+        action: 'update',
+        calendarId: located.calendarId,
+        uid,
+        ics,
+        expectEtag: located.object.etag || null,
+        source: ctx.source || 'ai',
+        credentialId: ctx.credential.id,
+      });
+      return {
+        applied: true,
+        etag: applied.etag,
+        calendarId: located.calendarId,
+        completed: merged.done,
+        advanced: next !== null,
+        task: taskPayload(ctx.credential, merged, located.calendarId),
+      };
+    }
+    const proposal = await aiStore.createProposal(ctx.userId, {
+      action: 'update',
+      calendarId: located.calendarId,
+      uid,
+      credentialId: ctx.credential.id,
+      before: { etag: located.object.etag || null, ics: located.object.content, title: current.title || '' },
+      after: { etag: null, ics, title: merged.title || '' },
+      note: note || 'AI 请求完成任务',
+    });
+    return { applied: false, proposal: proposalView(proposal, ctx.nowMs) };
+  }
+
+  async function deleteTask(ctx, uid, { calendarId = '', note = '' } = {}) {
+    // 存储层的文件名用裸 uid；ICS 里的 UID 带 `@caldav.local`，两种写法都接受。
+    uid = String(uid || '').trim().replace(/@caldav\.local$/, '');
+    const located = await locateTask(ctx, uid, calendarId);
+    if (!located) return null;
+    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    let current = null;
+    try {
+      current = await taskFromIcs(located.object.content);
+    } catch {
+      return null;
+    }
+    if (!taskInWindow(ctx, current, located.object.content)) throw writeReject('out-of-window');
+    ctx.action = 'delete';
+
+    const direct = canDelete(ctx.credential, located.calendarId);
+    if (direct) {
+      if (!trash) {
+        throw Object.assign(new Error('删除失败：回收站不可用，任务未删除'), { code: 'trash_unavailable', status: 500 });
+      }
+      const meta = await calendarMetaOf(ctx.userId, located.calendarId);
+      let item = null;
+      try {
+        item = await trash.add(ctx.userId, {
+          credentialId: ctx.credential.id,
+          credentialLabel: ctx.credential.label || '',
+          calendarId: located.calendarId,
+          calendarName: meta ? (meta.displayName || meta.name || meta.id) : located.calendarId,
+          uid,
+          etag: located.object.etag || null,
+          ics: located.object.content,
+          title: current.title || '',
+          retentionDays: (await aiStore.readSettings().catch(() => null))?.trashRetentionDays,
+        });
+      } catch {
+        throw Object.assign(new Error('删除失败：回收站写入失败，任务未删除'), { code: 'trash_write_failed', status: 500 });
+      }
+      try {
+        await aiStore.applyChange(ctx.userId, {
+          action: 'delete',
+          calendarId: located.calendarId,
+          uid,
+          expectEtag: located.object.etag || null,
+          source: ctx.source || 'ai',
+          credentialId: ctx.credential.id,
+        });
+      } catch (err) {
+        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+        throw err;
+      }
+      return { applied: true, deleted: true, calendarId: located.calendarId, trashId: item.id, via: 'delete-mode-trash' };
+    }
+    const proposal = await aiStore.createProposal(ctx.userId, {
+      action: 'delete',
+      calendarId: located.calendarId,
+      uid,
+      credentialId: ctx.credential.id,
+      before: { etag: located.object.etag || null, ics: located.object.content, title: current.title || '' },
+      after: null,
+      note: note || 'AI 请求删除任务',
     });
     return { applied: false, proposal: proposalView(proposal, ctx.nowMs) };
   }
@@ -1433,6 +2037,13 @@ export function createAiService({
     createEvent,
     updateEvent,
     deleteEvent,
+    // 0.8.37（任务书 §B）：任务五件套（列表 / 单条 / 新建 / 修改 / 完成推进 / 删除）
+    listTasks,
+    getTask,
+    createTask,
+    updateTask,
+    completeTask,
+    deleteTask,
     listProposals,
     listAgentProposals,
     agentDecide,
@@ -1441,6 +2052,7 @@ export function createAiService({
     buildIcs,
     proposalView,
     eventPayload,
+    taskPayload,
     notFoundBody: () => ({ ...NOT_FOUND_BODY }),
   };
 }

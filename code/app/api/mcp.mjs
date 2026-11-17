@@ -20,6 +20,7 @@
 import { randomBytes } from 'node:crypto';
 import { DELETE_MODE_TRASH, canAgentApprove, deleteModeOf, NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
 import { createAiRateLimiter } from '../lib/ai-rate-limit.mjs';
+import { AiInputError } from '../lib/ai-model.mjs';
 import { BATCH_MAX_IDS, createAiService, parseBearer, runProposalBatch } from '../lib/ai-service.mjs';
 // 0.4.27（S2）：摘要时间与审批页同一套服务端时区规则（默认 Asia/Shanghai）。
 import { formatWhenInZone } from '../lib/time-zone.mjs';
@@ -65,6 +66,8 @@ function envMs(name, fallback) {
 
 /** 「不存在 / 不可见」共用一个说法：不向外证明存在性。 */
 const MISSING_EVENT_TEXT = '未找到该事件：它可能不存在、不在你的时间窗口内，或对你的凭据不可见。';
+/** 0.8.37：任务与事件分开说，避免客户端把它当成事件去重试。 */
+const MISSING_TASK_TEXT = '未找到该任务：它可能不存在、不在你的时间窗口内，或对你的凭据不可见。';
 /**
  * 0.3.6：日历的「不可见 ≡ 不存在」只保留这两层语义。
  * 时间窗与只读档位各有自己的文案（见 `WRITE_REJECT_TEXT`），不再混进「不存在」。
@@ -355,11 +358,60 @@ function tool(name, description, properties, required) {
   };
 }
 
+/**
+ * 0.8.37（任务书 §A2）：公历重复参数。给的是「常见组合」的短名字，服务端
+ * `lib/ai-model.mjs` 翻成模型里的 recurrence（与网页 normalizeRecurrence 同形）。
+ * 表达不了的组合会返回 `recurrence_unsupported` 并列出支持哪些。
+ */
+const RECURRENCE_PROP = {
+  type: ['object', 'null'],
+  description: '公历重复规则（与 lunar、ics 互斥；null 表示清除重复）。'
+    + '支持 freq=daily；freq=weekly + byDay；freq=monthly + monthDay；'
+    + 'freq=monthly + setPos + weekday；freq=yearly；都可带 interval / count / until。',
+  properties: {
+    freq: { type: 'string', enum: ['daily', 'weekly', 'monthly', 'yearly'], description: '重复频率' },
+    interval: { type: 'number', description: '每 N 个周期一次，默认 1（1–99）' },
+    byDay: {
+      type: 'array',
+      items: { type: 'string', enum: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'] },
+      description: '每周重复时选星期几（可多个）',
+    },
+    monthDay: { type: 'number', description: '每月第几天（1–31）' },
+    setPos: { type: 'number', description: '每月第几个星期几（1–5，-1 表示最后一个）' },
+    weekday: { type: 'string', enum: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'], description: '配合 setPos 的星期几' },
+    count: { type: 'number', description: '一共重复几次（1–999）' },
+    until: { type: 'string', description: '重复到哪天为止（ISO 时间）' },
+  },
+  additionalProperties: false,
+};
+
+/**
+ * 0.8.37（任务书 §A1）：农历重复参数。写进 ICS 的是 `X-FNCAL-LUNAR-RULE` + RDATE，
+ * 与网页保存的同源；`null` = 清除农历规则、退回单次。
+ */
+const LUNAR_PROP = {
+  type: ['object', 'null'],
+  description: '按农历重复（与 recurrence、ics 互斥；null 表示清除农历规则、退回单次）。'
+    + 'YEARLY-LUNAR 需 month + day；MONTHLY-LUNAR 只需 day（省略取起始日的农历日）。'
+    + '小月没有该日时该月跳过，不补位、不顺延。',
+  properties: {
+    rule: { type: 'string', enum: ['YEARLY-LUNAR', 'MONTHLY-LUNAR'], description: '农历每年 / 农历每月' },
+    month: { type: 'number', description: '农历月（1–12）' },
+    day: { type: 'number', description: '农历日（1–30）' },
+    leap: { type: 'boolean', description: '是否闰月（仅该年有这个闰月时可用）' },
+    interval: { type: 'number', description: '每 N 个周期一次，默认 1（1–99）' },
+    until: { type: 'string', description: '重复到哪天为止（YYYY-MM-DD）' },
+  },
+  required: ['rule'],
+  additionalProperties: false,
+};
+
 const READ_TOOLS = Object.freeze([
   tool(
     'list_calendars',
-    '列出你的凭据可读的日历（id/名称/颜色/权限档位/是否在侧栏显示）。未被授权或时间窗外的日历不会出现在结果里，'
-      + '表现为不存在。',
+    '列出你的凭据可读的日历（id/名称/颜色/权限档位/是否在侧栏显示/类型）。'
+      + '`type` 是 `calendar`（收事件）或 `vtodo`（收任务）：建事件用前者，建任务用后者。'
+      + '未被授权或时间窗外的日历不会出现在结果里，表现为不存在。',
     {},
     [],
   ),
@@ -367,7 +419,9 @@ const READ_TOOLS = Object.freeze([
     'list_events',
     '列出时间范围内的事件（只含你的凭据可读的日历，字段按凭据的字段掩码裁剪）。'
       + '不传 from/to 时使用凭据的时间窗口；实际范围自动收在窗口内，窗口外的事件不会出现。'
-      + '可按标签筛选（tags 传标签名称或 id，多个取并集，与其它条件取交集）。',
+      + '可按标签筛选（tags 传标签名称或 id，多个取并集，与其它条件取交集）。'
+      + '农历重复（每年/每月）按区间**逐次**返回：每次一条，`recurrenceId` 是该次原规则槽位的'
+      + '开始毫秒（数字），`recurring` 为 true，`lunar` 是该次自己的农历日期。',
     {
       from: { type: 'string', description: 'ISO 8601 开始时间（含），可省略' },
       to: { type: 'string', description: 'ISO 8601 结束时间（不含），可省略' },
@@ -389,7 +443,9 @@ const READ_TOOLS = Object.freeze([
   ),
   tool(
     'get_event',
-    '按 UID 取单条事件。事件不可见、不在时间窗内或不存在时返回同一个「未找到」结果。',
+    '按 UID 取单条事件。事件不可见、不在时间窗内或不存在时返回同一个「未找到」结果。'
+      + '农历重复的某一次写成 `<uid>::<毫秒时间戳>`（时间戳 = list_events 给的 `recurrenceId`）；'
+      + '不带后缀时取主实例。',
     {
       uid: { type: 'string', description: '事件 UID（必填）' },
       calendarId: { type: 'string', description: '指定日历 id 可避免同名 UID 歧义，可省略' },
@@ -397,8 +453,35 @@ const READ_TOOLS = Object.freeze([
     ['uid'],
   ),
   tool(
-    'find_free_slots',
-    '在时间范围内找空闲时段（只看忙碌区间，不含标题）。范围同样受凭据时间窗限制。',
+    'list_tasks',
+    '列出任务（VTODO 日历里的条目，字段按凭据的字段掩码裁剪）。'
+      + '有到期日的任务只返回落在时间范围内（默认凭据时间窗）的那些；**没有到期日的任务始终返回**。'
+      + '可按日历、标签、完成状态筛选。返回里带 `generatedAt`：农历每月重复的 RDATE 会随窗口滚动，'
+      + '不要长期缓存这份结果。',
+    {
+      from: { type: 'string', description: 'ISO 8601 开始时间（含），可省略' },
+      to: { type: 'string', description: 'ISO 8601 结束时间（不含），可省略' },
+      calendar: { type: 'string', description: '只看某个任务日历 id，可省略' },
+      tags: {
+        type: 'array',
+        items: { type: 'string' },
+        description: '按标签筛选：标签名称或 id；多个取并集，可省略（不筛）',
+      },
+      done: { type: 'boolean', description: '只看已完成（true）或未完成（false）；省略看全部' },
+    },
+    [],
+  ),
+  tool(
+    'get_task',
+    '按 UID 取单条任务。任务不可见、不在时间窗内或不存在时返回同一个「未找到」结果。',
+    {
+      uid: { type: 'string', description: '任务 UID（必填）' },
+      calendarId: { type: 'string', description: '指定任务日历 id 可避免同名 UID 歧义，可省略' },
+    },
+    ['uid'],
+  ),
+  tool(
+    'find_free_slots',    '在时间范围内找空闲时段（只看忙碌区间，不含标题）。范围同样受凭据时间窗限制。',
     {
       from: { type: 'string', description: 'ISO 8601 开始时间，省略则从现在起' },
       to: { type: 'string', description: 'ISO 8601 结束时间，省略则未来 7 天' },
@@ -446,9 +529,11 @@ const WRITE_TOOLS = Object.freeze([
       start: { type: 'string', description: 'ISO 8601 开始时间（与 ics 二选一）' },
       end: { type: 'string', description: 'ISO 8601 结束时间，可省略（默认开始 +1 小时）' },
       allDay: { type: 'boolean', description: '是否全天事件' },
+      recurrence: RECURRENCE_PROP,
+      lunar: LUNAR_PROP,
       location: { type: 'string', description: '地点' },
       description: { type: 'string', description: '备注正文' },
-      ics: { type: 'string', description: '直接给 iCalendar 文本（与结构化字段二选一）' },
+      ics: { type: 'string', description: '直接给 iCalendar 文本（与结构化字段二选一；给了 ics 就不能再给 lunar / recurrence）' },
       uid: { type: 'string', description: '指定 UID，可省略（自动生成）' },
       tag: { type: 'string', description: '标签名称或 id（单标签，可省略；必须已存在）' },
       note: { type: 'string', description: '给用户的提案说明' },
@@ -468,6 +553,8 @@ const WRITE_TOOLS = Object.freeze([
       start: { type: 'string', description: '新的 ISO 8601 开始时间' },
       end: { type: 'string', description: '新的 ISO 8601 结束时间' },
       allDay: { type: 'boolean', description: '是否全天事件' },
+      recurrence: RECURRENCE_PROP,
+      lunar: LUNAR_PROP,
       location: { type: 'string', description: '地点' },
       description: { type: 'string', description: '备注正文' },
       tag: { type: 'string', description: '标签名称或 id（单标签；空串表示清除标签）' },
@@ -484,6 +571,66 @@ const WRITE_TOOLS = Object.freeze([
     {
       uid: { type: 'string', description: '要删除的事件 UID（必填）' },
       calendarId: { type: 'string', description: '指定日历 id，可省略' },
+      note: { type: 'string', description: '给用户的提案说明' },
+    },
+    ['uid'],
+  ),
+  tool(
+    'create_task',
+    '新建任务（写进 `type` 为 `vtodo` 的日历）。到期日必填；'
+      + '`recurrence` 给公历重复，`lunar` 给农历重复（两者互斥）。'
+      + '该凭据的「新建 / 修改」设为提案模式时只生成待确认提案，返回里带 proposal 与（有弹窗能力时）approvalUrl。',
+    {
+      calendarId: { type: 'string', description: '任务日历 id（必填，必须是 vtodo）' },
+      title: { type: 'string', description: '任务标题' },
+      due: { type: 'string', description: '到期时间（ISO 8601，必填）' },
+      allDay: { type: 'boolean', description: '是否全天任务（全天只取 due 的日期部分）' },
+      notes: { type: 'string', description: '备注正文' },
+      tag: { type: 'string', description: '标签名称或 id' },
+      recurrence: RECURRENCE_PROP,
+      lunar: LUNAR_PROP,
+      uid: { type: 'string', description: '自定义 UID，可省略' },
+    },
+    ['calendarId', 'title', 'due'],
+  ),
+  tool(
+    'update_task',
+    '修改任务（标题 / 到期 / 备注 / 完成状态 / 标签 / 重复规则）。'
+      + '`lunar: null` 清除农历规则、`recurrence: null` 清除公历重复；两者都给会报错。'
+      + '提案模式下只生成待确认提案。',
+    {
+      uid: { type: 'string', description: '任务 UID（必填）' },
+      calendarId: { type: 'string', description: '指定任务日历 id，可省略' },
+      title: { type: 'string', description: '新标题' },
+      due: { type: 'string', description: '新到期时间（ISO 8601）' },
+      allDay: { type: 'boolean', description: '是否全天' },
+      notes: { type: 'string', description: '新备注' },
+      done: { type: 'boolean', description: '完成状态' },
+      tag: { type: 'string', description: '标签名称或 id（空串表示清除标签）' },
+      recurrence: RECURRENCE_PROP,
+      lunar: LUNAR_PROP,
+      ifMatch: { type: 'string', description: '乐观并发用的 ETag，可省略' },
+    },
+    ['uid'],
+  ),
+  tool(
+    'complete_task',
+    '把任务标记为完成。带重复的任务不结束，而是把到期日推进到下一期'
+      + '（与 App 里勾完成同一套展开逻辑：农历小月没有该日就跳过；count / until 用尽则变成已完成）。',
+    {
+      uid: { type: 'string', description: '任务 UID（必填）' },
+      calendarId: { type: 'string', description: '指定任务日历 id，可省略' },
+      note: { type: 'string', description: '给用户的提案说明' },
+    },
+    ['uid'],
+  ),
+  tool(
+    'delete_task',
+    '请求删除任务。该凭据的「删除」设为提案模式（默认）时只生成待确认提案；'
+      + '设为回收站模式时立即删除并进入回收站，保留期内可在日历界面恢复。',
+    {
+      uid: { type: 'string', description: '要删除的任务 UID（必填）' },
+      calendarId: { type: 'string', description: '指定任务日历 id，可省略' },
       note: { type: 'string', description: '给用户的提案说明' },
     },
     ['uid'],
@@ -743,8 +890,18 @@ function optionalIso(args, name) {
   return ms;
 }
 
-/* ------------------------------------------------------------------ 工厂 */
+/**
+ * 0.8.37：重复参数原样交给服务层校验（互斥、农历合法性、支持哪些组合都由
+ * `lib/ai-model.mjs` 判定，MCP 面只管「有没有给这个键」）。
+ */
+function ruleArgs(args) {
+  const out = {};
+  if (Object.prototype.hasOwnProperty.call(args, 'lunar')) out.lunar = args.lunar;
+  if (Object.prototype.hasOwnProperty.call(args, 'recurrence')) out.recurrence = args.recurrence;
+  return out;
+}
 
+/* ------------------------------------------------------------------ 工厂 */
 export function createMcp({
   aiStore = null,
   aiService = null,
@@ -1248,6 +1405,9 @@ export function createMcp({
         etag: result.etag || null,
       };
       if (result.event) payload.event = result.event;
+      if (result.task) payload.task = result.task;
+      if (result.completed) payload.completed = true;
+      if (result.advanced) payload.advanced = true;
       if (result.deleted) payload.deleted = true;
       if (created) payload.created = true;
       return payload;
@@ -1458,6 +1618,7 @@ export function createMcp({
         }
         const allDay = optionalBoolean(args, 'allDay');
         if (allDay !== undefined) body.allDay = allDay;
+        Object.assign(body, ruleArgs(args));
         const result = await service.createEvent(ctx, body);
         if (!result) return toolFailure(MISSING_CALENDAR_TEXT);
         return toolResult(writePayload(result, { created: true, ctx, tool: name }));
@@ -1480,6 +1641,7 @@ export function createMcp({
         }
         const allDay = optionalBoolean(args, 'allDay');
         if (allDay !== undefined) body.allDay = allDay;
+        Object.assign(body, ruleArgs(args));
         const ifMatch = optionalString(args, 'ifMatch', { max: 255 }) || null;
         const result = await service.updateEvent(ctx, uid, body, { ifMatch });
         if (!result) return toolFailure(MISSING_EVENT_TEXT);
@@ -1492,6 +1654,81 @@ export function createMcp({
           note: optionalString(args, 'note', { max: 8000 }) || 'AI 请求删除',
         });
         if (!result) return toolFailure(MISSING_EVENT_TEXT);
+        return toolResult(writePayload(result, { ctx, tool: name }));
+      }
+      /* -------- 0.8.37：任务（VTODO 日历） -------- */
+      case 'list_tasks': {
+        const fromMs = optionalIso(args, 'from');
+        const toMs = optionalIso(args, 'to');
+        const calendar = optionalString(args, 'calendar', { max: 255 }) || '';
+        let tags = [];
+        if (Array.isArray(args.tags)) {
+          tags = args.tags.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 20);
+        } else if (typeof args.tags === 'string' && args.tags.trim()) {
+          tags = [args.tags.trim()];
+        }
+        const done = optionalBoolean(args, 'done');
+        return toolResult(await service.listTasks(ctx, { fromMs, toMs, calendar, tags, done }));
+      }
+      case 'get_task': {
+        const uid = requireString(args, 'uid', { max: 255 });
+        const result = await service.getTask(ctx, uid, {
+          calendarId: optionalString(args, 'calendarId', { max: 255 }) || '',
+        });
+        if (!result) return toolFailure(MISSING_TASK_TEXT);
+        return toolResult(result);
+      }
+      case 'create_task': {
+        const body = { calendarId: requireString(args, 'calendarId', { max: 255 }) };
+        const title = optionalString(args, 'title', { max: 8000 });
+        const due = optionalString(args, 'due', { max: 64 });
+        const notes = optionalString(args, 'notes', { max: 8000 });
+        const tag = optionalString(args, 'tag', { max: 255 });
+        const uid = optionalString(args, 'uid', { max: 255 });
+        const allDay = optionalBoolean(args, 'allDay');
+        if (title !== undefined) body.title = title;
+        if (due !== undefined) body.due = due;
+        if (notes !== undefined) body.notes = notes;
+        if (tag !== undefined) body.tag = tag;
+        if (uid !== undefined) body.uid = uid;
+        if (allDay !== undefined) body.allDay = allDay;
+        Object.assign(body, ruleArgs(args));
+        const result = await service.createTask(ctx, body);
+        return toolResult(writePayload(result, { created: true, ctx, tool: name }));
+      }
+      case 'update_task': {
+        const uid = requireString(args, 'uid', { max: 255 });
+        const body = {};
+        for (const [key, max] of [['calendarId', 255], ['title', 8000], ['due', 64], ['notes', 8000], ['tag', 255]]) {
+          const value = optionalString(args, key, { max });
+          if (value !== undefined) body[key] = value;
+        }
+        const allDay = optionalBoolean(args, 'allDay');
+        if (allDay !== undefined) body.allDay = allDay;
+        const done = optionalBoolean(args, 'done');
+        if (done !== undefined) body.done = done;
+        Object.assign(body, ruleArgs(args));
+        const ifMatch = optionalString(args, 'ifMatch', { max: 255 }) || null;
+        const result = await service.updateTask(ctx, uid, body, { ifMatch });
+        if (!result) return toolFailure(MISSING_TASK_TEXT);
+        return toolResult(writePayload(result, { ctx, tool: name }));
+      }
+      case 'complete_task': {
+        const uid = requireString(args, 'uid', { max: 255 });
+        const result = await service.completeTask(ctx, uid, {
+          calendarId: optionalString(args, 'calendarId', { max: 255 }) || '',
+          note: optionalString(args, 'note', { max: 8000 }) || 'AI 请求标记完成',
+        });
+        if (!result) return toolFailure(MISSING_TASK_TEXT);
+        return toolResult(writePayload(result, { ctx, tool: name }));
+      }
+      case 'delete_task': {
+        const uid = requireString(args, 'uid', { max: 255 });
+        const result = await service.deleteTask(ctx, uid, {
+          calendarId: optionalString(args, 'calendarId', { max: 255 }) || '',
+          note: optionalString(args, 'note', { max: 8000 }) || 'AI 请求删除',
+        });
+        if (!result) return toolFailure(MISSING_TASK_TEXT);
         return toolResult(writePayload(result, { ctx, tool: name }));
       }
       /* -------- 0.4.13：AI 端批准（凭据开关是唯一闸门，关闭时任何路径都拒绝） -------- */
@@ -2253,6 +2490,13 @@ export function createMcp({
       // 不用「操作失败：」前缀——这是给用户看、能照着操作的一句话（0.3.6 缺陷 1）。
       if (err && (err.code === 'agent_approval_disabled' || err.code === 'trash_write_failed' || err.code === 'trash_unavailable')) {
         return finish(200, { jsonrpc: '2.0', id, result: toolFailure(String(err.message)) });
+      }
+      // 0.8.37（§A）：重复 / 农历参数不合规时给结构化结果（带稳定 code 与 field），
+      // 让客户端照着改参数，而不是靠猜「操作失败」是什么意思。
+      if (err instanceof AiInputError) {
+        const payload = { ok: false, code: err.code, message: String(err.message || err.code) };
+        if (err.field) payload.field = err.field;
+        return finish(200, { jsonrpc: '2.0', id, result: toolResult(payload, { isError: true }) });
       }
       if (err && err.code === 'write_reject') {
         return finish(200, { jsonrpc: '2.0', id, result: toolFailure(String(err.message)) });

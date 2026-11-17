@@ -26,10 +26,11 @@ let activePicker = null;
 
 /**
  * @param {{ anchor: HTMLElement, year: number, month: number,
- *           onPick?: (value: { year: number, month: number }) => void }} opts
- * @returns {{ close: () => void }}
+ *           onPick?: (value: { year: number, month: number }) => void,
+ *           zIndex?: number }} opts
+ * @returns {{ close: () => void, contains: (node: Node) => boolean }}
  */
-export function openYearMonthPicker({ anchor, year, month, onPick }) {
+export function openYearMonthPicker({ anchor, year, month, onPick, zIndex }) {
   // 已开着一个：同一锚点再点 = 收起；换锚点 = 关旧开新。
   // 先置空再 close()，避免 close() 里的自清逻辑与这里互相递归。
   if (activePicker) {
@@ -37,7 +38,7 @@ export function openYearMonthPicker({ anchor, year, month, onPick }) {
     const sameAnchor = previous.anchor === anchor;
     activePicker = null;
     previous.close();
-    if (sameAnchor) return { close() {} };
+    if (sameAnchor) return { close() {}, contains: () => false, isOpen: () => false };
   }
   const nowYear = new Date().getFullYear();
   const years = [];
@@ -215,6 +216,10 @@ export function openYearMonthPicker({ anchor, year, month, onPick }) {
   ]);
 
   document.body.append(box);
+  // 0.8.38：从日期弹层打开时，宿主必须指定更高的层级——`.date-pop` 是
+  // z-index 140（layout.css:1627，高于编辑器弹窗 100），而 `.ym-popover` 的
+  // 默认 85 会让选择器整块压在日期弹层下面，看起来「点了没反应」。
+  if (Number.isFinite(zIndex)) box.style.zIndex = String(zIndex);
   // 锚定在标题下方右侧对齐（popover 已有 --r-lg / --shadow-lg）。
   const rect = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
   if (rect) {
@@ -230,6 +235,12 @@ export function openYearMonthPicker({ anchor, year, month, onPick }) {
   yearWheel.node.focus();
 
   // 0.6.6：登记为当前弹窗（Esc / 点外 / 取消 / 确定都走同一个 close()）。
-  activePicker = { anchor, close };
+  // 0.8.38：附带 contains()，让宿主（日期弹层）判断这次点击是否落在选择器里。
+  activePicker = {
+    anchor,
+    close,
+    contains: (node) => Boolean(node) && box.contains(node),
+    isOpen: () => !closed,
+  };
   return activePicker;
 }

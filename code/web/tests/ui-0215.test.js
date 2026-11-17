@@ -164,25 +164,24 @@ describe('0.2.15 D5 编辑器开始/结束两行显示农历', () => {
   });
 
   /**
-   * 0.2.20（E6）：语种唯一入口 = 弹层日历右下角「公历 | 农历」两段式。
-   * 这里统一从它切；切完弹层留着（modal.close() 会连同弹层一起收）。
+   * 0.8.35：语种唯一入口 = 「全天」行上方的「农历」开关（0.2.20 E6 的弹层两段式已删）。
+   * 拨开关会重渲染日期字段；弹层若开着会被关掉（语种只有一个入口，见 setLunarMode）。
    */
-  const segButton = (label) =>
-    [...document.querySelectorAll('.date-pop__seg-btn')].find((btn) => btn.textContent === label);
-
   function setDateMode(label) {
-    if (!document.querySelector('.date-pop')) {
-      document.querySelectorAll('.modal-scrim .editor__date-btn')[0].click();
-    }
-    const btn = segButton(label);
-    expect(btn).toBeTruthy();
-    btn.click();
+    const toggle = document.querySelector('.modal-scrim input[aria-label="农历"]');
+    expect(toggle).toBeTruthy();
+    const want = label === '农历';
+    if (toggle.checked === want) return;
+    toggle.checked = want;
+    toggle.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  it('0.2.20（E6/E7）：日期字段 + 弹层「公历 | 农历」两段式；农历态「2026年九月十五」+ 小字公历', async () => {
+  it('0.2.20（E6/E7）+ 0.8.35：日期字段 + 「农历」开关；农历态「2026年九月十五」+ 小字公历', async () => {
     open();
-    // E6：编辑器里不再有第二个语种入口（顶部开关、字段胶囊都删了）
-    expect(document.querySelector('.modal-scrim input[aria-label="农历"]')).toBeNull();
+    // 0.8.35：顶部「农历」开关按用户要求恢复；字段胶囊仍是 E6 的结论（不恢复）
+    const lunarToggle = document.querySelector('.modal-scrim input[aria-label="农历"]');
+    expect(lunarToggle).toBeTruthy();
+    expect(lunarToggle.checked).toBe(false);
     expect(document.querySelector('.modal-scrim .editor__date-mode')).toBeNull();
     const mains = [...document.querySelectorAll('.modal-scrim .editor__date-main')];
     const subs = [...document.querySelectorAll('.modal-scrim .editor__date-sub')];
@@ -193,13 +192,16 @@ describe('0.2.15 D5 编辑器开始/结束两行显示农历', () => {
     expect(subs.map((x) => x.textContent)).toEqual(['', '']);
 
     setDateMode('农历');
+    // 开关就是语种真值：拨到农历后两个字段一起变
+    expect(lunarToggle.checked).toBe(true);
     // 2026-10-24 = 农历九月十五，小字折算写副标；开始与结束同步
     expect(mains[0].textContent).toBe('2026年九月十五');
     expect(subs[0].textContent).toBe('10/24');
     expect(mains[1].textContent).toBe('2026年九月十五');
     expect(subs[1].textContent).toBe('10/24');
-    // 弹层标题也切到农历、空格对比：同结构「年+月」
-    expect(document.querySelector('.date-pop__title').textContent).toBe('2026年九月');
+    // 0.8.35：弹层按当前语种重建，标题走农历（同结构「年+月」）
+    document.querySelectorAll('.modal-scrim .editor__date-btn')[0].click();
+    expect(document.querySelector('.date-pop__title-text').textContent).toBe('2026年九月');
 
     // 控件本体仍是一个按钮 + 弹层日历（0.2.18 的三下拉不再恢复）
     expect(document.querySelectorAll('.modal-scrim .editor__date-btn')).toHaveLength(2);
@@ -212,8 +214,8 @@ describe('0.2.15 D5 编辑器开始/结束两行显示农历', () => {
     expect(natives.map((n) => n.type)).toEqual(['date', 'date']);
     expect(natives[0].value).toBe('2026-10-24');
 
-    // 两段式切回公历：两行一起回公历
-    segButton('公历').click();
+    // 拨回公历：两行一起回公历
+    setDateMode('公历');
     expect(mains[0].textContent).toBe('2026年10月24日');
     expect(subs[0].textContent).toBe('');
     expect(mains[1].textContent).toBe('2026年10月24日');
@@ -235,14 +237,18 @@ describe('0.2.15 D5 编辑器开始/结束两行显示农历', () => {
     expect([mains[1].textContent, subs[1].textContent]).toEqual(['2026年九月十九', '10/28']);
   });
 
-  it('日期字段排在开始/结束行，农历开关整行已删（E6）；农历标记仍随语种写', async () => {
+  it('日期字段排在开始/结束行；农历开关行在「全天」行正上方（0.8.35）；农历标记仍随语种写', async () => {
     open();
-    // E6：顶部「农历」行整行删除，表单里只剩一个语种入口
-    expect(document.querySelector('.modal-scrim input[aria-label="农历"]')).toBeNull();
+    // 0.8.35：恢复顶部「农历」开关行（0.2.20 E6 的整行删除被用户新要求覆盖）
+    const toggle = document.querySelector('.modal-scrim input[aria-label="农历"]');
+    expect(toggle).toBeTruthy();
+    expect(toggle.closest('.field').nextElementSibling.textContent).toContain('全天');
     const formStart = modalJs.indexOf('const form = el(');
     const formText = modalJs.slice(formStart, modalJs.indexOf('fields.error,', formStart));
     expect(formStart).toBeGreaterThan(-1);
-    expect(formText).not.toContain('fields.lunarField');
+    // 开关行按「先农历、后全天」的顺序插进表单行数组
+    expect(formText.indexOf('fields.lunarRow')).toBeGreaterThan(-1);
+    expect(formText.indexOf('fields.lunarRow')).toBeLessThan(formText.indexOf('allDayRow'));
     expect(modalJs).toContain('fields.startDateField.node');
     expect(modalJs).toContain('fields.endDateField.node');
 
