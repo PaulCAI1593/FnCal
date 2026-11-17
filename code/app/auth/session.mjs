@@ -94,23 +94,34 @@ export function createSessionCodec({ secret, ttlMs = SESSION_TTL_MS, refreshAfte
     return `v1.${body}.${sign(`v1.${body}`)}`;
   }
 
-  function verify(value, now = Date.now()) {
+  /**
+   * 0.8.31：带原因的校验，给 `auth-failed` 日志区分「过期」与「无效」用。
+   * 只读，不做任何副作用；`verify()` 就是它的 `payload`。
+   * @returns {{payload: object|null, reason: 'ok'|'expired'|'invalid'}}
+   */
+  function inspect(value, now = Date.now()) {
     const parts = String(value || '').split('.');
-    if (parts.length !== 3 || parts[0] !== 'v1') return null;
+    if (parts.length !== 3 || parts[0] !== 'v1') return { payload: null, reason: 'invalid' };
     const [, body, sig] = parts;
-    if (!safeEqual(sig, sign(`v1.${body}`))) return null;
+    if (!safeEqual(sig, sign(`v1.${body}`))) return { payload: null, reason: 'invalid' };
     let payload;
     try {
       payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
     } catch {
-      return null;
+      return { payload: null, reason: 'invalid' };
     }
-    if (!payload || typeof payload.uid !== 'string' || !Number.isFinite(payload.exp)) return null;
-    if (payload.exp <= now) return null;
+    if (!payload || typeof payload.uid !== 'string' || !Number.isFinite(payload.exp)) {
+      return { payload: null, reason: 'invalid' };
+    }
+    if (payload.exp <= now) return { payload: null, reason: 'expired' };
     // 空转超时：旧 cookie 没有 idle 字段，用 exp 兜底。
     const idle = Number.isFinite(payload.idle) ? payload.idle : payload.exp;
-    if (idle <= now) return null;
-    return payload;
+    if (idle <= now) return { payload: null, reason: 'expired' };
+    return { payload, reason: 'ok' };
+  }
+
+  function verify(value, now = Date.now()) {
+    return inspect(value, now).payload;
   }
 
   // 剩余空闲时间不足一半时续期（只续 idle，不延长绝对有效期）。
@@ -151,5 +162,5 @@ export function createSessionCodec({ secret, ttlMs = SESSION_TTL_MS, refreshAfte
     return payload;
   }
 
-  return { issue, verify, needsRefresh, csrfFor, sign, issueChallenge, verifyChallenge, ttlMs };
+  return { issue, verify, inspect, needsRefresh, csrfFor, sign, issueChallenge, verifyChallenge, ttlMs };
 }

@@ -251,6 +251,8 @@ export async function apiRequest(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const mutating = method !== 'GET' && method !== 'HEAD';
   const authRedirect = options.authRedirect !== false;
+  // 0.8.31：内部标记，表示本次请求已经为 403 csrf 重试过，不再重试。
+  const csrfRetried = options.csrfRetried === true;
   const headers = { Accept: 'application/json', ...(options.headers || {}) };
   let body;
 
@@ -293,6 +295,23 @@ export async function apiRequest(path, options = {}) {
   if (!res.ok) {
     const error = errorFromResponse(res, payload);
     if (res.status === 401 && authRedirect) handleUnauthorized();
+    // 0.8.31：令牌换代（改密、退出全部设备）后，本地 header 还是旧一代 → 403 csrf。
+    // 取一次新会话再重试，且只重试一次：第二次仍 403 就按原错误抛给界面，不循环。
+    if (
+      res.status === 403
+      && mutating
+      && !csrfRetried
+      && payload
+      && payload.code === 'csrf'
+    ) {
+      csrfToken = '';
+      try {
+        await getSession({ force: true });
+      } catch {
+        /* 会话也取不到就照常报错 */
+      }
+      if (csrfToken) return apiRequest(path, { ...options, csrfRetried: true });
+    }
     throw error;
   }
   if (cacheKey) {
@@ -669,19 +688,29 @@ export async function exportCalendarIcs(calendarId, { from = '', to = '' } = {})
   return text;
 }
 
+/**
+ * 0.8.31：会话里的值优先于 cookie。
+ *
+ * 会话里的 `csrf` 是服务端当场算的，cookie 可能是上一代（令牌换代后浏览器里
+ * 还是旧值）；先按 cookie 走会一直 403。所以顺序是：内存 → 会话 → cookie。
+ */
 async function ensureCsrfToken() {
   if (csrfToken) return csrfToken;
+  try {
+    const session = await getSession();
+    if (session && session.csrf) {
+      csrfToken = session.csrf;
+      return csrfToken;
+    }
+  } catch {
+    /* 未登录时写请求会先拿到 401，由调用方处理 */
+  }
   const cookie = readCookie('caldav_csrf') || readCookie('csrf');
   if (cookie) {
     csrfToken = cookie;
     return csrfToken;
   }
-  try {
-    await getSession({ force: true });
-  } catch {
-    /* 未登录时写请求会先拿到 401，由调用方处理 */
-  }
-  return csrfToken;
+  return '';
 }
 
 /** 清空本地会话缓存（测试与退出登录用）。 */

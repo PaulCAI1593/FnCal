@@ -665,8 +665,10 @@ describe('0.2.19 D8 搜索展开态单一状态源', () => {
     expect(esc).toContain('collapseSearch();');
     expect(esc).toContain('search.closeDocked();');
     const outsideAt = appJs.indexOf("document.addEventListener('pointerdown', (e) => {");
-    const outside = appJs.slice(outsideAt, outsideAt + 500);
-    expect(outside).toContain("target.closest('.search__panel--docked')");
+    const outside = appJs.slice(outsideAt, outsideAt + 700);
+    // 0.8.33：判定收进 search-surface.js（标签下拉浮层挂在 body 下，必须一起放行）。
+    expect(outside).toContain('isInsideDockedSearch(target, searchBar)');
+    expect(outside).toContain('isInsideSearchPopover(target)');
     expect(outside).toContain('collapseSearch();');
     expect(outside).toContain('search.closeDocked();');
   });

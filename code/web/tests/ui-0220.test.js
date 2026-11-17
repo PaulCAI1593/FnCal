@@ -866,10 +866,11 @@ describe('0.2.20 E17：搜索结果不再一点就消失', () => {
 
   it('app.js 用捕获阶段的 pointerdown 标记内部交互，blur 首行据此早退', () => {
     expect(appJs).toContain('searchPointerInsidePanel');
-    expect(appJs).toContain("target.closest('.search__panel--docked')");
+    // 0.8.33：内部判定改用共用的 isInsideDockedSearch（含 .search__tag-menu 浮层）。
+    expect(appJs).toContain('isInsideDockedSearch(target)');
     expect(appJs).toMatch(/if \(searchPointerInsidePanel\) return;/);
     // 捕获阶段（第三参 true）注册，才能早于面板内的 click
-    const at = appJs.indexOf('searchPointerInsidePanel = Boolean(');
+    const at = appJs.indexOf('searchPointerInsidePanel = ');
     const tail = appJs.slice(at, at + 400);
     expect(tail).toContain('true');
   });

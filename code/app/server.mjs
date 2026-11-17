@@ -40,8 +40,11 @@ import { createAiRest } from './api/ai-rest.mjs';
 import { createWidgetRest } from './api/widget-rest.mjs';
 import { createMcp } from './api/mcp.mjs';
 import { createApprovalPage, APPROVAL_PAGE_PREFIX } from './api/approval-page.mjs';
+// 0.8.30（任务书 §二）：年度总结图片链接——页面与原始字节都给收不到图片的客户端。
+import { createAnnualImagePage, ANNUAL_IMAGE_PREFIX } from './api/annual-image-page.mjs';
 import { DEFAULT_ACCENT } from './lib/accent.mjs';
 import { createApprovalLinks } from './lib/approval-link.mjs';
+import { createAnnualImages } from './lib/annual-image-link.mjs';
 import { createApprovalReceipts } from './lib/approval-receipts.mjs';
 import { createAiService } from './lib/ai-service.mjs';
 import { createAiTrash } from './lib/ai-trash.mjs';
@@ -89,7 +92,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 0.7.9：月格「今天」胶囊贴右、全天任务 emoji 被前导挤掉、平板周视图名称只显示
 // 0.8.28 的 MCP 年度总结；0.8.29 只给桌面卡片摘要接口加四个只读标签字段（tagEmoji / tagGroupId / tagGroupName / tagGroupIndex），
 // 不新增正文，busy 时一律 null。
-export const VERSION = '0.8.29';
+export const VERSION = '0.8.34';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -549,6 +552,15 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     readAccent,
     approvalReceipts,
   });
+  // 0.8.30（任务书 §三）：年度总结图片链接表——只在内存、30 分钟、最多 50 条，
+  // 进程重启即失效（图里有日程明细，不落盘）。
+  const annualImages = createAnnualImages();
+  const annualImagePage = createAnnualImagePage({
+    annualImages,
+    logger,
+    // 页面与字节同桶 60 次/分/IP，与凭据限流分开。
+    rateLimiter: createAiRateLimiter(),
+  });
   const mcpApi = createMcp({
     tags: tagStore,
     aiStore,
@@ -560,6 +572,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     limiter: aiRateLimiter,
     approvalLinks,
     approvalReceipts,
+    annualImages,
   });
   const apiHandler = createApiHandler({
     version: config.version,
@@ -855,6 +868,30 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
           remoteAddress: source.ip || null,
         })),
         'approval-page',
+      );
+    }
+
+    // 0.8.30（任务书 §二）：年度总结图片链接 `/i/<token>`（展示页）与 `.png` / `.svg`（原始字节）。
+    // 与审批页同级，必须早于 `/api/` 与 DAV 的 403 判定：页面不登录、不带 API。
+    if (pathname.startsWith(ANNUAL_IMAGE_PREFIX)) {
+      const start = Date.now();
+      res.on('finish', () => {
+        logger.access({
+          method: req.method,
+          path: '/i/[token]',
+          status: res.statusCode,
+          ms: Date.now() - start,
+          ua: req.headers['user-agent'] ?? null,
+          remoteAddress: source.ip || null,
+          gateway: gateway || undefined,
+        });
+      });
+      return guarded(
+        () => runWithContext({ userId: null }, () => annualImagePage.handle(req, res, {
+          pathname,
+          remoteAddress: source.ip || null,
+        })),
+        'annual-image-page',
       );
     }
 

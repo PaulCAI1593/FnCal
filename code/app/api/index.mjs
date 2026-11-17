@@ -201,7 +201,9 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ta
       if (req.method !== 'GET') return sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
       const result = await auth.me({ req });
       if (!result.ok) return sendJson(res, 401, { ok: false, code: 'unauthorized', error: result.reason });
-      if (result.refreshCookie) setCookies(res, [result.refreshCookie]);
+      // 0.8.31：会话接口顺带修好 `caldav_csrf`（旧一代 cookie 会让写请求一直 403）。
+      const cookies = [result.refreshCookie, result.csrfCookie].filter(Boolean);
+      if (cookies.length) setCookies(res, cookies);
       const user = result.user;
       return sendJson(res, 200, {
         ok: true,

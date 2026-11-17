@@ -30,6 +30,8 @@ import {
 } from '../lib/annual-review.mjs';
 import { CARD_FONT_FAMILY, renderAnnualCardPng } from '../lib/card-render.mjs';
 import { YEAR_MAX, YEAR_MIN } from '../lib/annual-collect.mjs';
+// 0.8.30（任务书 §四）：年度总结图片链接——只存内存、30 分钟、收不到图片的客户端靠它取图。
+import { describeAnnualImage } from '../lib/annual-image-link.mjs';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const PREFIX = '/mcp';
@@ -413,7 +415,10 @@ const READ_TOOLS = Object.freeze([
       + '空数据也会出图（空态）。年份省略时取当前年。'
       + '只想看某几个日历时传 `calendars`（日历名称或 id 都行，最多 20 个，单个也能用 `calendar`）：'
       + '点名后统计范围 = 点名 ∩ 凭据可读，**点名优先于侧栏开关**（用户明确点名就不再按开关剔除）；'
-      + '传了年份就收在那一年。名不确定时先调 list_calendars 取 displayName。',
+      + '传了年份就收在那一年。名不确定时先调 list_calendars 取 displayName。'
+      // 0.8.30（任务书 §四）：图片 content 之外再给一个链接，收不到图片的客户端也能拿到原图。
+      + '回包还会带一个 30 分钟内有效、可直接打开或另存的图片链接（结构化结果里的 `imageUrl`，'
+      + '正文末尾也有一行）；收不到图片内容的客户端就把这个链接给用户。',
     {
       year: { type: 'number', description: `要总结的年份，如 2026；省略取当前年（${YEAR_MIN}–${YEAR_MAX}）` },
       calendars: {
@@ -751,6 +756,8 @@ export function createMcp({
   limiter = null,
   approvalLinks = null,
   approvalReceipts = null,
+  // 0.8.30（任务书 §三）：年度总结图片链接表（只存内存，由 server 建好后注入）。
+  annualImages = null,
 } = {}) {
   if (!aiStore && !aiService) throw new Error('createMcp 需要 aiStore');
   const service = aiService || createAiService({ aiStore, health, now });
@@ -1131,6 +1138,36 @@ export function createMcp({
     }
   }
 
+  /**
+   * 0.8.30（任务书 §四）：给年度总结原图签一个 30 分钟有效的链接。
+   * 存储未注入或签名失败时返回 null：图片照常走 image content，不把成功路径升级成错误。
+   * 日志只写 id 前 8 位，绝不写令牌、哈希或图片内容（§三）。
+   */
+  function annualImageFor(ctx, { year, kind, bytes } = {}) {
+    if (!annualImages || typeof annualImages.put !== 'function') return null;
+    try {
+      const created = annualImages.put({ kind, bytes, year });
+      const described = describeAnnualImage({
+        origin: ctx && ctx.origin,
+        token: created.token,
+        kind,
+        year,
+        bytes,
+        expiresIn: created.expiresIn,
+      });
+      logEvent('annual-image-created', {
+        id: String(created.id).slice(0, 8),
+        year,
+        kind,
+        bytes: created.bytes,
+      });
+      return described;
+    } catch (err) {
+      logEvent('annual-image-failed', { message: String((err && err.message) || err) });
+      return null;
+    }
+  }
+
   /* ---------------------------------------------------------------- 工具集 */
 
   /** 按凭据实时算工具集：写工具**只在**至少有一个可写日历时注册（不是调用了才报错）。 */
@@ -1288,6 +1325,10 @@ export function createMcp({
         const { model } = review;
         const lib = { CARD_WIDTH, CARD_HEIGHT, buildAnnualCardLayout, paintAnnualCard };
         const rendered = renderAnnualCardPng(lib, model);
+        // 0.8.30：SVG 兜底只渲染一次——正文与图片链接共用同一份字节，避免两处生成不一致。
+        const svgText = rendered.ok
+          ? null
+          : layoutToSvg(buildAnnualCardLayout(model, { fontFamily: CARD_FONT_FAMILY }));
         const lines = [annualSummarySentence(model)];
         if (review.scopedCalendars && review.scopedCalendars.length) {
           lines.push(`本次只统计：${review.scopedCalendars.join('、')}。`);
@@ -1295,6 +1336,13 @@ export function createMcp({
         }
         if (review.clipped) lines.push('统计范围已收在你的凭据时间窗内，年份之外的日程不会计入。');
         lines.push('保存方式：把上面这张图片存到本地即可（网页版也可在「头像菜单 → 年度总结」里保存）。');
+        // 0.8.30（任务书 §四）：再加一个 30 分钟有效的网址——收不到图片的客户端也能打开、另存。
+        const annualLink = annualImageFor(ctx, {
+          year: model.year,
+          kind: rendered.ok ? 'png' : 'svg',
+          bytes: rendered.ok ? rendered.png : Buffer.from(svgText, 'utf8'),
+        });
+        if (annualLink) lines.push(annualLink.textLine);
         const content = [];
         if (rendered.ok) {
           content.push({ type: 'text', text: lines.join('\n') });
@@ -1310,9 +1358,22 @@ export function createMcp({
             lines.unshift('本机未带 PNG 渲染依赖，已返回 SVG（可存为 .svg 后用浏览器打开或转 PNG）。');
           }
           content.push({ type: 'text', text: lines.join('\n') });
-          content.push({ type: 'text', text: layoutToSvg(buildAnnualCardLayout(model, { fontFamily: CARD_FONT_FAMILY })) });
+          content.push({ type: 'text', text: svgText });
         }
-        return { content };
+        if (!annualLink) return { content };
+        // 结构化结果：四个字段给能读结构化数据的客户端，text 那行给只能读文本的客户端，两项并存。
+        return {
+          content,
+          structuredContent: {
+            year: model.year,
+            imageKind: annualLink.imageUrl.endsWith('.svg') ? 'svg' : 'png',
+            pageUrl: annualLink.pageUrl,
+            imageUrl: annualLink.imageUrl,
+            expiresIn: annualLink.expiresIn,
+            imageBytes: annualLink.imageBytes,
+            imageSha256: annualLink.imageSha256,
+          },
+        };
       }
       // 0.7.11（M6 §3）：三个标签写工具。错误按 tag_* 码回结构化失败，不抛 RPC 错误。
       case 'create_tag': {

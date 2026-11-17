@@ -24,6 +24,9 @@ import { keyboardState, isEditableFocused, onKeyboardChange } from './keyboard-i
 // 0.2.40：日期弹层挂在 document.body 下（不在搜索条 DOM 子树里），常驻搜索条的
 // 「点外面就收起」判定必须显式问它，否则在弹层里点日期会被当成点外面。
 import { isInsideDatePopover } from './date-popover.js';
+// 0.8.33：标签下拉浮层挂在 body 下，判定「算不算搜索区内部」要与 search.js 用同一份，
+// 否则这里的两条收起逻辑仍会把菜单里的 pointerdown 当成点外面（0.8.32 真机复现）。
+import { isInsideDockedSearch, isInsideSearchPopover } from './search-surface.js';
 // 0.2.11（C10）：搜索槽位宽度是共享常量（lib/segment.js），展开/收起都不变。
 import { searchSlotWidth } from './lib/segment.js';
 // 0.6.13（首包拆分，第四处之四）：导入/导出弹窗约 22 KB 源码，只在菜单或拖文件时用；
@@ -1283,9 +1286,10 @@ export function createApp(root, { store, user }) {
     'pointerdown',
     (e) => {
       const target = e.target;
-      searchPointerInsidePanel = Boolean(
-        target && target.closest && target.closest('.search__panel--docked'),
-      ) || isInsideDatePopover(target);
+      // 0.8.33：加上 `.search__tag-menu`（挂在 body 下的标签下拉）。只判 docked 面板时，
+      // 点标签会把焦点从输入框带走、且下面那条文档级监听会直接收起，真机表现就是
+      // 「点一下直接缩回」。
+      searchPointerInsidePanel = isInsideDockedSearch(target) || isInsideDatePopover(target);
     },
     true,
   );
@@ -1310,8 +1314,9 @@ export function createApp(root, { store, user }) {
   document.addEventListener('pointerdown', (e) => {
     const target = e.target;
     if (!target || !target.closest) return;
-    if (searchBar.contains(target)) return;
-    if (target.closest('.search__panel--docked')) return;
+    // 0.8.33：搜索条自身、docked 面板、标签下拉浮层都算内部（浮层挂在 body 下）。
+    if (isInsideDockedSearch(target, searchBar)) return;
+    if (isInsideSearchPopover(target)) return;
     if (isInsideDatePopover(target)) return;
     collapseSearch();
     if (search) search.closeDocked();

@@ -177,7 +177,7 @@ async function main() {
       record('DAV MKCALENDAR with Basic auth -> 201', '201', String(r.status), r.status === 201);
     }
 
-    /* 7. CSRF: session-authenticated write without header -> 403 */
+    /* 7. CSRF（0.8.31 口径）：header 或 cookie 任一等于期望值即通过；两者都不匹配才 403 */
     const ics = [
       'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//t//EN',
       'BEGIN:VEVENT', 'UID:csrf-test', 'DTSTAMP:20261023T060000Z',
@@ -189,14 +189,21 @@ async function main() {
         body: ics,
         headers: { Cookie: cookieHeader, 'Content-Type': 'text/calendar' },
       });
-      record('session PUT without X-CSRF-Token -> 403', '403', String(r.status), r.status === 403);
+      record('session PUT with cookie only (no header) -> 201 (0.8.31)', '201', String(r.status), r.status === 201);
     }
     {
       const r = await call('PUT', `/calendars/${ADMIN_USER}/auth-test/csrf-test.ics`, {
         body: ics,
-        headers: { Cookie: cookieHeader, 'Content-Type': 'text/calendar', 'X-CSRF-Token': csrfCookie },
+        headers: { Cookie: `caldav_session=${sessionCookie}`, 'Content-Type': 'text/calendar', 'X-CSRF-Token': csrfCookie },
       });
-      record('session PUT with X-CSRF-Token -> 201', '201', String(r.status), r.status === 201);
+      record('session PUT with header only (no csrf cookie) -> 204 (0.8.31)', '204', String(r.status), r.status === 204);
+    }
+    {
+      const r = await call('PUT', `/calendars/${ADMIN_USER}/auth-test/csrf-test.ics`, {
+        body: ics,
+        headers: { Cookie: `caldav_session=${sessionCookie}`, 'Content-Type': 'text/calendar' },
+      });
+      record('session PUT without header and without csrf cookie -> 403', '403', String(r.status), r.status === 403);
     }
 
     /* 8. password change bumps tokenVersion and kills old cookies */

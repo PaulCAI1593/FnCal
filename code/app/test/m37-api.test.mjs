@@ -129,15 +129,27 @@ async function main() {
       me.status === 200 && Boolean(meBody.user && meBody.user.id));
 
     /* ---------------- CSRF / conflict --------------------------------- */
+    // 0.8.31 口径：header 或 cookie 任一等于期望值即通过，两者都不匹配才 403。
+    // 下面「裸会话 cookie」场景只带 caldav_session、不带 csrf cookie/header。
+    const sessionOnlyHeader = `caldav_session=${jar.session}`;
     const start = Date.UTC(2026, 11, 9, 2, 0, 0);
     const noCsrf = await fetch(`${BASE}/api/v1/kv/cal:evt:csrf-check`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
+      headers: { 'Content-Type': 'application/json', Cookie: sessionOnlyHeader },
       body: JSON.stringify({ title: 'no csrf', start, end: start + 3600_000 }),
     });
     const noCsrfBody = await noCsrf.json().catch(() => ({}));
-    record('写请求带 Cookie 但缺 X-CSRF-Token -> 403 csrf', '403 csrf',
+    record('写请求只有会话 cookie（无 csrf cookie、无 header）-> 403 csrf', '403 csrf',
       `${noCsrf.status} ${noCsrfBody.code}`, noCsrf.status === 403 && noCsrfBody.code === 'csrf');
+
+    // 只有 csv cookie、没有 header：0.8.31 起放行（内网网关会过滤自定义 header）。
+    const cookieOnly = await fetch(`${BASE}/api/v1/kv/cal:evt:csrf-cookieonly`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookieHeader },
+      body: JSON.stringify({ title: 'cookie only', start, end: start + 3600_000 }),
+    });
+    record('写请求只有 csrf cookie（无 header）-> 200/201（0.8.31）', '200/201',
+      String(cookieOnly.status), cookieOnly.status === 200 || cookieOnly.status === 201);
 
     // Every write endpoint must answer 403 (never 400) with a Chinese message.
     const csrfCases = [
@@ -156,7 +168,7 @@ async function main() {
     for (const [name, endpoint, method, type, body] of csrfCases) {
       const res = await fetch(`${BASE}${endpoint}`, {
         method,
-        headers: { 'Content-Type': type, Cookie: cookieHeader },
+        headers: { 'Content-Type': type, Cookie: sessionOnlyHeader },
         body,
       });
       const payload = await res.json().catch(() => ({}));

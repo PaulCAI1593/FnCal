@@ -13,6 +13,7 @@
 // `mfa`-flagged session that may only change the password, verify TOTP or log
 // out — never a real session.
 
+import { timingSafeEqual } from 'node:crypto';
 import { parseCookies, serializeCookie, clearCookie } from './cookies.mjs';
 import { parseBasicHeader, challengeHeaders } from './basic.mjs';
 import { SESSION_COOKIE, CSRF_COOKIE, SESSION_TTL_MS, PENDING_MFA_TTL_MS } from './session.mjs';
@@ -131,8 +132,9 @@ export function createAuthService({
     const cookies = parseCookies(req.headers.cookie);
     const raw = cookies[SESSION_COOKIE];
     if (!raw) return null;
-    const payload = session.verify(raw, now);
-    if (!payload) return { invalid: true };
+    const checked = session.inspect ? session.inspect(raw, now) : { payload: session.verify(raw, now), reason: 'invalid' };
+    const payload = checked.payload;
+    if (!payload) return { invalid: true, expired: checked.reason === 'expired' };
     const account = await accounts.findById(payload.uid);
     if (!account || account.disabled) return { invalid: true };
     if (Number(account.tokenVersion || 0) !== Number(payload.tv)) return { invalid: true };
@@ -205,18 +207,120 @@ export function createAuthService({
       return { ok: true, via: 'basic', account };
     }
 
-    if (fromCookie && fromCookie.revoked) return { ok: false, reason: 'session_revoked' };
-    return { ok: false, reason: fromCookie && fromCookie.invalid ? 'session_invalid' : 'no_credentials' };
+    // 0.8.31：下面几处失败都记一条 auth-failed（GET/HEAD 也记，用于内网排障）。
+    let reason = 'no_credentials';
+    if (fromCookie && fromCookie.revoked) reason = 'session_revoked';
+    else if (fromCookie && fromCookie.expired) reason = 'expired';
+    else if (fromCookie && fromCookie.invalid) reason = 'session_invalid';
+    noteAuthFailed(req, reason, now);
+    return { ok: false, reason };
   }
 
-  /** Double-submit CSRF: cookie value === header value === HMAC(account, tokenVersion). */
-  function validateCsrf(req, account) {
+  /**
+   * 0.8.31：header 或 cookie 任一等于服务端期望值即通过。
+   *
+   * 两侧都不能少：用户实测「内网地址必现 403、反代域名正常」——内网入口的
+   * `X-CSRF-Token` 可能被网关过滤，只认 header 就永远过不去；而令牌换代后
+   * 浏览器里的旧 cookie 又会让只认 cookie 的写法永远 403。两个都不匹配才拒绝。
+   */
+  function csrfState(req, account) {
     const cookies = parseCookies(req.headers.cookie);
-    const cookieToken = cookies[CSRF_COOKIE] || '';
+    const cookieToken = String(cookies[CSRF_COOKIE] || '');
     const headerToken = String(req.headers['x-csrf-token'] || '');
-    if (!cookieToken || !headerToken || cookieToken !== headerToken) return false;
     const expected = session.csrfFor(account);
-    return cookieToken.length === expected.length && cookieToken === expected;
+    const matches = (candidate) => Boolean(candidate)
+      && candidate.length === expected.length
+      && timingSafeEqual(Buffer.from(candidate), Buffer.from(expected));
+    return {
+      expected,
+      hasHeader: Boolean(headerToken),
+      hasCookie: Boolean(cookieToken),
+      headerMatchesExpected: matches(headerToken),
+      cookieMatchesExpected: matches(cookieToken),
+    };
+  }
+
+  /**
+   * 0.8.31（任务书「三之二」）：认证失败写 `auth-failed`。
+   *
+   * 用户实测「内网地址连新建事件都没权限、反代域名正常」，可能是 CSRF，也可能是
+   * 会话 cookie 根本没到服务端。这条日志用枚举 + 布尔把三种情形分开：
+   *   hasCookie:false                        → 浏览器没发 cookie（Secure 属性或网关丢头）
+   *   hasCookie:true + session_invalid        → 令牌失效/被撤
+   *   写请求 403 且 csrf-failed.hasHeader:false → 自定义 header 被过滤
+   * 只记枚举、布尔与路径，不记任何 cookie 值、令牌值、密码。
+   * 同一 path 每分钟最多 1 条，防止未登录轮询把日志刷爆。
+   * HTTP Basic 的口令失败不在这里记（由 audit 的 davAccessBlocked 负责），
+   * 避免把「密码错」与「会话失效」混成一类。
+   */
+  const authFailedAt = new Map();
+  const AUTH_FAILED_MIN_INTERVAL_MS = 60 * 1000;
+
+  function noteAuthFailed(req, reason, now = Date.now()) {
+    if (!logger || typeof logger.event !== 'function') return;
+    const path = String(req.url || '').split('?')[0] || '/';
+    const last = authFailedAt.get(path) || 0;
+    if (now - last < AUTH_FAILED_MIN_INTERVAL_MS) return;
+    authFailedAt.set(path, now);
+    // 表本身也要有界：超过 200 个路径就清一次（内网排障场景不会有这么多）。
+    if (authFailedAt.size > 200) authFailedAt.clear();
+    const cookies = parseCookies(req.headers && req.headers.cookie);
+    const source = sourceOf(req);
+    const authorization = String((req.headers && req.headers.authorization) || '');
+    const via = authorization.toLowerCase().startsWith('basic ')
+      ? 'basic'
+      : (cookies[SESSION_COOKIE] ? 'cookie' : 'none');
+    logger.event('auth-failed', {
+      reason,
+      via,
+      hasCookie: Boolean(cookies[SESSION_COOKIE]),
+      hasCsrfCookie: Boolean(cookies[CSRF_COOKIE]),
+      proto: source.proto,
+      method: String(req.method || 'GET').toUpperCase(),
+      path,
+      remoteAddress: source.ip || '',
+    });
+  }
+
+  /** 0.8.31：失败时写一条 app.log 事件，只用布尔与路径，绝不记令牌值。 */
+  function noteCsrfFailed(req, account, state) {
+    const method = String(req.method || 'GET').toUpperCase();
+    // 读请求本来就不带 header，不记，免得刷日志。
+    if (method === 'GET' || method === 'HEAD') return;
+    if (!logger || typeof logger.event !== 'function') return;
+    logger.event('csrf-failed', {
+      hasHeader: state.hasHeader,
+      hasCookie: state.hasCookie,
+      headerMatchesExpected: state.headerMatchesExpected,
+      cookieMatchesExpected: state.cookieMatchesExpected,
+      method,
+      path: String(req.url || '').split('?')[0],
+      username: (account && account.username) || '',
+    });
+  }
+
+  function validateCsrf(req, account) {
+    if (!account) return false;
+    const state = csrfState(req, account);
+    if (state.headerMatchesExpected || state.cookieMatchesExpected) return true;
+    noteCsrfFailed(req, account, state);
+    return false;
+  }
+
+  /**
+   * 0.8.31：`GET /api/auth/session` 顺手重发 `caldav_csrf`，把上一代的旧 cookie
+   * 就地修好（同 name、Path=/、HttpOnly=false、SameSite=Lax，寿命同账号绝对寿命）。
+   */
+  function csrfCookie(req, account) {
+    if (!account) return null;
+    const { absoluteMs } = lifetimes();
+    return serializeCookie(CSRF_COOKIE, session.csrfFor(account), {
+      maxAge: Math.floor(absoluteMs / 1000),
+      httpOnly: false,
+      secure: secureCookie(req),
+      sameSite: 'Lax',
+      path: '/',
+    });
   }
 
   function clientAddress(req) {
@@ -582,6 +686,8 @@ export function createAuthService({
       totpRequired: Boolean(identity.mfaPending && account && account.totp && account.totp.enabled),
       // Only a cookie session gets the CSRF value; Basic is for DAV clients.
       csrfToken: identity.via === 'session' && account ? session.csrfFor(account) : '',
+      // 0.8.31：同一代令牌的 cookie 一起回，客户端旧 cookie 就地修好。
+      csrfCookie: identity.via === 'session' && account ? csrfCookie(req, account) : null,
       refreshCookie: identity.refreshCookie || null,
     };
   }

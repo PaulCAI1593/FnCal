@@ -10,6 +10,8 @@
  * or task back through `onPick`.
  */
 import { el, clear } from './dom.js';
+// 0.8.33：与 app.js 共用「这次点击算不算搜索区内部」的判定（标签下拉挂在 body 上）。
+import { isInsideSearchPopover } from './search-surface.js';
 import { closeOnBackdrop } from './scrim.js';
 import { icon } from './icons.js';
 import { EVENT_COLORS, colorHex, colorFg, colorKeyOfHex, isValidColor } from './colors.js';
@@ -403,6 +405,9 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
 
   function closeDocked() {
     if (!docked) return;
+    // 0.8.32：标签下拉挂在 body 下，不随面板一起销毁；面板收起时必须显式关掉，
+    // 否则菜单孤零零留在页面上，再点会命中已为 null 的 `filters`。
+    if (closeTagMenu) closeTagMenu();
     docked = false;
     document.removeEventListener('keydown', onKeydown, true);
     if (outsideHandler) document.removeEventListener('pointerdown', outsideHandler, true);
@@ -490,6 +495,13 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
       // 若被当成「点外面」，搜索条会连筛选一起收起——用户 m00633「筛选-选择日期
       // 点击直接缩回去了」。弹层自己有单例与 outside 监听，这里放行即可。
       if (isInsideDatePopover(e.target)) return;
+      // 0.8.32（用户「点标签之后搜索页缩回了，独留标签选择悬空」）：标签下拉同样
+      // 挂在 body 下（0.7.22 的浮层），这里不放行的话 pointerdown 捕获阶段先把常驻
+      // 条收起，菜单成孤儿、再点就抛 `filters` 为 null。键盘路径早有同样的放行
+      // （onKeydown 里 `.search__tag-menu`），只有指针这一侧漏了。
+      // 0.8.33（用户：装 0.8.32 后仍是「点击直接缩回」）：判定收进 search-surface.js，
+      // 与 app.js 的捕获标记、文档级收起用同一份规则，避免再漏一处。
+      if (isInsideSearchPopover(e.target)) return;
       closeDocked();
     };
     document.addEventListener('pointerdown', outsideHandler, true);
@@ -901,6 +913,9 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
           dataset: { tagId: tag.id },
           on: {
             click: () => {
+              // 0.8.32：面板已收起时 filters 为 null（菜单挂 body、可能晚一拍才关），
+              // 直接忽略这次点击，不要再抛 TypeError。
+              if (!filters) return;
               // 0.7.5：点具体标签时自动取消「无标签」，两者互斥。
               filters.noTag = false;
               if (filters.tags.has(tag.id)) filters.tags.delete(tag.id);
@@ -927,6 +942,7 @@ export function createSearch({ store, onPick, onDockedChange = null }) {
         dataset: { tagId: '' },
         on: {
           click: () => {
+            if (!filters) return;
             filters.noTag = !filters.noTag;
             if (filters.noTag) filters.tags.clear();
             syncOptions();
