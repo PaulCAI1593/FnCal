@@ -11,7 +11,7 @@
  * promise so the calling code stays synchronous and easy to follow.
  */
 import { el } from './dom.js';
-import { enhanceSelect } from './select-listbox.js';
+import { enhanceSelect, closeAllOpenMenus } from './select-listbox.js';
 import { icon } from './icons.js';
 import { ownsEscape } from './time-field.js';
 import { ordinalLabel } from './recurrence.js';
@@ -121,6 +121,9 @@ export function mountDialog(dialog, onClose) {
     document.removeEventListener('keydown', onKey, true);
     // 0.8.35 §10：日期弹层是挂在 body 上的单例，关弹窗时一起收起，免得留在半空。
     closeDatePopover();
+    // 0.8.52（任务书 F.8 D3）：自绘下拉的菜单也挂在 body 上，随弹窗一起关，
+    // 否则提交/切页后菜单会孤零零留在屏幕上。
+    closeAllOpenMenus();
     scrim.remove();
     if (lastFocused && lastFocused.focus) lastFocused.focus();
     onClose && onClose();

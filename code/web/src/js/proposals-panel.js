@@ -13,6 +13,7 @@
 import { el, clear } from './dom.js';
 import { t } from '../i18n/index.js';
 import { toast } from './toast.js';
+import { friendlyError } from './error-text.js';
 import { icon } from './icons.js';
 import { mountDialog } from './recurrence-dialog.js';
 import { colorHex } from './colors.js';
@@ -655,7 +656,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
     try {
       payload = await batchAiProposals(action, ids);
     } catch (err) {
-      toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
+      toast(friendlyError(err, 'settings.ai.loadFailed'), { variant: 'danger' });
     }
     state.busy = false;
     state.busyAction = '';
@@ -836,7 +837,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
     if (status === 409 || code.includes('conflict')) return t('settings.ai.trash.conflict');
     if (status === 410 || code.includes('expired')) return t('settings.ai.trash.expired');
     if (status === 404 || code.includes('not_found')) return t('settings.ai.trash.expired');
-    return (err && err.message) || t('settings.ai.trash.failed');
+    return friendlyError(err, 'settings.ai.trash.failed');
   }
 
   async function restoreItem(item) {
@@ -894,7 +895,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
     } catch (err) {
       state.trash.clearing = false;
       render();
-      toast((err && err.message) || t('settings.ai.trash.failed'), { variant: 'danger' });
+      toast(friendlyError(err, 'settings.ai.trash.failed'), { variant: 'danger' });
     }
   }
 
@@ -1089,7 +1090,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
       render();
       void refreshAiBadge();
     } catch (err) {
-      toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
+      toast(friendlyError(err, 'settings.ai.loadFailed'), { variant: 'danger' });
     }
   }
 
@@ -1128,7 +1129,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
         render();
         return;
       }
-      toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
+      toast(friendlyError(err, 'settings.ai.loadFailed'), { variant: 'danger' });
     }
   }
 
@@ -1148,7 +1149,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
           render();
           void refreshAiBadge();
         } catch (err) {
-          toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
+          toast(friendlyError(err, 'settings.ai.loadFailed'), { variant: 'danger' });
         }
       },
     });

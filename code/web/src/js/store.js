@@ -316,6 +316,14 @@ export function normalizeCalendar(input = {}) {
     // 0.2.1 共享日历的接口预留：0.2.0 后端不会写，永远是空数组，
     // 但前端据此决定是否显示「参与者」字段（个人日历整块隐藏）。
     shares: Array.isArray(input.shares) ? input.shares : [],
+    // 0.8.46：在线 ICS 订阅。
+    isSubscription: input.isSubscription === true || Boolean(input.subscriptionUrl),
+    subscriptionUrl: typeof input.subscriptionUrl === 'string' ? input.subscriptionUrl : '',
+    syncIntervalMin: Number.isFinite(Number(input.syncIntervalMin)) ? Number(input.syncIntervalMin) : 0,
+    lastSyncAt: typeof input.lastSyncAt === 'string' && input.lastSyncAt ? input.lastSyncAt : null,
+    lastSyncStatus: ['never', 'ok', 'error'].includes(input.lastSyncStatus) ? input.lastSyncStatus : 'never',
+    lastSyncError: typeof input.lastSyncError === 'string' ? input.lastSyncError : '',
+    readOnly: input.readOnly === true || Boolean(input.subscriptionUrl),
   };
 }
 
@@ -1160,6 +1168,10 @@ export function createStore(backend, options = {}) {
       displayName: input.displayName,
       color: colorHex(input.color || DEFAULT_COLOR),
       description: input.description,
+      ...(input.subscriptionUrl ? { subscriptionUrl: input.subscriptionUrl } : {}),
+      ...(input.syncIntervalMin !== undefined && input.subscriptionUrl
+        ? { syncIntervalMin: input.syncIntervalMin }
+        : {}),
     });
     const cal = normalizeCalendar(payload && payload.calendar ? payload.calendar : payload);
     calendars.set(cal.id, cal);
@@ -1177,6 +1189,56 @@ export function createStore(backend, options = {}) {
     applyCalendarColors();
     emit();
     return cal;
+  }
+
+  /** 0.8.46：立即同步订阅日历，并刷新内存里的同步状态。 */
+  /** 0.8.47：订阅地址测试（不改本地状态，只把服务端结果透传）。 */
+  async function testSubscription(url) {
+    return backend.testSubscription(url);
+  }
+
+  /**
+   * 0.8.52（任务书 F.5）：保存订阅地址时把后端 PATCH 回的 `sync` 结果一并带回。
+   * `updateCalendar` 只回日历对象，弹窗拿不到「顺手同步」的成败。
+   */
+  async function updateSubscriptionCalendar(id, url) {
+    const payload = await backend.updateCalendar(id, { subscriptionUrl: url });
+    const raw = payload && payload.calendar ? payload.calendar : payload;
+    const cal = normalizeCalendar(raw);
+    calendars.set(cal.id, cal);
+    applyCalendarColors();
+    const sync = (payload && payload.sync) || null;
+    // 0.8.52（任务书 F.7）：后端 PATCH 改地址时已经同步过，事件集合也变了；
+    // 只在「明确成功」时重载事件，老后端没有 sync 字段就不动、不报错。
+    let reloadFailed = false;
+    if (sync && sync.ok === true) {
+      try {
+        await load();
+      } catch {
+        reloadFailed = true;
+      }
+    }
+    emit();
+    return { calendar: cal, sync, reloadFailed };
+  }
+
+  async function syncCalendar(id) {
+    const payload = await backend.syncCalendar(id);
+    if (payload && payload.calendar) {
+      const cal = normalizeCalendar(payload.calendar);
+      calendars.set(cal.id, cal);
+    }
+    // 0.8.52（任务书 F.7）：同步会删掉新 feed 里没有的旧事件，内存里的 events
+    // 必须重读，否则界面继续显示老订阅日程直到整页刷新。返回值仍带 imported/removed。
+    if (payload && payload.ok !== false) {
+      try {
+        await load();
+      } catch {
+        if (payload && typeof payload === 'object') payload.reloadFailed = true;
+      }
+    }
+    emit();
+    return payload;
   }
 
   /**
@@ -3040,7 +3102,10 @@ export function createStore(backend, options = {}) {
     getTasksForCalendar,
     isCalendarVisible,
     createCalendar,
+    syncCalendar,
+    testSubscription,
     updateCalendar,
+    updateSubscriptionCalendar,
     deleteCalendar,
     clearCalendar,
     restoreCalendar,
