@@ -301,7 +301,14 @@ export function createApp(root, { store, user }) {
             reportWriteFailure(t('calendar.error.create')),
           ),
       }),
-    calendarSettings: (cal) =>
+    calendarSettings: (cal) => {
+      const requestCalendarSync = (calendarId) => {
+        if (typeof store.syncCalendar === 'function') return store.syncCalendar(calendarId);
+        console.error('store.syncCalendar 不可用：构建产物缺少导出，请刷新页面或重装应用');
+        const message = t('calendar.subscription.syncUnavailable');
+        toast(message, { variant: 'danger' });
+        return Promise.resolve({ ok: false, error: message });
+      };
       openCalendarSettings({
         calendar: cal,
         onSave: (patch) =>
@@ -309,9 +316,20 @@ export function createApp(root, { store, user }) {
             () => toast(t('common.saved'), { variant: 'success' }),
             reportWriteFailure(t('calendar.error.save')),
           ),
+        // 0.8.46：订阅日历可在设置里改订阅地址并立即同步。
+        // 0.8.52（F.5）：把后端「顺手同步」的 `sync` 结果一并交给弹窗。
+        onSaveUrl: (url) =>
+          typeof store.updateSubscriptionCalendar === 'function'
+            ? store.updateSubscriptionCalendar(cal.id, url)
+            : Promise.resolve(store.updateCalendar(cal.id, { subscriptionUrl: url })).then((next) => ({
+                calendar: next,
+              })),
+        // 0.8.50：同步由 app.js 注入，弹窗只调用回调。
+        onSyncCalendar: requestCalendarSync,
         // 0.2.1（#12）：导出入口只在日历设置弹窗里。
         onExport: () => actions.exportCalendar(cal),
-      }),
+      });
+    },
     // 0.2.1（#12）：行菜单只留「日历设置 / 共享（本版灰置）/ 更改颜色 / 只显示」；
     // 删除保留给非系统日历（0.2.0 真机已验证的删除+10 秒撤销，不能丢入口）。
     // 0.2.2（②）：「更改颜色」展开二级菜单 —— 9 色快捷切换（当前色带勾）+ 自定义颜色入口。

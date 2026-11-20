@@ -9,12 +9,15 @@
 import { el } from './dom.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
+import { friendlyError } from './error-text.js';
 import { mountDialog } from './recurrence-dialog.js';
 import { toICS, parseICS } from './ics.js';
 import { isOfflineError } from './offline.js';
 import { exportCalendarIcs } from './api-client.js';
 import { colorHex } from './colors.js';
 import { t } from '../i18n/index.js';
+import { createDateFieldButton } from './date-field.js';
+import { enhanceSelect } from './select-listbox.js';
 
 const JSON_VERSION = 1;
 
@@ -148,7 +151,7 @@ export function openExportDialog({ store, calendar }) {
           for (const node of rangeButtons) node.setAttribute('aria-checked', String(node === btn));
           customFields.style.display = value === 'custom' ? '' : 'none';
           refreshRangeState();
-          if (value === 'custom') fromInput.focus();
+          if (value === 'custom') fromField.node.querySelector('.date-field__btn').focus();
         },
       },
     });
@@ -156,26 +159,31 @@ export function openExportDialog({ store, calendar }) {
     return btn;
   });
 
-  const fromInput = el('input', {
-    class: 'input',
-    type: 'date',
+  // 0.8.52（任务书 F.1/F.2）：导出的两个日期框换共享组件——按钮 + 隐藏原生真值，
+  // 点开是 FnCal 的 `.date-pop`，不再是浏览器原生日历。`name` 与 change 链路不变。
+  const weekStartsOn = (store.getSettings() || {}).weekStartsOn;
+  const fromField = createDateFieldButton({
     name: 'export-from',
-    'aria-label': t('io.export.from'),
+    ariaLabel: t('io.export.from'),
+    allowClear: true,
+    weekStartsOn,
   });
-  const toInput = el('input', {
-    class: 'input',
-    type: 'date',
+  const toField = createDateFieldButton({
     name: 'export-to',
-    'aria-label': t('io.export.to'),
+    ariaLabel: t('io.export.to'),
+    allowClear: true,
+    weekStartsOn,
   });
+  const fromInput = fromField.input;
+  const toInput = toField.input;
   const customFields = el('div', { class: 'io-export__custom', style: { display: 'none' } }, [
     el('div', { class: 'field' }, [
       el('label', { class: 'field__label', text: t('io.export.from') }),
-      fromInput,
+      fromField.node,
     ]),
     el('div', { class: 'field' }, [
       el('label', { class: 'field__label', text: t('io.export.to') }),
-      toInput,
+      toField.node,
     ]),
   ]);
 
@@ -259,7 +267,7 @@ export function openExportDialog({ store, calendar }) {
       toast(t('io.toast.exportedFile', { file: filename }), { variant: 'success' });
       close();
     } catch (err) {
-      showStatus((err && err.message) || t('io.error.exportFailed'), 'danger');
+      showStatus(friendlyError(err, 'io.error.exportFailed'), 'danger');
     } finally {
       busy = false;
       submitBtn.disabled = Boolean(customProblem());
@@ -349,6 +357,7 @@ export function openImportDialog({ store, file = null } = {}) {
           targetMode = value;
           for (const node of modeButtons) node.setAttribute('aria-checked', String(node === btn));
           existingList.style.display = targetMode === 'existing' ? '' : 'none';
+          subscribeBtn.style.display = targetMode === 'new' ? '' : 'none';
         },
       },
     });
@@ -407,6 +416,14 @@ export function openImportDialog({ store, file = null } = {}) {
     on: { click: () => fileInput.click() },
   });
 
+  // 0.8.46：订阅链接入口只在「新建日历」模式显示（订阅固定新建）。
+  const subscribeBtn = el('button', {
+    class: 'btn',
+    type: 'button',
+    html: icon('link', { size: 'sm' }) + `<span>${t('io.action.subscribe')}</span>`,
+    on: { click: () => openSubscribeDialog() },
+  });
+
   const retryBtn = el('button', {
     class: 'btn',
     type: 'button',
@@ -418,6 +435,186 @@ export function openImportDialog({ store, file = null } = {}) {
       },
     },
   });
+
+  /** 0.8.46：订阅小弹层（地址 / 名称 / 间隔）；订阅固定新建日历。 */
+  function openSubscribeDialog() {
+    let submitting = false;
+    const urlInput = el('input', {
+      class: 'input',
+      type: 'url',
+      placeholder: 'https://example.com/calendar.ics',
+      'aria-label': t('io.subscribe.url'),
+      autocomplete: 'off',
+    });
+    urlInput.spellcheck = false;
+    const nameInput = el('input', {
+      class: 'input',
+      type: 'text',
+      placeholder: t('io.subscribe.namePlaceholder'),
+      'aria-label': t('io.subscribe.name'),
+      maxlength: '80',
+      autocomplete: 'off',
+    });
+    const intervalSelect = el('select', { class: 'input', 'aria-label': t('io.subscribe.interval') });
+    for (const minutes of [60, 0, 15, 360, 1440]) {
+      intervalSelect.append(el('option', {
+        value: String(minutes),
+        text: t(`io.subscribe.interval.${minutes}`),
+        selected: minutes === 60,
+      }));
+    }
+    const hint = el('p', { class: 'io-hint', role: 'status', style: { display: 'none' } });
+    // 0.8.47（任务书 §五·6）：先测地址再创建，失败时直接看到 HTTP/超时/非 ICS 的原因。
+    const testOut = el('p', { class: 'io-hint io-subscribe__testout', role: 'status', style: { display: 'none' } });
+    const testBtn = el('button', {
+      class: 'btn',
+      type: 'button',
+      text: t('io.subscribe.test'),
+      on: { click: () => runTest() },
+    });
+    async function runTest() {
+      const raw = urlInput.value.trim();
+      let parsed = null;
+      try {
+        parsed = new URL(raw);
+      } catch {
+        parsed = null;
+      }
+      if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+        testOut.textContent = t('io.subscribe.urlInvalid');
+        testOut.dataset.variant = 'danger';
+        testOut.style.display = '';
+        urlInput.focus();
+        return;
+      }
+      testBtn.disabled = true;
+      const label = testBtn.textContent;
+      testBtn.textContent = t('io.subscribe.testing');
+      testOut.textContent = t('io.subscribe.testing');
+      testOut.dataset.variant = '';
+      testOut.style.display = '';
+      try {
+        const payload = await store.testSubscription(parsed.toString());
+        const result = (payload && payload.result) || {};
+        if (result.ok) {
+          testOut.dataset.variant = 'success';
+          testOut.textContent = t('io.subscribe.testOk', {
+            status: String(result.status || 200),
+            ms: String(result.elapsedMs || 0),
+            bytes: String(result.bytes || 0),
+          });
+        } else {
+          testOut.dataset.variant = 'danger';
+          testOut.textContent = t('io.subscribe.testFail', {
+            error: result.message || t('io.subscribe.testFailedShort'),
+          });
+        }
+      } catch (err) {
+        testOut.dataset.variant = 'danger';
+        testOut.textContent = t('io.subscribe.testFail', {
+          error: friendlyError(err, 'io.subscribe.testFailedShort'),
+        });
+      } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = label;
+      }
+    }
+    const submitBtn = el('button', { class: 'btn btn--primary', type: 'submit', text: t('io.subscribe.submit') });
+    const cancelBtn = el('button', {
+      class: 'btn',
+      type: 'button',
+      text: t('common.cancel'),
+      on: { click: () => close() },
+    });
+    const form = el('form', {
+      class: 'modal io-modal io-subscribe',
+      role: 'dialog',
+      'aria-modal': 'true',
+      'aria-labelledby': 'io-subscribe-title',
+    }, [
+      el('div', { class: 'modal__head' }, [
+        el('h2', { class: 'modal__title', id: 'io-subscribe-title', text: t('io.subscribe.title') }),
+        el('button', {
+          class: 'icon-btn',
+          type: 'button',
+          'aria-label': t('common.close'),
+          html: icon('close'),
+          on: { click: () => close() },
+        }),
+      ]),
+      el('div', { class: 'modal__body' }, [
+        el('label', { class: 'field' }, [
+          el('span', { class: 'field__label', text: t('io.subscribe.url') }),
+          urlInput,
+        ]),
+        el('div', { class: 'io-subscribe__testrow' }, [testBtn]),
+        testOut,
+        el('label', { class: 'field' }, [
+          el('span', { class: 'field__label', text: t('io.subscribe.name') }),
+          nameInput,
+        ]),
+        el('label', { class: 'field' }, [
+          el('span', { class: 'field__label', text: t('io.subscribe.interval') }),
+          // 0.8.52（任务书 F.3）：同步间隔下拉走自绘 listbox，与其余下拉同款。
+          enhanceSelect(intervalSelect)?.wrapper || intervalSelect,
+        ]),
+        el('p', { class: 'io-hint', text: t('io.subscribe.hint') }),
+        hint,
+      ]),
+      el('div', { class: 'modal__foot' }, [
+        el('div', { class: 'spacer' }),
+        cancelBtn,
+        submitBtn,
+      ]),
+    ]);
+    const close = mountDialog(form);
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (submitting) return;
+      const raw = urlInput.value.trim();
+      let parsed = null;
+      try {
+        parsed = new URL(raw);
+      } catch {
+        parsed = null;
+      }
+      if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+        hint.textContent = t('io.subscribe.urlInvalid');
+        hint.dataset.variant = 'danger';
+        hint.style.display = '';
+        urlInput.focus();
+        return;
+      }
+      const displayName = nameInput.value.trim().slice(0, 80) || t('io.subscribe.defaultName');
+      submitting = true;
+      submitBtn.disabled = true;
+      submitBtn.textContent = t('io.subscribe.creating');
+      Promise.resolve(store.createCalendar({
+        displayName,
+        subscriptionUrl: parsed.toString(),
+        syncIntervalMin: Number(intervalSelect.value),
+      })).then(
+        (cal) => {
+          const name = cal && cal.displayName ? cal.displayName : displayName;
+          close();
+          showStatus(t('io.subscribe.created', { name }), 'success');
+          toast(t('io.subscribe.created', { name }), { variant: 'success' });
+        },
+        () => {
+          hint.textContent = t('io.subscribe.failed');
+          hint.dataset.variant = 'danger';
+          hint.style.display = '';
+        },
+      ).finally(() => {
+        submitting = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = t('io.subscribe.submit');
+      });
+    });
+
+    requestAnimationFrame(() => urlInput.focus());
+  }
 
   const dialog = el('form', { class: 'modal io-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'io-import-title' }, [
     el('div', { class: 'modal__head' }, [
@@ -437,7 +634,7 @@ export function openImportDialog({ store, file = null } = {}) {
         existingList,
       ]),
       el('p', { class: 'io-hint', text: t('io.hint.import') }),
-      el('div', { class: 'io-actions' }, [importBtn, retryBtn]),
+      el('div', { class: 'io-actions' }, [importBtn, subscribeBtn, retryBtn]),
       fileInput,
       progress,
       status,

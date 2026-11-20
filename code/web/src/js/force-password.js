@@ -14,6 +14,7 @@ import { icon } from './icons.js';
 import { t } from '../i18n/index.js';
 import { changePassword, ApiError } from './api-client.js';
 import { createPasswordField } from './password-field.js';
+import { friendlyError } from './error-text.js';
 import { DEFAULT_RESET_PASSWORD, MIN_PASSWORD_LENGTH } from './password-policy.js';
 import { versionedAsset } from './build-info.js';
 
@@ -197,7 +198,7 @@ export function renderForcePasswordScreen(root, { user, onDone, onSignOut } = {}
       if (err instanceof ApiError && err.status === 401) {
         setError(t('forcePassword.error.old'));
       } else {
-        setError((err && err.message) || t('forcePassword.error.failed'));
+        setError(friendlyError(err, 'forcePassword.error.failed'));
       }
     }
   });

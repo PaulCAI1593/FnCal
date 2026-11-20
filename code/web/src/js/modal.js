@@ -19,7 +19,7 @@ import { splitTagTitle } from './tag-display.js';
 import { lunarHintText } from './lunar-text.js';
 // 0.7.5（用户「下拉菜单的分组也可以折叠」）：与筛选面板下拉共用折叠状态。
 import { expandAllGroups, isGroupCollapsed, toggleGroupCollapsed } from './tag-dropdown-collapse.js';
-import { enhanceSelect } from './select-listbox.js';
+import { enhanceSelect, closeAllOpenMenus } from './select-listbox.js';
 // 0.7.7（用户「名称和地点能选之前写过的」）：标题与地点下方的历史候选。
 import { createTextSuggest, stripLeadingEmoji } from './text-suggest.js';
 import { toast } from './toast.js';
@@ -57,11 +57,6 @@ import {
   tzLabel,
   tzOffsetLabel,
 } from './date-utils.js';
-// 0.9.0（用户「附件总归对应一个日程」）：附件按某一次挂；列表、上传、删除走这几个封装。
-import { attachmentUrl, deleteAttachment, listAttachments, testFolder, uploadAttachment } from './api-client.js';
-import { openAttachmentViewer } from './attachment-viewer.js';
-// 0.9.1（任务书 §三·六 D）：绑定 NAS 文件夹时用的是只读浏览层。
-import { openFolderBrowser } from './folder-browser.js';
 import { createTimeField, ownsEscape } from './time-field.js';
 import { closeDatePopover, openDatePopover } from './date-popover.js';
 // 0.8.36：任务重复的推进判断（与 store.toggleTask 同一口径）。
@@ -121,17 +116,6 @@ export function createEventModal({
   let meeting = null; // the meeting link on this event { url, code? }, or null
   let openedMeetingJson = 'null'; // the link as shown at open, to detect a change on save
   let selfRemoved = false; // the user took themself off the list — don't re-add this open
-  // 0.9.0：附件行状态（列表来自服务端，只缓存本次打开的结果）。
-  let attachItems = [];
-  let attachTotalBytes = 0;
-  // 0.9.1：附件放哪儿（app 应用内 / library NAS 附件库 / linked 绑定文件夹）。
-  let attachStorage = 'app';
-  let attachBusy = false;
-  let attachRequestSeq = 0;
-  // 0.9.2 §8.5.2：本次上传的进度与取消句柄（一次可多选文件，逐个上传）。
-  let attachUpload = null;
-  let attachRel = '';
-  let attachParentRel = null;
   // 当前账号的邮箱，用于在参与者列表里识别「我」。由后端 /api/v1/me 提供，
   // 没有则留空（不弹任何权限框）。
   let selfEmail =
@@ -168,11 +152,6 @@ export function createEventModal({
   // 0.7.0：标签控件建在 BuildForm() 里（跟着表单生命周期），保存与回填在工厂层用到，
   // 所以由 BuildForm() 结束时把三个入口挂到这里；未建表单时为 null。
   let formApi = null;
-  // 0.9.1（任务书 §三·六 D）：编辑器与详情卡都要读绑定目录，所以挂在工厂层
-  // （BuildForm 里只建控件、把渲染器挂到这里，退出表单后仍可调用）。
-  let boundFolder = '';
-  let boundFolderAccess = null;
-  let renderFolderRow = () => {};
   const OOO_COLOR = 'graphite';
 
   /** 后端是否提供多日历 API（旧部署/测试替身没有，日历下拉整个不出现）。 */
@@ -948,16 +927,16 @@ export function createEventModal({
       style: { display: 'none' },
       text: t('editor.lunarOutOfRange'),
     });
-    // 0.8.42：与「全天」行同构（`label.inline-field` = 标签列 + 控件列）。原先外面套
-    // `.field`，窄屏 `.modal--editor .field` 收成一列，标签与开关就上下堆叠了。
-    // 提示行不再放在行内，改由表单主体紧跟本行插入，显示切换仍在 syncLunarStatus。
-    fields.lunarRow = el('label', { class: 'inline-field', style: { cursor: 'pointer' } }, [
+    fields.lunarRow = el('div', { class: 'field' }, [
       el('span', { class: 'field__label', text: t('editor.lunar') }),
-      el('span', { class: 'switch' }, [
-        fields.lunarToggle,
-        el('span', { class: 'switch__track' }),
-        el('span', { class: 'switch__thumb' }),
+      el('label', { class: 'inline-field', style: { cursor: 'pointer' } }, [
+        el('span', { class: 'switch' }, [
+          fields.lunarToggle,
+          el('span', { class: 'switch__track' }),
+          el('span', { class: 'switch__thumb' }),
+        ]),
       ]),
+      fields.lunarStatus,
     ]);
 
     // --- All-day switch ---
@@ -1062,155 +1041,6 @@ export function createEventModal({
       el('span', { class: 'field__label', text: t('editor.label.location') }),
       fields.location,
     ]);
-
-    // --- NAS 文件夹（0.9.1，任务书 §三·六 D）---
-    // 只读绑定：目录内容当附件显示，FnCal 不在里面写任何文件。
-    fields.folderInput = el('input', {
-      class: 'input input--folder',
-      type: 'text',
-      readonly: true,
-      placeholder: t('editor.folderNone'),
-      'aria-label': t('editor.folder'),
-    });
-    fields.folderPick = el('button', {
-      class: 'btn btn--ghost',
-      type: 'button',
-      text: t('editor.folderPick'),
-      on: {
-        click: () => {
-          // 已登录用户才能列目录；服务端按会话鉴权，这里不额外判断。
-          openFolderBrowser({
-            mode: 'pick',
-            path: boundFolder,
-            title: t('editor.folderPick'),
-            onPick: (picked) => {
-              boundFolder = picked;
-              boundFolderAccess = null;
-              renderFolderRow();
-              // 任务书 §3.2.1：按 fnOS 用户判权；拿不到就显示「未确认」，不默认可写。
-              testFolder(picked)
-                .then((res) => {
-                  boundFolderAccess = {
-                    writable: Boolean(res && res.writable),
-                    degraded: Boolean(res && res.degraded),
-                    message: (res && res.message) || '',
-                  };
-                  renderFolderRow();
-                })
-                .catch(() => {
-                  boundFolderAccess = { writable: false, degraded: true, message: '' };
-                  renderFolderRow();
-                });
-            },
-          });
-        },
-      },
-    });
-    fields.folderClear = el('button', {
-      class: 'btn btn--ghost',
-      type: 'button',
-      text: t('editor.folderClear'),
-      on: {
-        click: () => {
-          boundFolder = '';
-          renderFolderRow();
-        },
-      },
-    });
-    // 0.9.1（F.4C 回归）：文件夹提示不能占用 `.attach__hint`——那是附件区的提示节点，
-    // 附件测试与读屏都靠它读「先保存」「上传中」这类状态。
-    fields.folderHint = el('p', { class: 'settings__hint folder-field__hint' });
-    fields.folderField = el('div', { class: 'field' }, [
-      el('span', { class: 'field__label', text: t('editor.folder') }),
-      el('div', { class: 'attach__main' }, [
-        el('div', { class: 'folder-field__row' }, [
-          fields.folderInput,
-          fields.folderPick,
-          fields.folderClear,
-        ]),
-        fields.folderHint,
-      ]),
-    ]);
-
-    renderFolderRow = () => {
-      fields.folderInput.value = boundFolder;
-      fields.folderPick.textContent = boundFolder ? t('editor.folderChange') : t('editor.folderPick');
-      fields.folderClear.hidden = !boundFolder;
-      if (!boundFolder) {
-        fields.folderHint.textContent = t('editor.folderHint');
-      } else if (boundFolderAccess && boundFolderAccess.degraded) {
-        fields.folderHint.textContent = t('editor.folderAccessUnknown');
-      } else {
-        fields.folderHint.textContent = t('editor.folderReadOnly');
-      }
-    };
-    renderFolderRow();
-
-    // --- Attachments (0.9.0) ---
-    // 附件按某一次日程挂：单次事件用它自己的 id，系列某一次用 `<uid>::<recurrenceId>`。
-    fields.attachmentInput = el('input', {
-      class: 'attach__input',
-      type: 'file',
-      multiple: true,
-      hidden: true,
-      accept: '.jpg,.jpeg,.png,.webp,.gif,.pdf,.txt',
-      tabindex: '-1',
-      'aria-hidden': 'true',
-    });
-    fields.attachmentAdd = el(
-      'button',
-      { class: 'btn btn--ghost attach__add', type: 'button' },
-      [icon('plus'), t('editor.attachmentAdd')],
-    );
-    fields.attachmentList = el('ul', { class: 'attach__list' });
-    // 0.9.2 §8.5.2：进度条 + 已传/总字节 + 取消。390 宽时整行换行，不撑破。
-    fields.attachmentBarFill = el('span');
-    fields.attachmentProgressText = el('span', { class: 'attach__progress-text' });
-    fields.attachmentCancel = el('button', {
-      class: 'btn btn--ghost attach__cancel',
-      type: 'button',
-      text: t('editor.attachmentCancel'),
-    });
-    fields.attachmentProgress = el('div', { class: 'attach__progress', style: { display: 'none' } }, [
-      el('div', { class: 'attach__bar' }, [fields.attachmentBarFill]),
-      fields.attachmentProgressText,
-      fields.attachmentCancel,
-    ]);
-    fields.attachmentCancel.addEventListener('click', () => {
-      if (attachUpload) attachUpload.controller.abort();
-    });
-    fields.attachmentHint = el('p', { class: 'attach__hint' });
-    fields.attachmentQuota = el('p', { class: 'attach__quota' });
-    // 用户 2026-11-19 第 3 条：附件不进 .ics，界面要说清，别让用户当 bug。
-    fields.attachmentNote = el('p', { class: 'attach__note', text: t('editor.attachmentNoExport') });
-    // 九条增量第 6 条：一行说清附件在哪儿（应用内 / 库 / 关联）。
-    fields.attachmentStorage = el('p', { class: 'attach__note attach__storage' });
-    fields.attachmentRow = el('div', { class: 'field' }, [
-      el('span', { class: 'field__label', text: t('editor.attachment') }),
-      el('div', { class: 'attach__main' }, [
-        fields.attachmentInput,
-        fields.attachmentAdd,
-        fields.attachmentProgress,
-        fields.attachmentList,
-        fields.attachmentHint,
-        fields.attachmentQuota,
-        // `.attach__note` 的第一条必须仍是「不随 .ics 导出」（0.9.0 的测试与读屏按首条读），
-        // 附件位置状态行排在它后面。
-        fields.attachmentNote,
-        fields.attachmentStorage,
-      ]),
-    ]);
-    // 编辑整系列时不挂附件（用户 2026-11-19）：只提示去某一次上挂。
-    fields.attachmentSeriesHint = el('p', {
-      class: 'attach__series',
-      text: t('editor.attachmentSeries'),
-      style: { display: 'none' },
-    });
-    // 选择文件只走一个入口：按钮点原生 file input，change 后逐张上传。
-    fields.attachmentAdd.addEventListener('click', () => fields.attachmentInput.click());
-    fields.attachmentInput.addEventListener('change', () => {
-      void handleAttachmentUpload();
-    });
 
     // 0.7.7（用户「名称和地点能选之前写过的」）：候选只从本地快照里取，不请求接口。
     // 标题取事件与任务的标题（比较时去掉开头的标签 emoji，填入的仍是原样），
@@ -1389,7 +1219,6 @@ export function createEventModal({
         fields.titleField,
         fields.calendarField,
         fields.lunarRow,
-        fields.lunarStatus,
         allDayRow,
         startRow,
         fields.endRow,
@@ -1403,10 +1232,6 @@ export function createEventModal({
         fields.guestsField,
         fields.meetingField,
         fields.locationField,
-        // 0.9.1：按派单放在「地点」之后、附件之前。
-        fields.folderField,
-        fields.attachmentRow,
-        fields.attachmentSeriesHint,
         fields.descField,
         el('div', { class: 'field' }, [
           el('span', { class: 'field__label', text: t('editor.colorLabel') }),
@@ -2303,8 +2128,6 @@ export function createEventModal({
       title: fields.title.value.trim() || (isOoo ? t('editor.ooo.defaultTitle') : ''),
       description: fields.description.value.trim(),
       location: fields.location.value.trim(),
-      // 只读绑定的 NAS 文件夹；空 = 不绑定。服务端写 X-FNCAL-FOLDER。
-      folder: boundFolder || null,
       start: start.getTime(),
       end: end.getTime(),
       allDay,
@@ -2757,294 +2580,7 @@ export function createEventModal({
     }
   }
 
-  /* ----------------------------------------- 0.9.0 附件（挂某一次日程） */
-
-  const ATTACH_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
-
-  function formatAttachmentBytes(bytes) {
-    const n = Number(bytes) || 0;
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  // 覆盖实例不带 calendarId（跟随系列），所以这里回落到主事件的日历。
-  function attachmentCalendarId(event) {
-    if (!event) return '';
-    if (event.calendarId) return event.calendarId;
-    if (event.seriesId) {
-      const master = store.getEvent(event.seriesId);
-      if (master && master.calendarId) return master.calendarId;
-    }
-    return calendarId || '';
-  }
-
-  function isSeriesRecord(event) {
-    return Boolean(
-      event && !String(event.id || '').includes('::') && (event.recurrence || event.lunarRule),
-    );
-  }
-
-  // 三态键：单次 `<uid>`；系列某一次 `<uid>::<recurrenceId>`；系列主记录返回空串。
-  function attachmentKeyOf(event) {
-    if (!event || !event.id) return '';
-    const id = String(event.id);
-    if (id.includes('::')) return id;
-    // 0.9.2：任务也挂附件，重复任务同样用 uid（完成时推进到期日，附件不搬）。
-    if (event.isTask) return id;
-    if (event.recurrence || event.lunarRule) return '';
-    return id;
-  }
-
-  function attachmentFileName(item) {
-    return item && typeof item.name === 'string' && item.name ? item.name : 'file';
-  }
-
-  function isImageMime(mime) {
-    return typeof mime === 'string' && /^image\//.test(mime);
-  }
-
-  function attachmentCountText() {
-    return t('editor.attachmentQuota', {
-      used: formatAttachmentBytes(attachTotalBytes),
-      total: formatAttachmentBytes(ATTACH_MAX_TOTAL_BYTES),
-    });
-  }
-
-  function renderAttachmentRow() {
-    const series = !current || !current.isTask ? isSeriesRecord(current) : false;
-    fields.attachmentRow.style.display = series ? 'none' : '';
-    fields.attachmentSeriesHint.style.display = series ? '' : 'none';
-    clear(fields.attachmentList);
-    fields.attachmentQuota.textContent = attachmentCountText();
-    if (series) return;
-    // 新事件还没有 id，保存后才能挂。
-    const key = attachmentKeyOf(current);
-    fields.attachmentAdd.disabled = attachBusy || !key;
-    fields.attachmentInput.disabled = attachBusy || !key;
-    if (!key) {
-      fields.attachmentHint.textContent = t('editor.attachmentSaveFirst');
-      return;
-    }
-    // 0.9.2：任务没有到期日就无法决定 NAS 目录，先让用户设到期日。
-    if (current && current.isTask && !Number.isFinite(current.due)) {
-      fields.attachmentAdd.disabled = true;
-      fields.attachmentInput.disabled = true;
-      fields.attachmentHint.textContent = t('editor.attachmentDueFirst');
-      return;
-    }
-    if (attachBusy) {
-      fields.attachmentHint.textContent = t('editor.attachmentUploading');
-      fields.attachmentProgress.style.display = '';
-      return;
-    }
-    fields.attachmentProgress.style.display = 'none';
-    fields.attachmentHint.textContent = attachItems.length ? '' : t('editor.attachmentEmpty');
-    const linkedRead = attachStorage === 'linked';
-    if (attachStorage === 'linked') {
-      fields.attachmentStorage.textContent = t('editor.attachmentFolderReadOnly');
-    } else if (attachStorage === 'library') {
-      fields.attachmentStorage.textContent = `${t('editor.attachmentNasManaged')}；${t('editor.attachmentNasNoBackup')}`;
-    } else {
-      fields.attachmentStorage.textContent = t('editor.attachmentLibraryManaged');
-    }
-    fields.attachmentQuota.hidden = attachStorage === 'linked';
-    if (linkedRead) {
-      fields.attachmentInput.hidden = true;
-      fields.attachmentAdd.hidden = true;
-    }
-    // 0.9.2：关联文件夹只读逐层预览——面包屑 + 返回上级，目录行可点进。
-    if (linkedRead) {
-      fields.attachmentList.append(
-        el('li', { class: 'attach__crumb' }, [
-          el('button', {
-            class: 'btn btn--ghost attach__up',
-            type: 'button',
-            text: t('editor.attachmentUp'),
-            disabled: !attachRel,
-            on: { click: () => { attachRel = attachParentRel || ''; void loadAttachments(); } },
-          }),
-          el('span', {
-            class: 'attach__crumb-path',
-            text: attachRel || t('editor.attachmentRoot'),
-            title: attachRel || t('editor.attachmentRoot'),
-          }),
-        ]),
-      );
-    }
-    for (const item of attachItems) {
-      if (item.type === 'dir') {
-        fields.attachmentList.append(
-          el('li', { class: 'attach__item' }, [
-            el('span', { class: 'attach__icon', html: icon('folder') }),
-            el('button', {
-              class: 'btn btn--ghost attach__name attach__dir',
-              type: 'button',
-              text: attachmentFileName(item),
-              title: item.rel || attachmentFileName(item),
-              on: { click: () => { attachRel = item.rel || ''; void loadAttachments(); } },
-            }),
-            el('span', { class: 'attach__size', text: t('editor.attachmentFolder') }),
-          ]),
-        );
-        continue;
-      }
-      fields.attachmentList.append(
-        el('li', { class: 'attach__item' }, [
-          el('span', { class: 'attach__icon', html: icon('download') }),
-          el('span', {
-            class: 'attach__name',
-            text: attachmentFileName(item),
-            title: attachmentFileName(item),
-          }),
-          el('span', { class: 'attach__size', text: formatAttachmentBytes(item.bytes) }),
-          linkedRead
-            ? el('span', { class: 'attach__size' })
-            : el(
-                'button',
-                {
-                  class: 'btn btn--ghost attach__remove',
-                  type: 'button',
-                  'aria-label': t('editor.attachmentDelete'),
-                  on: { click: () => removeAttachmentItem(item) },
-                },
-                icon('trash'),
-              ),
-        ]),
-      );
-    }
-  }
-
-  async function loadAttachments() {
-    const key = attachmentKeyOf(current);
-    const cal = attachmentCalendarId(current);
-    const seq = ++attachRequestSeq;
-    if (!key || !cal) {
-      attachItems = [];
-      attachTotalBytes = 0;
-      renderAttachmentRow();
-      return;
-    }
-    try {
-      const res = attachRel ? await listAttachments(cal, key, attachRel) : await listAttachments(cal, key);
-      if (seq !== attachRequestSeq) return; // 弹窗已切到别的实例：丢掉过期结果
-      attachItems = Array.isArray(res && res.items) ? res.items : [];
-      attachParentRel = res && res.parentRel != null ? res.parentRel : null;
-      attachStorage = res && (res.storage === 'linked' || res.storage === 'folder') ? 'linked' : res && res.storage === 'library' ? 'library' : 'app';
-        attachTotalBytes =
-        Number(res && res.totalBytes) ||
-        attachItems.reduce((sum, it) => sum + (Number(it.bytes) || 0), 0);
-    } catch (err) {
-      if (seq !== attachRequestSeq) return;
-      attachItems = [];
-      attachTotalBytes = 0;
-      fields.attachmentHint.textContent = err && err.message ? err.message : '';
-    }
-    renderAttachmentRow();
-  }
-
-  // 某一次还没有覆盖实例时先建一条空覆盖：服务端按实例键挂附件（用户 2026-11-19）。
-  async function ensureOccurrenceOverride(event) {
-    if (!event || !event.seriesId || event.recurrenceId == null) return;
-    const master = store.getEvent(event.seriesId);
-    const overrides = (master && master.overrides) || {};
-    if (overrides[event.recurrenceId]) return;
-    if (typeof store.updateOccurrence !== 'function') return;
-    try {
-      await store.updateOccurrence(event.seriesId, event.recurrenceId, {});
-    } catch {
-      // 建覆盖失败不挡上传：服务端仍按实例键收，只是这次没有覆盖记录。
-    }
-  }
-
-  /** 0.9.2 §8.5.2：刷新进度条与字节数；取消按钮只在忙碌时出现。 */
-  function updateAttachmentProgress(file, index, count, loaded, total) {
-    if (!fields.attachmentProgress) return;
-    const safeTotal = Number(total) || Number(file && file.size) || 0;
-    const percent = safeTotal ? Math.min(100, Math.round((Number(loaded) / safeTotal) * 100)) : 0;
-    fields.attachmentProgress.style.display = '';
-    fields.attachmentBarFill.style.width = `${percent}%`;
-    fields.attachmentProgressText.textContent = `${t('editor.attachmentProgress', {
-      index: index + 1,
-      count,
-      percent,
-      loaded: formatAttachmentBytes(Number(loaded) || 0),
-      total: formatAttachmentBytes(safeTotal),
-    })}`;
-    fields.attachmentCancel.disabled = !attachUpload;
-  }
-
-  async function handleAttachmentUpload() {
-    if (attachBusy) return;
-    const files = Array.from(fields.attachmentInput.files || []);
-    if (!files.length) return;
-    const key = attachmentKeyOf(current);
-    const cal = attachmentCalendarId(current);
-    if (!key || !cal) return;
-    attachBusy = true;
-    attachUpload = { controller: new AbortController(), cancelled: false };
-    renderAttachmentRow();
-    let uploaded = 0;
-    let cancelled = false;
-    try {
-      await ensureOccurrenceOverride(current);
-      for (let i = 0; i < files.length; i += 1) {
-        const file = files[i];
-        updateAttachmentProgress(file, i, files.length, 0, Number(file.size) || 0);
-        try {
-          await uploadAttachment(cal, key, file, {
-            signal: attachUpload.controller.signal,
-            onProgress: ({ loaded, total }) => updateAttachmentProgress(file, i, files.length, loaded, total),
-          });
-          uploaded += 1;
-        } catch (err) {
-          if (err && (err.name === 'AbortError' || err.code === 'upload_cancelled')) {
-            cancelled = true;
-            break;
-          }
-          toast(err && err.message ? err.message : t('error.network'), { variant: 'danger' });
-        }
-      }
-      await loadAttachments();
-      if (cancelled) toast(t('editor.attachmentCancelled'), { variant: 'danger' });
-      else if (uploaded) toast(t('toast.attachmentAdded'));
-    } finally {
-      attachBusy = false;
-      attachUpload = null;
-      fields.attachmentInput.value = '';
-      renderAttachmentRow();
-    }
-  }
-
-  async function removeAttachmentItem(item) {
-    if (!item || !item.id) return;
-    const name = attachmentFileName(item);
-    // 二次确认与回收站同一口径（用户 2026-11-19 第 2 条）。动态取：
-    // proposals-panel 是 AI 设置页的分块，静态 import 会把整块并进主包。
-    const { confirmAction } = await import('./proposals-panel.js');
-    confirmAction({
-      title: t('editor.attachmentDelete'),
-      text: name,
-      confirmLabel: t('common.delete'),
-      cancelLabel: t('settings.ai.cancel'),
-      danger: true,
-      onConfirm: () => {
-        void (async () => {
-          try {
-            await deleteAttachment(item.id);
-            toast(t('toast.attachmentRemoved'));
-            await loadAttachments();
-          } catch (err) {
-            toast(err && err.message ? err.message : t('error.network'), { variant: 'danger' });
-          }
-        })();
-      },
-    });
-  }
-
   function openWith(event, defaults) {
-    attachRel = '';
-    attachParentRel = null;
     // A computed, read-only item (a public holiday) has no editor: whatever
     // path asked to edit it gets its details card instead.
     if (event && event.readOnly) return openView(event);
@@ -3131,8 +2667,6 @@ export function createEventModal({
     // 0.5.13：键盘开合时只重算弹窗锚点与内部滚动，不碰背后的日历。
     scrim.addEventListener('focusin', onScrimFocusIn);
     stopKeyboardWatch = onKeyboardChange(onKeyboardViewportChange);
-    // 0.9.0：附件行按当前这一实例加载；新事件/整系列时行内直接提示。
-    void loadAttachments();
 
     reminders = event && Array.isArray(event.reminders) ? [...event.reminders] : [];
     guests = event && Array.isArray(event.guests) ? event.guests.map((g) => ({ ...g })) : [];
@@ -3144,9 +2678,6 @@ export function createEventModal({
     // The Event / Out of office / Task switch is offered only while creating —
     // you can't convert an existing item between the event and task stores.
     fields.modeToggle.style.display = event ? 'none' : '';
-    // 0.9.1：绑定文件夹跟随记录本身；新建默认空。
-    boundFolder = event && typeof event.folder === 'string' ? event.folder : '';
-    renderFolderRow();
 
     // Populate.
     if (event && event.isTask) {
@@ -3779,101 +3310,6 @@ export function createEventModal({
     return el('h2', { class: 'view__title', id: 'view-title' }, children);
   }
 
-  /* 0.9.0：详情卡按这一实例显示它自己的附件；系列主记录不显示附件区。 */
-  function buildViewAttachmentSection(item, head) {
-    const key = attachmentKeyOf(item);
-    const cal = attachmentCalendarId(item);
-    if (!key || !cal) return null;
-    const body = el('div', { class: 'view__attach' });
-    const row = viewRow('upload', [
-      el('div', { class: 'view__muted', text: t('view.attachments') }),
-      body,
-    ]);
-    void (async () => {
-      let items = [];
-      let res = null;
-      try {
-        res = await listAttachments(cal, key);
-        items = (Array.isArray(res && res.items) ? res.items : []).filter((it) => it.type !== 'dir');
-      } catch {
-        // 取不到列表时整块不出现，详情卡其它部分照常。
-      }
-      if (!items.length) {
-        row.remove();
-        return;
-      }
-      renderViewAttachments(body, items);
-      // 0.9.2：详情卡标题行加小字 id——附件库给「日期/日历 id」，应用内给「应用内」。
-      const note = res && res.storage === 'library' && res.relDir ? res.relDir : t('editor.attachmentInApp');
-      if (note) {
-        const idEl = el('span', { class: 'view__storage-id', text: `id：${note}` });
-        if (head) head.classList.add('modal__head--with-id');
-        if (head && head.children[1]) head.insertBefore(idEl, head.children[1]);
-        else if (head) head.append(idEl);
-      }
-    })();
-    return row;
-  }
-
-  function renderViewAttachments(body, items) {
-    const images = items.filter((it) => isImageMime(it.mime));
-    const thumbs = images.slice(0, 6);
-    if (thumbs.length) {
-      const strip = el('div', { class: 'view__attach-thumbs' });
-      for (const it of thumbs) {
-        strip.append(
-          el(
-            'button',
-            {
-              class: 'view__attach-thumb',
-              type: 'button',
-              'aria-label': attachmentFileName(it),
-              title: attachmentFileName(it),
-              on: {
-                click: () => openAttachmentViewer({ items, index: items.indexOf(it) }),
-              },
-            },
-            el('img', {
-              src: attachmentUrl(it.id),
-              alt: attachmentFileName(it),
-              loading: 'lazy',
-            }),
-          ),
-        );
-      }
-      const hidden = images.length - thumbs.length;
-      if (hidden > 0) {
-        strip.append(
-          el('span', {
-            class: 'view__attach-more',
-            text: t('view.attachmentMore', { n: hidden }),
-          }),
-        );
-      }
-      body.append(strip);
-    }
-    for (const it of items) {
-      if (isImageMime(it.mime)) continue;
-      body.append(
-        el(
-          'button',
-          {
-            class: 'view__attach-file',
-            type: 'button',
-            on: {
-              click: () => openAttachmentViewer({ items, index: items.indexOf(it) }),
-            },
-          },
-          [
-            el('span', { class: 'view__attach-icon', html: icon('download') }),
-            el('span', { class: 'view__attach-name', text: attachmentFileName(it) }),
-            el('span', { class: 'view__attach-size', text: formatAttachmentBytes(it.bytes) }),
-          ],
-        ),
-      );
-    }
-  }
-
   function buildViewCard(item) {
     if (item.holiday || item.term) return buildHolidayCard(item);
     const isTask = Boolean(item.isTask);
@@ -3922,11 +3358,6 @@ export function createEventModal({
     // 其余行与 0.2.0 保持一致：地点、会议链接、参与者、描述。
     if (!isTask && !item.ooo && item.location) {
       rows.push(viewRow('map-pin', [el('div', {}, linkify(item.location))]));
-    }
-    // 0.9.0：附件区在地点之后；没有附件时它自己移除。0.9.2：任务也显示附件区。
-    if (!item.ooo) {
-      const attachSection = buildViewAttachmentSection(item, head);
-      if (attachSection) rows.push(attachSection);
     }
     if (!isTask && !item.ooo && item.meeting && item.meeting.url) {
       const href = item.meeting.url;
@@ -4134,7 +3565,6 @@ export function createEventModal({
         reminders: [...reminders],
         guests: guests.map((g) => ({ ...g })),
         meeting: meeting ? { ...meeting } : null,
-        folder: boundFolder || null,
       },
     };
   }
@@ -4146,10 +3576,6 @@ export function createEventModal({
     if (typeof v.title === 'string') fields.title.value = v.title;
     if (typeof v.description === 'string') fields.description.value = v.description;
     if (typeof v.location === 'string') fields.location.value = v.location;
-    if (v.folder === null || typeof v.folder === 'string') {
-      boundFolder = v.folder || '';
-      renderFolderRow();
-    }
     if (typeof v.allDay === 'boolean') fields.allDay.checked = v.allDay;
     if (typeof v.done === 'boolean') fields.doneToggle.checked = v.done;
     if (v.startDate) fields.startDate.value = v.startDate;
@@ -4217,6 +3643,8 @@ export function createEventModal({
   function close(force = false) {
     // 0.2.20（E8）：日期弹层是单例，编辑器关掉时一并收起，不留孤儿节点。
     closeDatePopover();
+    // 0.8.52（任务书 F.8 D3）：编辑器里的自绘下拉菜单挂在 body 上，同样随窗关闭。
+    closeAllOpenMenus();
     // 0.7.22（总监 m00…）：标签下拉改浮层后挂在 body 上，关窗时要一并销毁。
     if (closeTagListFloat) {
       closeTagListFloat();

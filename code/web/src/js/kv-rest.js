@@ -362,11 +362,21 @@ export function createRestKv({ request = apiRequest, endpoint = KV_PATH } = {}) 
     return request(`${CALENDARS_PATH}/${encodeURIComponent(id)}/restore`, { method: 'POST' });
   }
 
+  /** 0.8.46：立即同步订阅日历（会话 + CSRF 由 request 统一带上）。 */
+  async function syncCalendar(id) {
+    return request(`${CALENDARS_PATH}/${encodeURIComponent(id)}/sync`, { method: 'POST' });
+  }
+
   async function serverInfo() {
     return request(`${CALENDARS_PATH}/server-info`, { method: 'GET' });
   }
 
-  return { list, get, set, del, listCalendars, createCalendar, updateCalendar, deleteCalendar, clearCalendar, restoreCalendar, serverInfo };
+  /** 0.8.47：测试订阅地址，只回状态/耗时/字节数，不创建日历。 */
+  async function testSubscription(url) {
+    return request(`${CALENDARS_PATH}/test-subscription`, { method: 'POST', body: { url } });
+  }
+
+  return { list, get, set, del, listCalendars, createCalendar, updateCalendar, deleteCalendar, clearCalendar, restoreCalendar, syncCalendar, serverInfo, testSubscription };
 }
 
 export { KV_PATH, prefixOf };

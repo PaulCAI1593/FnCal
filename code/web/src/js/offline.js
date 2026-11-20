@@ -66,6 +66,12 @@ const DATA_MUTATORS = new Set([
   'clearCalendar',
   'restoreCalendar',
   'setCalendarVisible',
+  // 0.8.46：订阅日历立即同步会写事件并改 meta，离线态一律拦。
+  'syncCalendar',
+  // 0.8.52（F.5）：保存订阅地址并顺手同步，同样是写操作。
+  'updateSubscriptionCalendar',
+  // 0.8.47：测试订阅地址也会出网，离线态不放行。
+  'testSubscription',
   // 0.7.0 标签：注册表在服务端，离线写不进去，直接拦下比留一个假标签好。
   'createTag',
   'updateTag',

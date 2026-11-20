@@ -467,10 +467,21 @@ export function openDatePopover({
   const rect = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
   if (rect) {
     const width = 288;
-    const height = box.getBoundingClientRect ? box.getBoundingClientRect().height || 320 : 320;
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
-    const below = rect.bottom + 6;
-    const top = below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 6) : below;
+    const margin = 8;
+    const gap = 6;
+    // 0.8.52（任务书 F.8 D5）：先算高度上限，再定位。旧代码只做上下翻转，
+    // 视口矮（如 390×500）时弹层底边会越界；现在超限时内部滚动，底边留 ≥8px。
+    const maxHeight = Math.max(160, window.innerHeight - margin * 2);
+    box.style.maxHeight = `${maxHeight}px`;
+    box.style.overflowY = 'auto';
+    const natural = box.getBoundingClientRect ? box.getBoundingClientRect().height || 0 : 0;
+    const height = Math.min(natural || 320, maxHeight);
+    const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+    const below = rect.bottom + gap;
+    const above = rect.top - height - gap;
+    let top = below + height > window.innerHeight - margin ? above : below;
+    // 上下都不够时夹在视口内；限高后的滚动由 maxHeight 承担。
+    top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
     box.style.position = 'fixed';
     box.style.left = `${left}px`;
     box.style.top = `${top}px`;

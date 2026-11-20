@@ -15,6 +15,7 @@ import { el } from './dom.js';
 import { enhanceSelect } from './select-listbox.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
+import { friendlyError } from './error-text.js';
 import { mountDialog } from './recurrence-dialog.js';
 import { changePassword, logoutAll, updateProfile, ApiError, getCalDavSyncStatus, fixCalDavDavAccess } from './api-client.js';
 import { t } from '../i18n/index.js';
@@ -23,11 +24,6 @@ import { openCalendarSettings } from './calendar-dialog.js';
 // 0.7.0：设置第 2 页签「标签」（一般 → 标签 → CalDAV → AI）。
 import { createTagsPage } from './tags-settings.js';
 import { openDataCheckDialog } from './data-check.js';
-// 0.9.1（E）：附件存放位置（应用文件夹 / NAS 附件库）与文件夹选择。
-import { openFolderBrowser } from './folder-browser.js';
-import { getInstanceAttachmentSettings, putInstanceAttachmentSettings, testAttachmentStorage } from './api-client.js';
-// 0.9.2（任务书 §三）：设置 → 高级 → 备份（按用户，所有登录用户可用）。
-import { createBackupSection } from './backup-settings.js';
 // 0.3.0（P4）：设置 → 「AI」页签（设计侧真源 design/M8-AI接入设置页-规范.md）。
 // 0.6.13（首包拆分）：AI 页约 67 KB 源码，改为切到该页签时才 `import()`，
 // 主包不再包含它；加载期间用静态骨架占位，失败给提示 + 重试（不白屏）。
@@ -132,10 +128,45 @@ export function openAccountDialog({
   let aiLoadPromise = null;
   const settingsBaseline = { ...settings };
 
+  /** 0.8.48（任务书 5.2）：对象/数组按内容比较——`tasksMerge` 每次都是新引用，`===` 永假。 */
+  function sameValue(a, b) {
+    if (a === b) return true;
+    if (Array.isArray(a) || Array.isArray(b)) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+      return a.every((item, i) => sameValue(item, b[i]));
+    }
+    if (a && b && typeof a === 'object' && typeof b === 'object') {
+      const keysA = Object.keys(a).sort();
+      const keysB = Object.keys(b).sort();
+      if (keysA.length !== keysB.length) return false;
+      return keysA.every((key, i) => key === keysB[i] && sameValue(a[key], b[key]));
+    }
+    return false;
+  }
+
+  /**
+   * 比较前的归一：合并开关关闭时只关心 `enabled:false`，
+   * 「上次选的目标」不参与比较，否则关掉后计数仍停在 1。
+   */
+  function comparableValue(key, value) {
+    if (key === 'tasksMerge' && value && typeof value === 'object') {
+      if (!value.enabled) return { enabled: false };
+      return {
+        enabled: true,
+        taskCalendarId: value.taskCalendarId || 'tasks',
+        calendarId: value.calendarId || '',
+      };
+    }
+    return value;
+  }
+
   function stageSettings(patch) {
     for (const [key, value] of Object.entries(patch)) {
-      if (value === settingsBaseline[key]) delete pendingSettings[key];
-      else pendingSettings[key] = value;
+      if (sameValue(comparableValue(key, value), comparableValue(key, settingsBaseline[key]))) {
+        delete pendingSettings[key];
+      } else {
+        pendingSettings[key] = value;
+      }
     }
     refreshApplyState();
   }
@@ -274,259 +305,6 @@ export function openAccountDialog({
   ]);
   weekModeRow.hidden = !settings.showWeekNumbers;
 
-  // 0.9.1（F.4C，用户 2026-11-20）：附件设置搬到「高级」页签，而且是**实例级**设置——
-  // 全机器一个存放位置 + 一套应用内限额，只有管理员能改，普通用户只读。
-  // 数据一律走 GET|PUT /api/v1/instance/attachment-settings，不再进 saveSetting 暂存。
-  const attachmentStorageHint = t('settings.attachmentStorage.hint');
-  const fnosGrantHint = t('settings.attachmentStorage.rootHint');
-  const instanceAttachment = {
-    storage: 'app',
-    root: '',
-    eventLimitMB: 40,
-    fileLimitMB: 20,
-    fileLimitEnabled: true,
-    minMB: 1,
-    maxMB: 10240,
-    canEdit: false,
-    loaded: false,
-  };
-  const adminOnlyHint = el('p', { class: 'settings__hint', text: t('settings.advanced.adminOnly'), hidden: true });
-  const instanceState = el('p', { class: 'settings__hint' });
-
-  const attachmentRootValue = el('input', {
-    class: 'input',
-    type: 'text',
-    readonly: true,
-    'aria-label': t('settings.attachmentStorage'),
-  });
-  const attachmentRootState = el('p', { class: 'settings__hint' });
-  const attachmentRootPick = el('button', {
-    class: 'btn',
-    type: 'button',
-    text: t('settings.attachmentStorage.pick'),
-    on: {
-      click: () =>
-        openFolderBrowser({
-          mode: 'pick',
-          title: t('settings.attachmentStorage.pick'),
-          onPick: (picked) => {
-            instanceAttachment.root = picked;
-            instanceAttachment.storage = 'library';
-            syncInstanceControls();
-            renderAttachmentStorage();
-            void saveInstance({ attachmentStorage: 'library', attachmentRoot: picked });
-          },
-        }),
-    },
-  });
-  const attachmentRootTest = el('button', {
-    class: 'btn btn--ghost',
-    type: 'button',
-    text: t('settings.attachmentStorage.test'),
-    on: {
-      click: async () => {
-        const target = instanceAttachment.root;
-        if (!target) return;
-        attachmentRootTest.disabled = true;
-        try {
-          const result = await testAttachmentStorage(target);
-          // 四态（任务书 §3.2.1）：可读写 / 可读（只读）/ 未确认 / 不可读。
-          const degraded = Boolean(result && result.degraded);
-          const state = degraded
-            ? t('settings.attachmentStorage.testUnknown')
-            : result && result.writable
-              ? t('folderBrowser.testOk')
-              : result && result.readable
-                ? t('settings.attachmentStorage.testReadOnly')
-                : t('folderBrowser.testFailed');
-          attachmentRootState.textContent = state;
-          attachmentRootState.dataset.state = degraded
-            ? 'unknown'
-            : result && result.writable
-              ? 'ok'
-              : result && result.readable
-                ? 'readonly'
-                : 'fail';
-        } catch (err) {
-          attachmentRootState.textContent = err && err.message ? err.message : t('folderBrowser.testFailed');
-          attachmentRootState.dataset.state = 'fail';
-        } finally {
-          attachmentRootTest.disabled = !instanceAttachment.canEdit;
-        }
-      },
-    },
-  });
-  const attachmentRootRow = el('div', { class: 'settings__row settings__row--split' }, [
-    el('span', { class: 'settings__label', text: '' }),
-    el('div', { class: 'settings__control' }, [
-      el('div', { class: 'folder-field__row' }, [attachmentRootValue, attachmentRootPick, attachmentRootTest]),
-      attachmentRootState,
-      el('p', { class: 'settings__hint', text: t('settings.attachmentStorage.restartHint') }),
-      el('p', { class: 'settings__hint', text: t('settings.attachmentStorage.aiHint') }),
-    ]),
-  ]);
-  const attachmentStorageSeg = segmented(
-    [
-      { value: 'app', label: t('settings.attachmentStorage.app') },
-      { value: 'library', label: t('settings.attachmentStorage.nas') },
-    ],
-    instanceAttachment.storage,
-    (value) => {
-      instanceAttachment.storage = value;
-      renderAttachmentStorage();
-      void saveInstance({
-        attachmentStorage: value,
-        attachmentRoot: value === 'library' ? instanceAttachment.root : '',
-      });
-    },
-    t('settings.attachmentStorage'),
-  );
-  const attachmentStorageRow = settingRow(
-    t('settings.attachmentStorage'),
-    el('div', { class: 'settings__stack' }, [
-      attachmentStorageSeg,
-      attachmentRootRow,
-      el('p', { class: 'settings__hint', text: attachmentStorageHint }),
-      el('p', { class: 'settings__hint', text: fnosGrantHint }),
-    ]),
-  );
-  function renderAttachmentStorage() {
-    const library = instanceAttachment.storage === 'library';
-    attachmentRootRow.hidden = !library;
-    attachmentRootValue.value = instanceAttachment.root || t('settings.attachmentStorage.none');
-    if (!library) {
-      attachmentRootState.textContent = '';
-      delete attachmentRootState.dataset.state;
-    }
-    const buttons = Array.from(attachmentStorageSeg.querySelectorAll('[role="radio"]'));
-    buttons.forEach((node, i) => node.setAttribute('aria-checked', String(i === (library ? 1 : 0))));
-  }
-
-  // 0.9.1（F.4，用户 2026-11-20）：应用内附件限额（实例级，只有管理员能改）。
-  // 只约束「应用文件夹」；NAS 附件库与关联文件夹不受这些数值限制，只看磁盘剩余空间。
-  const eventLimitInput = el('input', {
-    class: 'input',
-    type: 'number',
-    min: 1,
-    max: 10240,
-    step: 1,
-    value: instanceAttachment.eventLimitMB,
-    'aria-label': t('settings.attachment.eventLimit'),
-  });
-  const fileLimitInput = el('input', {
-    class: 'input',
-    type: 'number',
-    min: 1,
-    max: 10240,
-    step: 1,
-    value: instanceAttachment.fileLimitMB,
-    'aria-label': t('settings.attachment.fileLimit'),
-  });
-  const fileLimitToggle = switchToggle(instanceAttachment.fileLimitEnabled, t('settings.attachment.fileLimitEnabled'), (on) => {
-    instanceAttachment.fileLimitEnabled = on;
-    syncInstanceControls();
-    void saveInstance({ attachmentFileLimitEnabled: on });
-  });
-  const appLimitsState = el('p', { class: 'settings__hint' });
-  function showLimitState(message) {
-    appLimitsState.textContent = message || '';
-    if (message) appLimitsState.dataset.state = 'danger';
-    else delete appLimitsState.dataset.state;
-  }
-  async function saveInstance(patch) {
-    if (!instanceAttachment.canEdit) return;
-    try {
-      const result = await putInstanceAttachmentSettings(patch);
-      applyInstance(result && result.values ? result.values : null, result ? result.canEdit !== false : instanceAttachment.canEdit);
-      showLimitState('');
-    } catch (err) {
-      const message = err && err.message ? err.message : t('settings.attachment.limitInvalid');
-      showLimitState(message);
-      // 失败后回读一次，把本地值与磁盘上的真实值对齐。
-      void loadInstanceSettings();
-    }
-  }
-  function clampLimit(value, fallback) {
-    const mb = Math.floor(Number(value));
-    if (!Number.isFinite(mb)) return fallback;
-    return Math.min(instanceAttachment.maxMB, Math.max(instanceAttachment.minMB, mb));
-  }
-  function commitLimits() {
-    if (!instanceAttachment.canEdit) return;
-    const nextEvent = clampLimit(eventLimitInput.value, instanceAttachment.eventLimitMB);
-    const nextFile = clampLimit(fileLimitInput.value, instanceAttachment.fileLimitMB);
-    if (instanceAttachment.fileLimitEnabled && nextFile > nextEvent) {
-      showLimitState(t('settings.attachment.limitInvalid'));
-      eventLimitInput.value = instanceAttachment.eventLimitMB;
-      fileLimitInput.value = instanceAttachment.fileLimitMB;
-      return;
-    }
-    instanceAttachment.eventLimitMB = nextEvent;
-    instanceAttachment.fileLimitMB = nextFile;
-    eventLimitInput.value = nextEvent;
-    fileLimitInput.value = nextFile;
-    void saveInstance({ attachmentEventLimitMB: nextEvent, attachmentFileLimitMB: nextFile });
-  }
-  eventLimitInput.addEventListener('change', commitLimits);
-  fileLimitInput.addEventListener('change', commitLimits);
-  const appLimitsRow = settingRow(
-    t('settings.attachment.eventLimit'),
-    el('div', { class: 'settings__stack' }, [
-      el('div', { class: 'folder-field__row' }, [eventLimitInput]),
-      el('div', { class: 'folder-field__row' }, [
-        fileLimitToggle,
-        el('span', { class: 'settings__label', text: t('settings.attachment.fileLimitEnabled') }),
-      ]),
-      el('div', { class: 'folder-field__row' }, [fileLimitInput]),
-      el('p', { class: 'settings__hint', text: t('settings.attachment.limitsHint') }),
-      appLimitsState,
-    ]),
-  );
-
-  /** 把实例接口回包套进控件；`canEdit:false` 时整块置灰。 */
-  function applyInstance(values, canEdit) {
-    if (values && typeof values === 'object') {
-      instanceAttachment.storage = values.attachmentStorage === 'library' ? 'library' : 'app';
-      instanceAttachment.root = typeof values.attachmentRoot === 'string' ? values.attachmentRoot : '';
-      const eventMB = clampLimit(values.attachmentEventLimitMB, instanceAttachment.eventLimitMB);
-      const fileMB = clampLimit(values.attachmentFileLimitMB, instanceAttachment.fileLimitMB);
-      instanceAttachment.eventLimitMB = eventMB;
-      instanceAttachment.fileLimitMB = fileMB;
-      instanceAttachment.fileLimitEnabled = values.attachmentFileLimitEnabled !== false;
-      if (Number.isFinite(Number(values.minMB))) instanceAttachment.minMB = Number(values.minMB);
-      if (Number.isFinite(Number(values.maxMB))) instanceAttachment.maxMB = Number(values.maxMB);
-    }
-    if (canEdit !== undefined) instanceAttachment.canEdit = Boolean(canEdit);
-    instanceAttachment.loaded = true;
-    eventLimitInput.value = instanceAttachment.eventLimitMB;
-    fileLimitInput.value = instanceAttachment.fileLimitMB;
-    fileLimitToggle.querySelector('input').checked = instanceAttachment.fileLimitEnabled;
-    syncInstanceControls();
-    renderAttachmentStorage();
-  }
-  function syncInstanceControls() {
-    const canEdit = instanceAttachment.canEdit;
-    adminOnlyHint.hidden = canEdit;
-    for (const node of Array.from(attachmentStorageRow.querySelectorAll('input, button'))) node.disabled = !canEdit;
-    for (const node of Array.from(appLimitsRow.querySelectorAll('input, button'))) node.disabled = !canEdit;
-    // 关掉「单一文件上限」时只禁用那个数字框；开关本身与其余项照旧。
-    if (canEdit) fileLimitInput.disabled = !instanceAttachment.fileLimitEnabled;
-  }
-  async function loadInstanceSettings() {
-    try {
-      const result = await getInstanceAttachmentSettings();
-      applyInstance(result && result.values ? result.values : null, result ? result.canEdit !== false : false);
-      instanceState.textContent = '';
-      delete instanceState.dataset.state;
-    } catch (err) {
-      instanceState.textContent = err && err.message ? err.message : t('settings.advanced.adminOnly');
-      instanceState.dataset.state = 'danger';
-      // 读不到就按只读处理，避免普通用户在坏网络下误以为能改。
-      instanceAttachment.canEdit = false;
-      syncInstanceControls();
-    }
-  }
-
   const generalPage = el('div', { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-general' }, [
     settingRow(
       t('settings.theme'),
@@ -591,23 +369,6 @@ export function openAccountDialog({
     // 日历色、可被事件级手动色覆盖，不再需要这个模式开关。
   ]);
 
-  // 0.9.2：备份节在附件节之后（顺序：附件 → 备份）。
-  const backupSection = createBackupSection();
-
-  // 0.9.1（F.4C，用户 2026-11-20）：「一般」与「标签」之间加「高级」，附件设置整体搬进来。
-  const advancedPage = el(
-    'div',
-    { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-advanced', hidden: true },
-    [
-      el('h2', { class: 'settings__section-title', text: t('settings.advanced.title') }),
-      adminOnlyHint,
-      attachmentStorageRow,
-      appLimitsRow,
-      instanceState,
-      backupSection.node,
-    ],
-  );
-
   /* ---- 日历页（表格，#6） ---- */
 
   const tableBody = el('div', { class: 'cal-table__body', role: 'table' });
@@ -649,7 +410,7 @@ export function openAccountDialog({
     const code = err && err.code;
     if (code === 'settings_readback_mismatch') return t('settings.saveVerifyMismatch');
     if (code === 'settings_readback_failed') return t('settings.saveVerifyUnreadable');
-    return (err && err.message) || t('settings.saveFailed');
+    return friendlyError(err, 'settings.saveFailed');
   }
   const applyBtn = el('button', { class: 'btn btn--primary', type: 'button', text: t('settings.action.apply'), disabled: true, on: { click: () => void applyPending() } });
   const cancelBtn = el('button', { class: 'btn', type: 'button', text: t('common.cancel'), on: { click: () => requestClose() } });
@@ -680,16 +441,44 @@ export function openAccountDialog({
     { value: 'hidden', label: t('settings.davAccess.hidden') },
   ];
 
-  function rowState(cal) {
-    const patch = pending.get(cal.id) || {};
+  function rowState(cal, ignorePending = false) {
+    const patch = ignorePending ? {} : (pending.get(cal.id) || {});
+    const isSubscription = Boolean(cal.subscriptionUrl || cal.isSubscription);
+    const dav = patch.davAccess !== undefined ? patch.davAccess : (cal.davAccess || 'rw');
+    const kind = cal.type === 'vtodo' ? 'task' : (isSubscription ? 'subscription' : 'event');
+    // 0.8.48（任务书 5.1）：合并开启时任务日历整行权限改为禁用「已合并」。
+    // 暂存的合并开关立刻影响本行显示（关掉后任务日历立刻恢复原权限显示）。
+    const staged = pendingSettings.tasksMerge;
+    const merge = staged || (store.getSettings ? store.getSettings().tasksMerge : null);
+    const mergedTask = Boolean(
+      merge
+      && merge.enabled === true
+      && (merge.taskCalendarId || 'tasks') === 'tasks'
+      && cal.id === 'tasks',
+    );
+    const mergeTarget = mergedTask && merge.calendarId
+      ? (store.getCalendars ? store.getCalendars() : []).find((item) => item.id === merge.calendarId)
+      : null;
     return {
+      kind,
       visible: patch.visible !== undefined ? patch.visible : store.isCalendarVisible(cal.id),
-      davAccess: patch.davAccess !== undefined ? patch.davAccess : (cal.davAccess || 'rw'),
+      // 0.8.47（任务书 §三·a）：订阅日历只能「只读 / 不可见」，历史 rw 一律按 ro 显示。
+      davAccess: isSubscription ? (dav === 'hidden' ? 'hidden' : 'ro') : dav,
+      mergedTask,
+      mergeTargetName: (mergeTarget && mergeTarget.displayName) || (merge && merge.calendarId) || '',
     };
   }
 
   function setPending(calId, patch) {
-    pending.set(calId, { ...(pending.get(calId) || {}), ...patch });
+    // 0.8.48（任务书 5.2）：改回原值就删该行键，避免「未应用」计数虚高。
+    const cal = (store.getCalendars ? store.getCalendars() : []).find((item) => item.id === calId);
+    const baseline = cal ? rowState(cal, true) : {};
+    const next = { ...(pending.get(calId) || {}), ...patch };
+    for (const [key, value] of Object.entries(next)) {
+      if (sameValue(value, baseline[key])) delete next[key];
+    }
+    if (Object.keys(next).length) pending.set(calId, next);
+    else pending.delete(calId);
     refreshApplyState();
   }
 
@@ -736,8 +525,22 @@ export function openAccountDialog({
           () => toast(t('common.saved'), { variant: 'success' }),
           () => toast(t('calendar.error.save'), { variant: 'danger' }),
         ),
+      // 0.8.46：订阅日历可在设置里改订阅地址并立即同步。
+      onSaveUrl: (url) =>
+        Promise.resolve(store.updateCalendar(cal.id, { subscriptionUrl: url }))
+          .then((next) => ({ calendar: next })),
+      onSyncCalendar: requestSync,
       onExport: () => exportSelected(),
     });
+  }
+
+  // 0.8.48 冒烟：构建产物缺导出时，给出中文提示而不是把英文堆栈弹给用户。
+  function requestSync(calendarId) {
+    if (typeof store.syncCalendar === 'function') return store.syncCalendar(calendarId);
+    console.error('store.syncCalendar 不可用：构建产物缺少导出，请刷新页面或重装应用');
+    const message = t('calendar.subscription.syncUnavailable');
+    toast(message, { variant: 'danger' });
+    return Promise.resolve({ ok: false, error: message });
   }
 
   function deleteSelected() {
@@ -818,25 +621,20 @@ export function openAccountDialog({
     tableBody.append(
       el('div', { class: 'cal-table__row cal-table__row--head', role: 'row' }, [
         el('span', { class: 'cal-table__cell cal-table__cell--name', role: 'columnheader', text: t('settings.col.name') }),
-        el('span', { class: 'cal-table__cell cal-table__cell--check', role: 'columnheader', text: t('settings.col.visible') }),
+        // 0.8.47（任务书 §九）：列改为「名称 | 类型 | CalDAV 权限」，可见性只在侧栏勾选。
+        el('span', { class: 'cal-table__cell cal-table__cell--kind', role: 'columnheader', text: t('settings.col.type') }),
         el('span', { class: 'cal-table__cell cal-table__cell--dav', role: 'columnheader', text: t('settings.col.davAccess') }),
       ]),
     );
     for (const cal of calendars) {
       const state = rowState(cal);
-      const check = el('input', {
-        type: 'checkbox',
-        class: 'cal-table__checkbox',
-        checked: state.visible,
-        'aria-label': t('calendar.toggleVisible', { name: cal.displayName }),
-        on: { change: (e) => setPending(cal.id, { visible: e.target.checked }) },
-      });
       // 0.2.10（批 1）：系统日历「不可见」禁用（默认/任务必须始终对客户端可见）；
       // 其余日历三种权限都可选。改「只读」仍允许，下方有说明。
       const isSystem = cal.id === 'default' || cal.id === 'tasks';
-      const davOptions = isSystem
-        ? DAV_OPTIONS.filter((opt) => opt.value !== 'hidden')
-        : DAV_OPTIONS;
+      const isSubscription = Boolean(cal.subscriptionUrl || cal.isSubscription);
+      const davOptions = isSubscription
+        ? DAV_OPTIONS.filter((opt) => opt.value !== 'rw')
+        : (isSystem ? DAV_OPTIONS.filter((opt) => opt.value !== 'hidden') : DAV_OPTIONS);
       const davSelect = el('select', {
         class: 'select cal-table__dav-select',
         'aria-label': t('settings.col.davAccess'),
@@ -848,14 +646,45 @@ export function openAccountDialog({
         selected: opt.value === state.davAccess,
       })));
       if (isSystem) {
-        // 历史数据里若有 hidden，也不能让它被静默留在下拉里：显示为不可选占位。
+        // 历史数据里若有 hidden，也不能让它被静默留在下拉里：显示为不可选占位，
+        // 行下方单独给警示与「改成可读写」按钮（0.8.47 §八，不静默改数据）。
         const stale = DAV_OPTIONS.find((opt) => opt.value === 'hidden');
         if (state.davAccess === 'hidden' && stale) {
           davSelect.append(el('option', { value: 'hidden', text: stale.label, selected: true, disabled: true }));
         }
       }
+      const systemHidden = isSystem && state.davAccess === 'hidden' && !state.mergedTask;
+      // 合并开启：任务日历的权限不可改（客户端只看到合并集合），给禁用占位 + 一行说明。
+      let davCell;
+      if (state.mergedTask) {
+        const mergedSelect = el('select', {
+          class: 'select cal-table__dav-select',
+          disabled: true,
+          'aria-disabled': 'true',
+          'aria-label': t('settings.col.davAccess'),
+        }, [el('option', {
+          value: 'merged',
+          text: t('settings.davAccess.merged'),
+          selected: true,
+          disabled: true,
+        })]);
+        const api = enhanceSelect(mergedSelect);
+        if (api) {
+          api.trigger.disabled = true;
+          api.trigger.setAttribute('aria-disabled', 'true');
+        }
+        davCell = el('span', {
+          class: 'cal-table__cell cal-table__cell--dav cal-table__cell--merged',
+          dataset: { label: t('settings.col.davAccess') },
+        }, [(api && api.wrapper) || mergedSelect]);
+      } else {
+        davCell = el('span', {
+          class: 'cal-table__cell cal-table__cell--dav',
+          dataset: { label: t('settings.col.davAccess') },
+        }, [enhanceSelect(davSelect)?.wrapper || davSelect]);
+      }
       const row = el('div', {
-        class: 'cal-table__row',
+        class: state.mergedTask ? 'cal-table__row cal-table__row--merged' : 'cal-table__row',
         role: 'row',
         'aria-selected': String(cal.id === selectedCalendarId),
       }, [
@@ -870,17 +699,23 @@ export function openAccountDialog({
         ]),
         // 0.2.3 B3：窄屏卡片式布局用 data-label 显示列名（i18n 走词典，不写死 CSS）。
         el('span', {
-          class: 'cal-table__cell cal-table__cell--check',
-          dataset: { label: t('settings.col.visible') },
-        }, [check]),
-        el('span', {
-          class: 'cal-table__cell cal-table__cell--dav',
-          dataset: { label: t('settings.col.davAccess') },
-        }, [enhanceSelect(davSelect)?.wrapper || davSelect]),
+          class: 'cal-table__cell cal-table__cell--kind',
+          dataset: { label: t('settings.col.type') },
+        }, [
+          el('span', {
+            class: `kind-pill kind-pill--${state.kind}`,
+            text: t(`calendar.kind.${state.kind}`),
+          }),
+        ]),
+        davCell,
+        ...(state.mergedTask ? [el('span', {
+          class: 'cal-table__cell cal-table__dav-hint cal-table__dav-hint--row',
+          text: t('settings.merge.rowHint', { calendar: state.mergeTargetName }),
+        })] : []),
       ]);
       row.dataset.calendarId = cal.id;
       const selectFromRow = (e) => {
-        if (e.target === check || check.contains(e.target) || e.target === davSelect || davSelect.contains(e.target)) return;
+        if (e.target === davSelect || davSelect.contains(e.target)) return;
         selectRow(cal.id);
       };
       // 0.2.3：触屏/鼠标都可靠选中整行（click 在部分触屏浏览器里可能被 label/合成
@@ -888,10 +723,44 @@ export function openAccountDialog({
       row.addEventListener('click', selectFromRow);
       row.addEventListener('pointerup', selectFromRow);
       tableBody.append(row);
+      if (systemHidden) {
+        const fixBtn = el('button', {
+          class: 'btn btn--ghost cal-table__warn-fix',
+          type: 'button',
+          text: t('settings.davAccess.systemHiddenFix'),
+          on: {
+            click: async (event) => {
+              event.stopPropagation();
+              fixBtn.disabled = true;
+              try {
+                await store.updateCalendar(cal.id, { davAccess: 'rw' });
+                toast(t('settings.davAccess.systemHiddenFixed'), { variant: 'success' });
+              } catch {
+                toast(t('settings.davAccess.systemHiddenFixFailed'), { variant: 'danger' });
+                fixBtn.disabled = false;
+                return;
+              }
+              await Promise.resolve(store.refreshCalendars ? store.refreshCalendars() : null);
+              pending.clear();
+              renderTable();
+            },
+          },
+        });
+        tableBody.append(el('div', {
+          class: 'cal-table__row cal-table__row--warn',
+          role: 'row',
+          dataset: { calendarId: cal.id },
+        }, [
+          el('span', { class: 'cal-table__cell cal-table__warn-text', text: t('settings.davAccess.systemHiddenWarn', { name: cal.displayName }) }),
+          el('span', { class: 'cal-table__cell cal-table__warn-action' }, [fixBtn]),
+        ]));
+      }
     }
     if (!selectedCalendarId && calendars.length) selectRow(calendars[0].id);
     updateCount();
-    applyBtn.disabled = pending.size === 0;
+    // 0.8.48（任务书 5.2）：日历行暂存与设置暂存共用同一个计数，别只看 pending。
+    refreshApplyState();
+    applyBtn.disabled = pendingCount() === 0 || Boolean(mergeErrorText());
   }
 
   // 0.6.4（用户 m00800）：日历页签收进 CalDAV 页——表格整块搬到地址之前，
@@ -914,6 +783,116 @@ export function openAccountDialog({
     // 0.6.5（用户 m01273）：再补一句两套权限互相独立，紧跟在表格说明之后。
     el('p', { class: 'permission-hint', text: t('settings.davAccess.independentHint') }),
   ]);
+
+
+  /* ---- 0.8.48（用户）：任务合并同步 ---- */
+  // 任务日历固定是系统「任务」，不做下拉；合并目标列该用户的全部事件日历。
+  const mergeDraft = { enabled: false, taskCalendarId: '', calendarId: '', ...(settings.tasksMerge || {}) };
+  const mergeErrorEl = el('p', { class: 'account-hint account-hint--danger', hidden: true });
+  const mergeToggle = el('input', {
+    type: 'checkbox',
+    class: 'switch__input',
+    id: 'settings-merge-enabled',
+    checked: mergeDraft.enabled === true,
+    on: {
+      change: (e) => stageMerge({ enabled: e.target.checked }),
+    },
+  });
+  const mergeSelect = el('select', {
+    class: 'select settings__merge-select',
+    'aria-label': t('settings.caldav.merge.calendar'),
+  }, []);
+  // 0.7.5：与其它下拉一致，换成全站自绘 listbox（取值/change 仍走原生控件）。
+  const mergeSelectApi = enhanceSelect(mergeSelect);
+  const mergeSelectBox = (mergeSelectApi && mergeSelectApi.wrapper) || mergeSelect;
+  const mergeTaskName = el('span', { class: 'settings__merge-task' });
+  const mergeDetail = el('div', { class: 'settings__merge-detail' }, [
+    el('div', { class: 'settings__merge-row' }, [
+      el('span', { class: 'settings__merge-label', text: t('settings.caldav.merge.taskCalendar') }),
+      mergeTaskName,
+    ]),
+    el('div', { class: 'settings__merge-row' }, [
+      el('span', { class: 'settings__merge-label', text: t('settings.caldav.merge.calendar') }),
+      mergeSelectBox,
+    ]),
+  ]);
+
+  function mergeEventCalendars() {
+    const list = store && store.getCalendars ? store.getCalendars() : [];
+    return list.filter((cal) => cal.type !== 'vtodo' && !cal.subscriptionUrl && !cal.isSubscription);
+  }
+
+  function refreshMergeOptions() {
+    const calendars = mergeEventCalendars();
+    const tasksCal = (store && store.getCalendars ? store.getCalendars() : []).find((cal) => cal.id === 'tasks');
+    mergeTaskName.textContent = (tasksCal && tasksCal.displayName) || t('calendar.kind.task');
+    const wanted = mergeDraft.calendarId || 'default';
+    mergeSelect.textContent = '';
+    for (const cal of calendars) {
+      mergeSelect.append(el('option', {
+        value: cal.id,
+        text: cal.displayName || cal.id,
+        selected: cal.id === wanted,
+      }));
+    }
+    if (calendars.some((cal) => cal.id === wanted)) mergeDraft.calendarId = wanted;
+    const legacyTaskTarget = wanted === 'tasks' || wanted === mergeDraft.taskCalendarId;
+    if (!legacyTaskTarget && !calendars.some((cal) => cal.id === wanted) && calendars.length) {
+      mergeDraft.calendarId = calendars[0].id;
+      mergeSelect.value = calendars[0].id;
+    }
+    mergeSelect.disabled = !mergeDraft.enabled;
+    mergeDetail.hidden = !mergeDraft.enabled;
+  }
+
+  function mergeErrorText() {
+    if (!mergeDraft.enabled) return '';
+    if (!mergeDraft.calendarId) return t('settings.caldav.merge.invalid');
+    if (mergeDraft.calendarId === 'tasks' || mergeDraft.calendarId === mergeDraft.taskCalendarId) {
+      return t('settings.caldav.merge.sameCalendar');
+    }
+    return '';
+  }
+
+  function renderMergeError() {
+    const message = mergeErrorText();
+    mergeErrorEl.textContent = message;
+    mergeErrorEl.hidden = !message;
+    applyBtn.disabled = pendingCount() === 0 || Boolean(message);
+  }
+
+  function stageMerge(patch) {
+    Object.assign(mergeDraft, patch);
+    if (mergeDraft.enabled && !mergeDraft.taskCalendarId) mergeDraft.taskCalendarId = 'tasks';
+    // 下拉的显示值就是默认目标：开启时把草稿对齐，避免「未选目标」误判。
+    if (mergeDraft.enabled && !mergeDraft.calendarId) mergeDraft.calendarId = mergeSelect.value || 'default';
+    mergeSelect.disabled = !mergeDraft.enabled;
+    mergeDetail.hidden = !mergeDraft.enabled;
+    // 未开启时不清空目标：用户再次打开时沿用上次选择。
+    stageSettings({ tasksMerge: { ...mergeDraft } });
+    renderMergeError();
+    // 合并开关影响任务日历那一行（禁用「已合并」），暂存后立刻重画表格。
+    if (tableBody) renderTable();
+  }
+
+  mergeSelect.addEventListener('change', () => stageMerge({ calendarId: mergeSelect.value }));
+
+  const mergeBlock = el('section', { class: 'account-section settings__merge' }, [
+    el('h3', { class: 'account-section__title', text: t('settings.caldav.merge.title') }),
+    el('label', { class: 'settings__merge-toggle', for: 'settings-merge-enabled' }, [
+      el('span', { class: 'switch' }, [
+        mergeToggle,
+        el('span', { class: 'switch__track', 'aria-hidden': 'true' }),
+        el('span', { class: 'switch__thumb', 'aria-hidden': 'true' }),
+      ]),
+      el('span', { text: t('settings.caldav.merge.toggle') }),
+    ]),
+    mergeDetail,
+    el('p', { class: 'account-hint', text: t('settings.caldav.merge.hint') }),
+    mergeErrorEl,
+  ]);
+  refreshMergeOptions();
+  renderMergeError();
 
   /* ---- CalDAV 账户页（0.2.2 ⑦：只保留 CalDAV 地址） ---- */
 
@@ -1010,6 +989,8 @@ export function openAccountDialog({
   const accountPage = el('div', { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-account', hidden: true }, [
     // 0.6.4（用户 m00800）：「日历」页签删除，原日历表格整块搬到 CalDAV 页最上面。
     calendarBlock,
+    // 0.8.48（用户）：任务合并同步（表格之后、CalDAV 地址之前）。
+    mergeBlock,
     // 0.2.2（⑦）：显示名 / 改密 / 登录状态已移到账号菜单的「账号与安全」对话框。
     // 0.6.4：页首头像与显示名小块删除（用户「头像不需要」），页内直接从日历设置开始。
     el('section', { class: 'account-section' }, [
@@ -1103,12 +1084,9 @@ export function openAccountDialog({
   }
 
   const tagsView = createTagsPage({ store, toast });
-  void loadInstanceSettings();
 
   const tabs = [
     { id: 'general', label: t('settings.tab.general'), page: generalPage },
-    // 0.9.1（F.4C，用户 2026-11-20）：附件设置搬进「高级」，位置固定在「一般」之后、「标签」之前。
-    { id: 'advanced', label: t('settings.tab.advanced'), page: advancedPage },
     // 0.7.0（用户）：标签独占第 2 页签，位置固定在「一般」之后、「CalDAV」之前。
     { id: 'tags', label: t('settings.tab.tags'), page: tagsView.page },
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV——页签由 5 枚回到 4 枚。
@@ -1144,14 +1122,13 @@ export function openAccountDialog({
       tabDef.page.id = `settings-page-${tabDef.id}`;
       tabButtons[i].setAttribute('aria-selected', String(active));
       tabButtons[i].tabIndex = active ? 0 : -1;
-      if (tabDef.id === 'account' && active) renderTable();
+      if (tabDef.id === 'account' && active) {
+        renderTable();
+        refreshMergeOptions();
+        renderMergeError();
+      }
       // 0.7.0：标签数量可能在别处（新建/删除日程）变过，每次切入重读一次。
       if (tabDef.id === 'tags' && active) void tagsView.refresh();
-      // 0.9.1（F.4C）：附件设置是实例级的，可能被别的管理员改过，每次切入重读。
-      if (tabDef.id === 'advanced' && active) {
-        void loadInstanceSettings();
-        backupSection.load();
-      }
       // AI 页每次切入都重新拉一次（服务开关/凭据/提案都可能被其它会话改过）。
       // 0.3.7：列表拉完再补一次红点计数——用户可能正好停在 AI 页看着队列，
       // 受理/驳回后这里也要跟着灭掉（ai-settings.js 里已经直接刷过一次）。
@@ -1168,13 +1145,7 @@ export function openAccountDialog({
         });
       }
     });
-    if (tabButtons[index]) {
-      tabButtons[index].focus();
-      // 0.9.1（F.4C）：窄屏页签条横向滚动，选中项滚进可视区（桌面不滚）。
-      if (typeof tabButtons[index].scrollIntoView === 'function') {
-        tabButtons[index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      }
-    }
+    if (tabButtons[index]) tabButtons[index].focus();
   }
   tabbar.addEventListener('keydown', (e) => {
     const i = tabButtons.indexOf(document.activeElement);
@@ -1281,7 +1252,7 @@ export function openAccountDialog({
     ]),
     el('div', { class: 'modal__body settings__body' }, [
       tabbar,
-      el('div', { class: 'settings__pages' }, [generalPage, advancedPage, tagsView.page, accountPage, aiPageHost]),
+      el('div', { class: 'settings__pages' }, [generalPage, tagsView.page, accountPage, aiPageHost]),
     ]),
     // 0.5.22（用户 m00535 / m00549）：页脚收成「按钮行 + 左侧两行小块」。
     // 上面一行只放「有 N 项未应用」（N=0 时整行不渲染）；按钮行左侧小块两行：
@@ -1354,7 +1325,7 @@ export function openAccountSecurityDialog({ user, onSignOut, onSignOutAll, onNam
           toast(t('settings.toast.nameSaved'), { variant: 'success' });
           if (typeof onNameSaved === 'function') onNameSaved(name);
         } catch (err) {
-          toast((err && err.message) || t('settings.error.nameFailed'), { variant: 'danger' });
+          toast(friendlyError(err, 'settings.error.nameFailed'), { variant: 'danger' });
         } finally {
           saveNameBtn.disabled = false;
         }
@@ -1418,7 +1389,7 @@ export function openAccountSecurityDialog({ user, onSignOut, onSignOutAll, onNam
       toast(t('account.toast.passwordChanged'), { variant: 'success' });
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) setStatus(t('account.error.old'), 'danger');
-      else setStatus((err && err.message) || t('account.error.changeFailed'), 'danger');
+      else setStatus(friendlyError(err, 'account.error.changeFailed'), 'danger');
     } finally {
       setBusy(false);
     }
@@ -1436,7 +1407,7 @@ export function openAccountSecurityDialog({ user, onSignOut, onSignOutAll, onNam
       closeDialog();
       if (typeof onSignOutAll === 'function') onSignOutAll();
     } catch (err) {
-      setStatus((err && err.message) || t('account.error.signOutAllFailed'), 'danger');
+      setStatus(friendlyError(err, 'account.error.signOutAllFailed'), 'danger');
     } finally {
       if (btn) btn.disabled = false;
     }

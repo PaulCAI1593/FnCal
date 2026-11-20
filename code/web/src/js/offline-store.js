@@ -150,8 +150,12 @@ export function createOfflineKv(remoteKv) {
   // （main.js: createStore(createOfflineKv(createRestKv()))）里 store.clearCalendar
   // 调用 backend.clearCalendar 为 undefined → 抛错 → 只弹「清空失败」，事件一个没删。
   // 测试替身直接 mock store 绕过了这一层，所以 0.2.3 的用例没抓到。
+  // 0.8.51：`syncCalendar` / `testSubscription` 必须一起透传——0.8.49 又漏了它们，
+  // 真实链路 `main.js: createStore(createOfflineKv(createRestKv()))` 里
+  // `store.syncCalendar` 的 backend 是 undefined → 报 `e.syncCalendar is not a function`。
+  // 与 0.2.4 的 clearCalendar 同型；新增名单测试锁死「名单里的名字必须在 rest 上存在」。
   const delegated = {};
-  for (const name of ['listCalendars', 'createCalendar', 'updateCalendar', 'deleteCalendar', 'clearCalendar', 'restoreCalendar', 'serverInfo']) {
+  for (const name of ['listCalendars', 'createCalendar', 'updateCalendar', 'deleteCalendar', 'clearCalendar', 'restoreCalendar', 'serverInfo', 'syncCalendar', 'testSubscription']) {
     if (typeof remoteKv[name] === 'function') delegated[name] = (...args) => remoteKv[name](...args);
   }
 

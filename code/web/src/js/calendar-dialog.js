@@ -10,6 +10,9 @@ import { mountDialog } from './recurrence-dialog.js';
 import { openTextNameDialog } from './category-dialog.js';
 import { EVENT_COLORS, colorHex, customColorSwatch } from './colors.js';
 import { t } from '../i18n/index.js';
+import { enhanceSelect } from './select-listbox.js';
+import { toast } from './toast.js';
+import { friendlyError } from './error-text.js';
 
 const NAME_MAX = 50;
 const DESC_MAX = 200;
@@ -60,7 +63,23 @@ export function openCalendarName({ title, value = '', hint = '', submitLabel, on
 /** 0.2.2（⑨）：自定义颜色（取色器）。0.2.4：入口改为调色板末尾的彩虹圆，
  *  取色器 input 隐藏；本文件三处调色板共用 colors.js 的 customColorSwatch。 */
 
-export function openCalendarSettings({ calendar, onSave, onExport }) {
+const SUBSCRIPTION_INTERVALS = [0, 15, 60, 360, 1440];
+
+function subscriptionStatusText(cal) {
+  if (!cal || !cal.lastSyncAt) return t('calendar.subscription.never');
+  let when = '';
+  try {
+    when = new Date(cal.lastSyncAt).toLocaleString('zh-CN', { hour12: false });
+  } catch {
+    when = String(cal.lastSyncAt);
+  }
+  if (cal.lastSyncStatus === 'error') {
+    return t('calendar.subscription.failed', { time: when, error: cal.lastSyncError || '' });
+  }
+  return t('calendar.subscription.at', { time: when });
+}
+
+export function openCalendarSettings({ calendar, onSave, onExport, onSaveUrl, onSync, onSyncCalendar }) {
   const isSystemTask = calendar.type === 'vtodo' || calendar.id === 'tasks';
   // 0.2.4（真机 P0-6）：只有系统「任务」日历锁名称；其它 VTODO 日历不在此列。
   const nameLocked = calendar.id === 'tasks' || (calendar.protected === true && calendar.type === 'vtodo');
@@ -145,6 +164,207 @@ export function openCalendarSettings({ calendar, onSave, onExport }) {
   // 规范 §52：「任务」是系统日历，描述/接收提醒/只显示 置灰不可改。
   const locked = isSystemTask;
 
+  // 0.8.46：订阅日历的同步设置（最后同步 / 间隔 / 立即同步 / 订阅地址）。
+  const isSubscription = calendar.isSubscription === true || Boolean(calendar.subscriptionUrl);
+  let subscriptionBlock = null;
+  let intervalSelect = null;
+  if (isSubscription) {
+    const statusLine = el('p', {
+      class: 'cal-hint cal-sub-status',
+      role: 'status',
+      'aria-live': 'polite',
+      text: subscriptionStatusText(calendar),
+    });
+    const urlInput = el('input', {
+      class: 'input',
+      type: 'url',
+      value: calendar.subscriptionUrl || '',
+      placeholder: 'https://example.com/calendar.ics',
+      'aria-label': t('calendar.subscription.urlEdit'),
+      autocomplete: 'off',
+    });
+    urlInput.spellcheck = false;
+    // 0.8.52（任务书 F.5）：记住「已保存地址」。地址框改了没保存时给「未保存」提示；
+    // 点「立即同步」先保存再同步，保存失败就不发同步请求。
+    let savedUrl = calendar.subscriptionUrl || '';
+    const urlHint = el('p', { class: 'cal-hint', style: { display: 'none' }, role: 'status' });
+    const isDirty = () => urlInput.value.trim() !== savedUrl;
+    function showUrlHint(text, variant, kind) {
+      urlHint.textContent = text;
+      urlHint.dataset.variant = variant;
+      urlHint.dataset.kind = kind || '';
+      urlHint.style.display = '';
+    }
+    function refreshDirtyHint() {
+      if (isDirty()) {
+        showUrlHint(t('calendar.subscription.urlDirty'), 'warn', 'dirty');
+      } else if (urlHint.dataset.kind === 'dirty') {
+        urlHint.style.display = 'none';
+        urlHint.dataset.kind = '';
+      }
+    }
+    urlInput.addEventListener('input', refreshDirtyHint);
+
+    /** 0.8.52（任务书 F.7·4）：同步成功的 toast 用后端计数，缺字段时用通用文案。 */
+    function notifySync(result) {
+      if (!result) return;
+      if (result.reloadFailed) {
+        toast(t('calendar.subscription.reloadFailed'));
+        return;
+      }
+      if (result.ok === false) return;
+      const added = Number(result.imported);
+      const removed = Number(result.removed);
+      if (Number.isFinite(added) && Number.isFinite(removed)) {
+        toast(t('calendar.subscription.syncDone', { added, removed }), { variant: 'success' });
+      } else {
+        toast(t('calendar.subscription.syncDonePlain'), { variant: 'success' });
+      }
+    }
+
+    /** 保存地址：返回 `{ok, sync}`；失败时 `ok:false` 并已把原因写进状态行。 */
+    async function saveAddress() {
+      const value = urlInput.value.trim();
+      let parsed = null;
+      try {
+        parsed = new URL(value);
+      } catch {
+        parsed = null;
+      }
+      if (!parsed || !['http:', 'https:'].includes(parsed.protocol)) {
+        showUrlHint(t('calendar.subscription.urlInvalid'), 'danger', 'invalid');
+        urlInput.focus();
+        return { ok: false, error: t('calendar.subscription.urlInvalid') };
+      }
+      if (typeof onSaveUrl !== 'function') return { ok: false, error: '' };
+      saveUrlBtn.disabled = true;
+      try {
+        const result = await onSaveUrl(parsed.toString());
+        const next = result && result.calendar ? result.calendar : null;
+        if (next) {
+          calendar.lastSyncAt = next.lastSyncAt;
+          calendar.lastSyncStatus = next.lastSyncStatus;
+          calendar.lastSyncError = next.lastSyncError;
+          calendar.syncIntervalMin = next.syncIntervalMin;
+          calendar.subscriptionUrl = next.subscriptionUrl || parsed.toString();
+          savedUrl = calendar.subscriptionUrl;
+          urlInput.value = savedUrl;
+          statusLine.textContent = subscriptionStatusText(calendar);
+          statusLine.dataset.variant = '';
+        }
+        const sync = (result && result.sync) || null;
+        // 0.8.52（任务书 F.7·3）：store 把「重载失败」放在返回对象上，这里并进 sync，
+        // 让 notifySync 能提示「同步完成，列表刷新失败，请手动刷新」。
+        if (sync && result.reloadFailed) sync.reloadFailed = true;
+        // 后端 PATCH 改地址时已经同步过一次：用它的结果，避免重复请求。
+        if (sync) {
+          notifySync(sync);
+          if (sync.ok === false) {
+            statusLine.textContent = t('calendar.subscription.syncFailedReason', {
+              error: sync.error || t('calendar.subscription.syncFailed'),
+            });
+            statusLine.dataset.variant = 'danger';
+          } else {
+            statusLine.textContent = subscriptionStatusText(calendar);
+            statusLine.dataset.variant = 'success';
+          }
+        }
+        showUrlHint(t('calendar.subscription.urlSaved'), 'success', 'saved');
+        return { ok: true, sync };
+      } catch (err) {
+        // 0.8.52（任务书 F.9）：异常一律转中文，不把英文原文抛给用户。
+        const reason = friendlyError(err, 'calendar.subscription.syncReasonUnknown');
+        showUrlHint(t('calendar.subscription.urlSaveFailed'), 'danger', 'failed');
+        statusLine.textContent = reason
+          ? t('calendar.subscription.syncFailedReason', { error: reason })
+          : t('calendar.subscription.urlSaveFailed');
+        statusLine.dataset.variant = 'danger';
+        return { ok: false, error: reason || t('calendar.subscription.urlSaveFailed') };
+      } finally {
+        saveUrlBtn.disabled = false;
+      }
+    }
+
+    const saveUrlBtn = el('button', {
+      class: 'btn',
+      type: 'button',
+      text: t('calendar.subscription.saveUrl'),
+      on: { click: () => saveAddress() },
+    });
+    intervalSelect = el('select', {
+      class: 'input',
+      'aria-label': t('calendar.subscription.interval'),
+    });
+    for (const minutes of SUBSCRIPTION_INTERVALS) {
+      intervalSelect.append(el('option', {
+        value: String(minutes),
+        text: t(`calendar.subscription.interval.${minutes}`),
+        selected: Number(calendar.syncIntervalMin) === minutes,
+      }));
+    }
+    if (!SUBSCRIPTION_INTERVALS.includes(Number(calendar.syncIntervalMin))) intervalSelect.value = '60';
+    const syncBtn = el('button', {
+      class: 'btn',
+      type: 'button',
+      text: t('calendar.subscription.syncNow'),
+      on: {
+        click: async () => {
+          // 0.8.52（任务书 F.5）：地址改了没保存就点同步 → 先保存；保存失败不发同步。
+          if (isDirty()) {
+            const saved = await saveAddress();
+            if (!saved.ok) return;
+            // 保存本身已触发一次同步，结果已写进状态行。
+            if (saved.sync) return;
+          }
+          // 0.8.50：同步统一由 app.js 传入（onSyncCalendar），弹窗自身不再直接摸
+          // store；老调用点仍可传 onSync。
+          const syncFn = typeof onSyncCalendar === 'function' ? onSyncCalendar : onSync;
+          if (typeof syncFn !== 'function') return;
+          syncBtn.disabled = true;
+          const previous = syncBtn.textContent;
+          syncBtn.textContent = t('calendar.subscription.syncing');
+          try {
+            const payload = await syncFn(calendar.id);
+            const next = payload && payload.calendar ? payload.calendar : null;
+            if (next) {
+              calendar.lastSyncAt = next.lastSyncAt;
+              calendar.lastSyncStatus = next.lastSyncStatus;
+              calendar.lastSyncError = next.lastSyncError;
+            }
+            statusLine.textContent = subscriptionStatusText(calendar);
+            statusLine.dataset.variant = payload && payload.ok === false ? 'danger' : 'success';
+            if (payload && payload.ok !== false) notifySync(payload);
+          } catch (err) {
+            // 0.8.47：同步失败必须说清原因（DNS/拒连/超时/HTTP 状态/不是 ICS）。
+            // 0.8.52（任务书 F.9）：网络/解析异常统一走中文兜底。
+            const reason = friendlyError(err, 'calendar.subscription.syncReasonUnknown');
+            statusLine.textContent = reason
+              ? t('calendar.subscription.syncFailedReason', { error: reason })
+              : t('calendar.subscription.syncFailed');
+            statusLine.dataset.variant = 'danger';
+          } finally {
+            syncBtn.textContent = previous;
+            syncBtn.disabled = false;
+          }
+        },
+      },
+    });
+    subscriptionBlock = el('div', { class: 'cal-field cal-subscription' }, [
+      el('span', { class: 'field__label', text: t('calendar.subscription.title') }),
+      statusLine,
+      el('div', { class: 'cal-sub-url' }, [urlInput, saveUrlBtn]),
+      urlHint,
+      el('div', { class: 'cal-sub-row' }, [
+        el('label', { class: 'cal-sub-interval' }, [
+          el('span', { class: 'cal-sub-label', text: t('calendar.subscription.interval') }),
+          // 0.8.52（任务书 F.3）：同步间隔下拉走自绘 listbox。
+          enhanceSelect(intervalSelect)?.wrapper || intervalSelect,
+        ]),
+        syncBtn,
+      ]),
+    ]);
+  }
+
   const dialog = el('form', {
     class: 'modal cal-settings',
     role: 'dialog',
@@ -169,6 +389,7 @@ export function openCalendarSettings({ calendar, onSave, onExport }) {
         descInput,
         descCount,
       ]),
+      subscriptionBlock,
       // 0.2.1（#12）：导出入口从行菜单移到日历设置弹窗，替换原来的
       // 「只显示此日历」按钮（只显示保留在行菜单）。
       onExport && !locked
@@ -206,6 +427,10 @@ export function openCalendarSettings({ calendar, onSave, onExport }) {
       description: descInput.value.trim().slice(0, DESC_MAX),
     };
     if (!nameLocked) patch.displayName = name;
+    if (isSubscription) {
+      const interval = Number(intervalSelect ? intervalSelect.value : calendar.syncIntervalMin);
+      if (SUBSCRIPTION_INTERVALS.includes(interval)) patch.syncIntervalMin = interval;
+    }
     close();
     onSave(patch);
   });

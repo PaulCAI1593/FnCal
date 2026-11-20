@@ -19,6 +19,7 @@ import { el, clear } from './dom.js';
 import { enhanceSelect } from './select-listbox.js';
 import { icon } from './icons.js';
 import { toast } from './toast.js';
+import { friendlyError } from './error-text.js';
 import { mountDialog } from './recurrence-dialog.js';
 import { t } from '../i18n/index.js';
 import { colorHex } from './colors.js';
@@ -49,6 +50,15 @@ export {
 
 /** 三档（与后端 `GRANT_*` 同值；本页只用来渲染，不做比较）。 */
 export const PERM_LEVELS = ['hidden', 'read', 'write'];
+
+/**
+ * 0.8.47（任务书 §三·b）：订阅日历对 AI 只能「只读 / 不可见」。
+ * 矩阵按日历算可选项，避免把「读写」摆出来再靠保存时归一。
+ */
+export function matrixLevelsFor(calendar) {
+  const isSubscription = Boolean(calendar && (calendar.subscriptionUrl || calendar.isSubscription));
+  return isSubscription ? ['hidden', 'read'] : PERM_LEVELS;
+}
 /** 写入模式两档（规范 §0 不改项 ③：只读由「全部设为 只读」表达）。 */
 export const WRITE_MODES = ['proposal', 'direct'];
 export const FIELD_KEYS = ['location', 'description', 'attendees'];
@@ -78,27 +88,17 @@ export function mcpAddress(origin) {
  * 0.3.3（用户）：「不要包含我自部署的地址」→ 片段里的 url 用占位符，不写当前 origin；
  * 真实地址仍在上面那行只读地址里显示与复制。
  */
-export function mcpConfigJson(url) {
-  return JSON.stringify({
-    mcpServers: {
-      fncal: {
-        type: 'http',
-        url,
-        headers: { Authorization: 'Bearer <你的令牌>' },
-      },
-    },
-  }, null, 2);
-}
-
 /* 0.8.43（用户：「MCP 配置片段的下面也给一下skill的配置prompt」）。
-   第 18 条：技能包独立发版——以后技能包升版只改这一个常量，网页其它处不写死版本号。 */
-const SKILL_TAG = 'mcp-skill-v0.9.3';
-const SKILL_FILE = 'FnCal-MCP-Skill-0.9.3.zip';
+   第 18 条：技能包独立发版——以后技能包升版只改这一个常量，网页其它处不写死版本号。
+   0.8.46 热修属于 0.8.x：技能包仍指 0.8 系列最后一版（0.8.40），其工具集与
+   本包一致（不含附件三工具），不与 0.9.x 的 0.9.3 包混用。 */
+const SKILL_TAG = 'mcp-skill-v0.8.40';
+const SKILL_FILE = 'FnCal-MCP-Skill-0.8.40.zip';
 const SKILL_SKILL_MD = 'skills/fncal-mcp/SKILL.md';
 // 0.8.43（用户 2026-11-19：「默认用gitee的网址吧」）：主地址走 Gitee，GitHub 留作备用。
 // 注意两个用户不同名：Gitee 是 Paul1593，GitHub 是 PaulCAI1593。
 export const SKILL_PACKAGE = Object.freeze({
-  version: '0.9.3',
+  version: '0.8.40',
   giteeSkillMd: `https://gitee.com/Paul1593/FnCal/raw/main/${SKILL_SKILL_MD}`,
   giteeDownload: `https://gitee.com/Paul1593/FnCal/releases/download/${SKILL_TAG}/${SKILL_FILE}`,
   githubSkillMd: `https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/${SKILL_SKILL_MD}`,
@@ -116,6 +116,18 @@ export function mcpSkillPrompt() {
     '4. 连上后调用 list_calendars，把你能看到的日历列给我。',
     `（Gitee 打不开时改用 GitHub：${p.githubSkillMd} 与 ${p.githubDownload}）`,
   ].join('\n');
+}
+
+export function mcpConfigJson(url) {
+  return JSON.stringify({
+    mcpServers: {
+      fncal: {
+        type: 'http',
+        url,
+        headers: { Authorization: 'Bearer <你的令牌>' },
+      },
+    },
+  }, null, 2);
 }
 
 /** 档位文案（只做显示）。 */
@@ -562,7 +574,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       if (state.trash.count < before) text += ` · ${t('settings.ai.trash.retentionPruned')}`;
       toast(text, { variant: 'success' });
     } catch (err) {
-      toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
+      toast(friendlyError(err, 'settings.ai.loadFailed'), { variant: 'danger' });
     } finally {
       state.trash.saving = false;
       renderTrashBlock();
@@ -583,7 +595,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
           toast(t('settings.ai.trash.toastCleared'), { variant: 'success' });
           await loadTrash();
         } catch (err) {
-          toast((err && err.message) || t('settings.ai.trash.failed'), { variant: 'danger' });
+          toast(friendlyError(err, 'settings.ai.trash.failed'), { variant: 'danger' });
         }
       },
     });
@@ -655,8 +667,6 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     tagDeleteMode: 'proposal',
     // 0.4.13（M4 §4）：AI 端批准开关，默认关。旧凭据没有该字段时按 false 处理。
     agentApproval: false,
-    // 0.9.1（任务书 §三·五 C.4）：附件开关，默认开（旧凭据缺字段按 true，升级后不会突然读不到）。
-    allowAttachments: true,
     // 0.4.22（M4-0.4.22 S1）：审批页 PIN。pin 只是草稿值，pinSet 来自服务端，不回显哈希。
     pin: '',
     pinSet: false,
@@ -697,8 +707,6 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       tagWriteMode: credential && credential.tagWriteMode === 'direct' ? 'direct' : 'proposal',
       tagDeleteMode: credential && credential.tagDeleteMode === 'direct' ? 'direct' : 'proposal',
       agentApproval: Boolean(credential && credential.agentApproval === true),
-      // 0.9.1（C.4）：缺字段按开启处理。
-      allowAttachments: !(credential && credential.allowAttachments === false),
       // 0.4.22（S1）：只拿到「是否已设置」，PIN 哈希与明文都不会下发。
       pin: '',
       pinSet: Boolean(credential && credential.pinSet === true),
@@ -890,7 +898,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
           toast(t('settings.ai.toast.deleted'), { variant: 'success' });
           await loadCredentials();
         } catch (err) {
-          toast((err && err.message) || t('settings.ai.loadFailed'), { variant: 'danger' });
+          toast(friendlyError(err, 'settings.ai.loadFailed'), { variant: 'danger' });
         }
       },
     });
@@ -953,9 +961,11 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       'data-level': level,
       on: {
         click: () => {
-          for (const [calendarId, group] of matrixRows) {
-            draft.grants[calendarId] = level;
-            group.setValue(level);
+          for (const [calendarId, entry] of matrixRows) {
+            // 0.8.47（§三·b）：订阅日历只有「只读 / 不可见」，批量设「读写」时落到只读。
+            const next = entry.subscription && level === 'write' ? 'read' : level;
+            draft.grants[calendarId] = next;
+            entry.group.setValue(next);
           }
           hint.textContent = t('settings.ai.editor.setAllDone', { n: matrixRows.size, perm: permLabel(level) });
           refreshModeAvailability();
@@ -973,15 +983,19 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
 
     const matrixRowsEl = el('div', { class: 'ai-matrix__rows' });
     for (const calendar of calendars()) {
+      // 0.8.47（任务书 §三·b）：订阅日历对 AI 只能「只读 / 不可见」。
+      const isSubscription = Boolean(calendar.subscriptionUrl || calendar.isSubscription);
+      if (isSubscription && draft.grants[calendar.id] === 'write') draft.grants[calendar.id] = 'read';
+      const levels = matrixLevelsFor(calendar);
       const dot = el('span', { class: 'ai-matrix__dot', 'aria-hidden': 'true' });
       dot.style.setProperty('--cal-color', (calendar && calendar.color && colorHex(calendar.color)) || 'var(--text-3)');
       const group = segmentedRadioGroup({
         label: t('settings.ai.matrix.aria', { name: calendar.displayName || calendar.id }),
-        options: PERM_LEVELS.map((level) => ({ value: level, label: permLabel(level) })),
+        options: levels.map((level) => ({ value: level, label: permLabel(level) })),
         value: draft.grants[calendar.id] || 'hidden',
         onChange: (next) => { draft.grants[calendar.id] = next; refreshModeAvailability(); },
       });
-      matrixRows.set(calendar.id, group);
+      matrixRows.set(calendar.id, { group, subscription: isSubscription });
       matrixRowsEl.append(el('div', { class: 'ai-matrix__row', 'data-calendar-id': calendar.id }, [
         el('div', { class: 'ai-matrix__name' }, [
           dot,
@@ -1183,28 +1197,9 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
 
     refreshModeAvailability();
 
-    /* 0.9.1（任务书 §三·五 C.4）：凭据级「附件」开关，默认开。
-       关闭后 list_attachments / get_attachment / create_attachment_upload_link
-       统一回 attachment_forbidden（用户 2026-11-20「凭证下可以设置附件开关」）。 */
-    const attachSwitch = switchControl({
-      checked: draft.allowAttachments !== false,
-      ariaLabel: t('settings.ai.credential.attachments'),
-      onChange: (next) => {
-        draft.allowAttachments = next;
-        refreshSave();
-      },
-    });
-    const attachRow = el('div', { class: 'settings__row ai-switch-row', 'data-mode': 'allowAttachments' }, [
-      el('span', { class: 'settings__label', text: t('settings.ai.credential.attachments') }),
-      el('div', { class: 'settings__control' }, [attachSwitch.node]),
-    ]);
-    const attachHint = el('p', { class: 'ai-hint', text: t('settings.ai.credential.attachmentsHint') });
-
     const operationBlock = block('settings.ai.editor.block.operation', 'settings.ai.editor.block.operationHint', [
       writeRow,
       deleteRow,
-      attachRow,
-      attachHint,
       modeNotes,
     ]);
 
@@ -1557,8 +1552,6 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         tagWriteMode: draft.tagWriteMode,
         tagDeleteMode: draft.tagDeleteMode,
         agentApproval: effectiveApproval,
-        // 0.9.1（C.4）：附件开关按凭据存，脏判定与保存都带上。
-        allowAttachments: draft.allowAttachments !== false,
       };
       if (effectiveApproval && draft.pin) payload.pin = draft.pin;
       else if (editor.mode === 'edit' && (draft.clearPin || !effectiveApproval)) payload.clearPin = true;
@@ -1630,7 +1623,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
             renderCreds();
           } catch (err) {
             current.saving = false;
-            current.error = (err && err.message) || t('settings.ai.loadFailed');
+            current.error = friendlyError(err, 'settings.ai.loadFailed');
             renderCreds();
           }
         },
@@ -1666,8 +1659,6 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       tagWriteMode: draft.tagWriteMode,
       tagDeleteMode: draft.tagDeleteMode,
       agentApproval: effectiveApproval,
-      // 0.9.1（C.4）：附件开关按凭据存。
-      allowAttachments: draft.allowAttachments !== false,
     };
     // 0.4.22：只在有值时带 pin；编辑态点过「清除」或代办批准不生效时清 PIN。
     if (effectiveApproval && draft.pin) payload.pin = draft.pin;
@@ -1696,7 +1687,7 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       renderCreds();
     } catch (err) {
       editor.saving = false;
-      editor.error = (err && err.message) || t('settings.ai.loadFailed');
+      editor.error = friendlyError(err, 'settings.ai.loadFailed');
       renderCreds();
     }
   }
