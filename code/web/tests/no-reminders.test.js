@@ -79,7 +79,8 @@ describe('提醒入口已移除（#16）', () => {
     // 0.6.4：日历表格并入 CalDAV 页（页签 5→4）。
     const page = opened.dialog.querySelector('#settings-page-account');
     const headers = [...page.querySelectorAll('.cal-table__row--head .cal-table__cell')].map((n) => n.textContent);
-    expect(headers).toEqual(['名称', '显示', 'CalDAV 权限']);
+    // 0.8.47（任务书 §九）：第三列由「显示」改为「类型」，可见性只在侧栏勾选。
+    expect(headers).toEqual(['名称', '类型', 'CalDAV 权限']);
     expect(page.textContent).not.toContain('事件通知');
     expect(page.textContent).not.toContain('事件提醒');
     opened.close();

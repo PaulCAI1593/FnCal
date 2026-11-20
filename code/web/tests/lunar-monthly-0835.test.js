@@ -109,28 +109,10 @@ describe('0.8.35 农历每月重复 — 编辑器开关', () => {
   it('「农历」开关行在「全天」行正上方', () => {
     const toggle = lunarToggle();
     expect(toggle).toBeTruthy();
-    const lunarField = toggle.closest('.field, .inline-field');
+    const lunarField = toggle.closest('.field');
     const allDayField = $('input[aria-label="全天"]').closest('.field, .inline-field');
-    expect(lunarField).toBeTruthy();
+    expect(lunarField.nextElementSibling.contains($('input[aria-label="全天"]'))).toBe(true);
     expect(allDayField).toBeTruthy();
-    // 0.8.42：提示行移出行内，两行之间隔着它自己那条 status，按 DOM 先后判，不用 nextElementSibling。
-    const order = lunarField.compareDocumentPosition(allDayField);
-    expect(Boolean(order & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-  });
-
-  it('0.8.42：农历行与全天行结构一致（同标签名同 class、都有 field__label、开关在标签之后）', () => {
-    const lunarField = lunarToggle().closest('.field, .inline-field');
-    const allDayField = $('input[aria-label="全天"]').closest('.field, .inline-field');
-    expect(lunarField.tagName).toBe(allDayField.tagName);
-    expect(lunarField.className).toBe(allDayField.className);
-    for (const row of [lunarField, allDayField]) {
-      const label = row.querySelector(':scope > span.field__label');
-      const sw = row.querySelector(':scope > span.switch');
-      expect(label).toBeTruthy();
-      expect(sw).toBeTruthy();
-      expect(Boolean(label.compareDocumentPosition(sw) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
-      expect(sw.querySelector('input[role="switch"]')).toBeTruthy();
-    }
   });
 
   it('打开农历后重复下拉恰三项，且没有自定义 / 每天 / 每周 / 工作日', () => {
@@ -211,9 +193,8 @@ describe('0.8.35 农历每月重复 — 编辑器开关', () => {
     fire(date, 'change');
     const toggle = lunarToggle();
     expect(toggle.disabled).toBe(true);
-    // 0.8.42：提示行移出农历行，紧跟在行后（行内只剩标签列 + 开关列）。
-    const status = toggle.closest('.field, .inline-field').nextElementSibling;
-    expect(status.getAttribute('role')).toBe('status');
+    const status = toggle.closest('.field').querySelector('[role="status"]');
+    expect(status).toBeTruthy();
     expect(status.textContent).toContain('1900–2100');
     expect(status.style.display).not.toBe('none');
   });

@@ -503,10 +503,7 @@ describe('0.2.12 C11-3 编辑器农历开关', () => {
     // 已删——开关就是唯一入口。
     const toggle = document.querySelector('input[aria-label="农历"]');
     expect(toggle).toBeTruthy();
-    const toggleRow = toggle.closest('.field, .inline-field');
-    // 0.8.42：农历行与「全天」行之间只隔它自己的 status 提示行。
-    expect(toggleRow.nextElementSibling.getAttribute('role')).toBe('status');
-    expect(toggleRow.nextElementSibling.nextElementSibling.textContent).toContain('全天');
+    expect(toggle.closest('.field').nextElementSibling.textContent).toContain('全天');
     await setDateMode('农历');
     expect(toggle.checked).toBe(true);
     // 0.2.18（C6②③）：「对应农历：…」行与农历副行都已删除且保持删除

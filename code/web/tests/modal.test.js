@@ -467,11 +467,8 @@ describe('event modal — 0.2.12 lunar row follows the mode', () => {
     // 按新口径恢复，开关就是唯一的顶部语种入口。
     const toggle = document.querySelector('input[aria-label="农历"]');
     expect(toggle).toBeTruthy();
-    const lunarField = toggle.closest('.field, .inline-field');
-    // 0.8.42：农历行与「全天」行之间只隔它自己的 status 提示行。
-    const lunarStatus = lunarField.nextElementSibling;
-    expect(lunarStatus.getAttribute('role')).toBe('status');
-    expect(lunarStatus.nextElementSibling.textContent).toContain('全天');
+    const lunarField = toggle.closest('.field');
+    expect(lunarField.nextElementSibling.textContent).toContain('全天');
     // 日期字段里仍然没有「公历/农历」胶囊（0.2.20 E6 的结论不变）
     expect(document.querySelector('.editor__date-mode')).toBeNull();
     expect(document.querySelector('.editor__date-btn')).toBeTruthy();
