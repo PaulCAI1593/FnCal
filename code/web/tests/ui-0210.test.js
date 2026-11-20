@@ -699,20 +699,15 @@ describe('1-6 日历表格工具条与实时计数', () => {
     refreshCalendars: async () => [],
   };
 
-  it('计数在工具条右侧、勾选暂存后实时变化', async () => {
+  it('计数在工具条右侧；0.8.47 起表格不再有「显示」列（可见性只在侧栏）', async () => {
     const opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
     const page = opened.dialog.querySelector('#settings-page-account');
     expect(page.querySelector('.cal-table__toolbar .cal-table__count').textContent).toBe('共 3 个项目');
-    // 取消勾选「工作」→ 显示计数立刻变 2（不必点应用）
-    const row = [...page.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')].find((r) =>
-      r.textContent.includes('工作'),
-    );
-    const check = row.querySelector('.cal-table__checkbox');
-    check.checked = false;
-    check.dispatchEvent(new Event('change', { bubbles: true }));
-    await flush();
-    expect(page.querySelector('.cal-table__toolbar .cal-table__count').textContent).toBe('共 2 个项目');
+    // 「显示」列连同复选框一并删除，计数不再随表格操作变化。
+    expect(page.querySelector('.cal-table__checkbox')).toBe(null);
+    expect(page.querySelector('.cal-table__cell--check')).toBe(null);
+    expect(page.querySelector('.cal-table__cell--kind')).toBeTruthy();
     opened.close();
   });
 

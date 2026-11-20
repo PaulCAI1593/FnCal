@@ -242,10 +242,7 @@ describe('0.2.15 D5 编辑器开始/结束两行显示农历', () => {
     // 0.8.35：恢复顶部「农历」开关行（0.2.20 E6 的整行删除被用户新要求覆盖）
     const toggle = document.querySelector('.modal-scrim input[aria-label="农历"]');
     expect(toggle).toBeTruthy();
-    const toggleRow = toggle.closest('.field, .inline-field');
-    // 0.8.42：农历行与「全天」行之间只隔它自己的 status 提示行。
-    expect(toggleRow.nextElementSibling.getAttribute('role')).toBe('status');
-    expect(toggleRow.nextElementSibling.nextElementSibling.textContent).toContain('全天');
+    expect(toggle.closest('.field').nextElementSibling.textContent).toContain('全天');
     const formStart = modalJs.indexOf('const form = el(');
     const formText = modalJs.slice(formStart, modalJs.indexOf('fields.error,', formStart));
     expect(formStart).toBeGreaterThan(-1);

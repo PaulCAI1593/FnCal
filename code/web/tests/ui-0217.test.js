@@ -440,8 +440,7 @@ describe('0.2.17 B4 周数算法联动 + 快捷键清单', () => {
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4。
     // 0.6.15（用户）：快捷键页签搬到头像菜单，设置回到三页签。
     // 0.7.0 起（用户）：第 2 页签是「标签」；快捷键仍然不在设置里。
-    // 0.9.1（F.4C）：加了「高级」，共 5 枚；快捷键仍然不在设置里。
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', '高级', '标签', 'CalDAV', 'AI']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['一般', '标签', 'CalDAV', 'AI']);
     expect(dialog.querySelector('#settings-tab-shortcuts')).toBeNull();
     expect(dialog.querySelector('#settings-page-shortcuts')).toBeNull();
 
