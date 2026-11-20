@@ -117,7 +117,7 @@ const SERIES_SLOTS = ['2026-12-09T09:00:00', '2027-01-08T09:00:00', '2027-02-06T
 const SLOT_LABELS = ['冬月初一', '腊月初一', '正月初一'];
 
 try {
-  eq('版本号已是 0.9.1', '0.9.1', VERSION);
+  eq('版本号已是 0.8.53', '0.8.53', VERSION);
 
   const admin = await login('admin', 'admin-pass-123');
   eq('管理员登录成功', 200, admin.status);
@@ -278,5 +278,5 @@ try {
   fs.rmSync(TMP, { recursive: true, force: true });
 }
 
-console.log(`\n[0.9.1 m67] ${results.length - failures}/${results.length} passed, failures=${failures}`);
+console.log(`\n[0.8.53 m67] ${results.length - failures}/${results.length} passed, failures=${failures}`);
 process.exit(failures === 0 ? 0 : 1);
