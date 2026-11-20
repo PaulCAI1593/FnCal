@@ -29,6 +29,8 @@ import {
   DEFAULT_PAST_DAYS,
   DELETE_MODES,
   GRANT_HIDDEN,
+  GRANT_READ,
+  GRANT_WRITE,
   NOT_FOUND_BODY,
   WRITE_MODES,
   canAcceptProposal,
@@ -255,8 +257,6 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     agentApproval: approvalEffective,
     // 0.4.22（M4 §S1）：审批页是否需要 PIN；只回「是否已设置」，绝不回显哈希或 PIN。
     pinSet: approvalEffective && Boolean(credential.pinHash),
-    // 0.9.1（C.4 用户）：凭据的「附件」开关；默认开，升级后已有凭据不受影响。
-    allowAttachments: credential.allowAttachments !== false,
     rateLimit: Number.isFinite(Number(credential.rateLimit)) ? Number(credential.rateLimit) : 60,
     createdAt: credential.createdAt || null,
     lastUsedAt: credential.lastUsedAt || null,
@@ -437,6 +437,19 @@ export function createAiStore({
     return withUser(userId, () => store.calendarExists(calendarId));
   }
 
+  /** 0.8.47（§三·c）：写工具判「订阅只读」需要看 meta 里的 subscriptionUrl。 */
+  async function calendarMetaFor(userId, calendarId) {
+    return withUser(userId, () => store.readCalendarMeta(calendarId));
+  }
+
+  /** 0.8.47（任务书 §三·c）：订阅日历只读——直写与提案两条路都先拦。 */
+  async function assertCalendarNotSubscription(userId, calendarId) {
+    const meta = await withUser(userId, () => store.readCalendarMeta(calendarId));
+    if (meta && meta.subscriptionUrl) {
+      throw Object.assign(new Error('订阅日历只读'), { code: 'calendar_read_only', status: 403 });
+    }
+  }
+
   /** 一个日历下的全部 iCalendar 对象（{uid, content, etag, lastModified}）。 */
   async function listObjectsFor(userId, calendarId) {
     return withUser(userId, () => store.listObjects(calendarId));
@@ -469,6 +482,7 @@ export function createAiStore({
     const calendarId = normalizeCalendarId(input.calendarId);
     const uid = normalizeUid(input.uid);
     const expected = input.expectEtag ? String(input.expectEtag) : null;
+    await assertCalendarNotSubscription(userId, calendarId);
 
     const current = await withUser(userId, () => store.getObject(calendarId, uid));
     const currentEtag = current ? current.etag : null;
@@ -503,11 +517,54 @@ export function createAiStore({
     return { etag: null, created: false, deleted: true };
   }
 
+  /** 0.8.47（任务书 §三·b）：订阅日历对 AI 只能「只读 / 不可见」。 */
+  async function subscriptionIdsFor(userId) {
+    const metas = await listCalendarMetasFor(userId);
+    return new Set(metas.filter((meta) => meta && meta.subscriptionUrl).map((meta) => meta.id));
+  }
+
+  /**
+   * 订阅日历的授权归一：显式 hidden 保留用户选择；显式 write 降为 read；
+   * 没列出的默认 read（普通日历没列出仍是 hidden）。
+   */
+  function applySubscriptionGrants(grants, explicit, subscriptionIds) {
+    for (const calendarId of subscriptionIds) {
+      if (Object.prototype.hasOwnProperty.call(explicit, calendarId)) {
+        if (grants[calendarId] === GRANT_WRITE) grants[calendarId] = GRANT_READ;
+      } else {
+        grants[calendarId] = GRANT_READ;
+      }
+    }
+    return grants;
+  }
+
+  /** 新建订阅时：该用户所有未吊销凭据对这只日历默认只读（显式 hidden 保留）。 */
+  async function grantSubscriptionRead(userId, calendarId) {
+    if (!calendarId) return 0;
+    return withUser(userId, async () => {
+      const file = await loadCredentials(userId);
+      let changed = 0;
+      for (const credential of file.credentials) {
+        if (!credential || credential.revokedAt) continue;
+        if (!credential.grants || typeof credential.grants !== 'object') credential.grants = {};
+        const current = credential.grants[calendarId];
+        if (current === undefined || current === GRANT_WRITE) {
+          credential.grants[calendarId] = GRANT_READ;
+          changed += 1;
+        }
+      }
+      if (changed) await saveCredentials(userId, file);
+      logEvent('ai-subscription-grants-read', { userId, calendarId, changed });
+      return changed;
+    });
+  }
+
   async function createCredential(userId, input = {}) {
     const label = normalizeLabel(input.label);
     const calendarIds = await calendarIdsFor(userId);
     const limits = normalizeCredentialLimits(input);
-    const grants = normalizeGrantsInput(input.grants, calendarIds);
+    const explicitGrants = normalizeGrantsInput(input.grants, calendarIds);
+    const grants = { ...explicitGrants };
     const token = mintToken();
     const createdAt = new Date(now()).toISOString();
     // 0.4.23（M4 §S13）：代办批准只在至少一项操作方式为「提案」时有意义；否则强制关闭。
@@ -535,8 +592,6 @@ export function createAiStore({
       tagWriteMode: limits.tagWriteMode,
       tagDeleteMode: limits.tagDeleteMode,
       agentApproval,
-      // 0.9.1（C.4）：附件权限开关，默认开（老凭据升级后仍可读附件）。
-      allowAttachments: input.allowAttachments !== false,
       rateLimit: normalizeRateLimit(input.rateLimit),
       createdAt,
       lastUsedAt: null,
@@ -548,6 +603,8 @@ export function createAiStore({
         credential.grants[calendarId] = GRANT_HIDDEN;
       }
     }
+    // 0.8.47：订阅日历默认只读；显式 write 降为 read。
+    applySubscriptionGrants(credential.grants, explicitGrants, await subscriptionIdsFor(userId));
     const file = await loadCredentials(userId);
     file.credentials.push(credential);
     await saveCredentials(userId, file);
@@ -569,6 +626,8 @@ export function createAiStore({
       const grants = {};
       for (const calendarId of calendarIds) grants[calendarId] = GRANT_HIDDEN;
       Object.assign(grants, next);
+      // 0.8.47：订阅日历只读——合法保存不报错，直接把 write 归一成 read。
+      applySubscriptionGrants(grants, next, await subscriptionIdsFor(userId));
       target.grants = grants;
     }
     if (patch.timeWindow !== undefined) {
@@ -597,10 +656,6 @@ export function createAiStore({
     }
     if (patch.rateLimit !== undefined) {
       target.rateLimit = normalizeRateLimit(patch.rateLimit);
-    }
-    // 0.9.1（C.4）：附件开关；只认布尔，默认保持现状（未传不改）。
-    if (patch.allowAttachments !== undefined) {
-      target.allowAttachments = patch.allowAttachments !== false;
     }
     // 0.4.13（M4 §4）：AI 端批准开关；只认布尔，其它值当 false（不悄悄打开）。
     if (patch.agentApproval !== undefined) {
@@ -825,6 +880,8 @@ export function createAiStore({
     } else {
       calendarId = normalizeCalendarId(input.calendarId);
       uid = normalizeUid(input.uid);
+      // 0.8.47：订阅日历连提案都不收（写工具统一回 calendar_read_only）。
+      await assertCalendarNotSubscription(userId, calendarId);
       if (credential && !isVisible(credential, calendarId)) {
         throw invalid('calendarId', '该凭据无权访问此日历');
       }
@@ -1019,7 +1076,9 @@ export function createAiStore({
     calendarIdsFor,
     // 事件读写（P2）
     listCalendarMetasFor,
+    grantSubscriptionRead,
     calendarExistsFor,
+    calendarMetaFor,
     listObjectsFor,
     getObjectFor,
     applyChange,

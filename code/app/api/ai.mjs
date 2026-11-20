@@ -184,6 +184,10 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
         message: err.message || '参数不合法',
       });
     }
+    // 0.8.47（任务书 §三·c）：订阅日历只读。
+    if (err.code === 'calendar_read_only') {
+      return json(res, 403, { ok: false, code: 'calendar_read_only', message: '订阅日历只读' });
+    }
     if (err.code === 'missing_calendar') {
       return json(res, 409, { ok: false, code: 'missing_calendar', message: '目标日历不存在' });
     }
@@ -410,9 +414,9 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
       const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
       const actor = identity.account.username || identity.account.id;
       let batch;
-      // 回执要记「这条提案属于哪个凭据」，决策后提案已改状态，决策前先取一次。
-      const receiptCredentials = new Map();
       try {
+        // 回执要记「这条提案属于哪个凭据」，决策后提案已改状态，决策前先取一次。
+        const receiptCredentials = new Map();
         batch = await runProposalBatch({
           action,
           ids: body.ids,

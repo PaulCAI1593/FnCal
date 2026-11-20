@@ -28,6 +28,13 @@ import {
   refreshLunarRdates,
   uidOf,
 } from '../lib/ical.mjs';
+import {
+  TASK_CALENDAR_ID,
+  forgetMergeRoute,
+  mergedCtag,
+  rememberMergeRoute,
+  resolveTasksMerge,
+} from '../lib/merge-sync.mjs';
 import { challengeHeaders, isMutatingMethod } from '../auth/index.mjs';
 import { currentContext } from '../lib/request-context.mjs';
 
@@ -251,6 +258,10 @@ export function createDavHandler({ store, config, logger, auth }) {
    * A client that ignores the set gets a 403 on PUT (see handlePut).
    */
   function supportedComponentSetXml(meta) {
+    // 0.8.48：合并集合同时宣告 VEVENT 与 VTODO。
+    if (meta && meta.merge === true) {
+      return '<C:supported-calendar-component-set><C:comp name="VEVENT"/><C:comp name="VTODO"/></C:supported-calendar-component-set>';
+    }
     const type = meta && meta.type === 'vtodo' ? 'vtodo' : 'vevent';
     return type === 'vtodo'
       ? '<C:supported-calendar-component-set><C:comp name="VTODO"/></C:supported-calendar-component-set>'
@@ -415,7 +426,10 @@ export function createDavHandler({ store, config, logger, auth }) {
   }
 
   async function hydrate(target) {
+    const merge = target.merge || null;
     if (target.kind === 'calendar') {
+      // 0.8.48：合并开启时任务日历不在 DAV 暴露。
+      if (merge && target.calendar === merge.taskCalendarId) return { ...target, kind: 'unknown' };
       if (!(await store.calendarExists(target.calendar))) {
         return { ...target, kind: 'unknown' };
       }
@@ -425,6 +439,14 @@ export function createDavHandler({ store, config, logger, auth }) {
       if (meta && meta.davAccess === 'hidden') return { ...target, kind: 'unknown' };
     }
     if (target.kind === 'event') {
+      if (merge && target.calendar === merge.taskCalendarId) return { ...target, kind: 'unknown' };
+      if (merge && target.calendar === merge.calendarId) {
+        const real = await mergeRealCalendar(merge, target.file);
+        if (!(await store.getEvent(real, target.file))) return { ...target, kind: 'unknown' };
+        const meta = await store.readCalendarMeta(real);
+        if (meta && meta.davAccess === 'hidden') return { ...target, kind: 'unknown' };
+        return { ...target, calendar: real, merge, mergeCalendarId: merge.calendarId };
+      }
       if (!(await store.getEvent(target.calendar, target.file))) {
         return { ...target, kind: 'unknown' };
       }
@@ -433,6 +455,34 @@ export function createDavHandler({ store, config, logger, auth }) {
       if (meta && meta.davAccess === 'hidden') return { ...target, kind: 'unknown' };
     }
     return target;
+  }
+
+  /* ------------------------------------------------ 任务合并（0.8.48） */
+
+  async function mergeRealCalendar(merge, file) {
+    if (await store.getEvent(merge.calendarId, file)) return merge.calendarId;
+    if (await store.getEvent(merge.taskCalendarId, file)) return merge.taskCalendarId;
+    return merge.calendarId;
+  }
+
+  /** 合并集合里的全部对象，附带每个对象真实所属的日历 id。 */
+  async function mergedEntries(merge) {
+    const [events, tasks] = await Promise.all([
+      store.listEvents(merge.calendarId),
+      store.listEvents(merge.taskCalendarId),
+    ]);
+    return [
+      ...events.map((item) => ({ ...item, calendarId: merge.calendarId })),
+      ...tasks.map((item) => ({ ...item, calendarId: merge.taskCalendarId })),
+    ];
+  }
+
+  async function mergedCtagOf(merge) {
+    const [a, b] = await Promise.all([
+      store.ctag(merge.calendarId),
+      store.ctag(merge.taskCalendarId),
+    ]);
+    return mergedCtag(a, b);
   }
 
   async function childrenOf(target) {
@@ -460,11 +510,27 @@ export function createDavHandler({ store, config, logger, auth }) {
         const meta = metaItem.displayName !== undefined ? metaItem : await store.readCalendarMeta(id);
         // 0.2.1：'hidden' 不发布到 CalDAV listing。
         if (meta && meta.davAccess === 'hidden') continue;
+        // 0.8.48：合并开启时任务日历并进合并集合，不再单独出现在 DAV 列表。
+        if (target.merge && id === target.merge.taskCalendarId) continue;
         visible.push({ kind: 'calendar', username, calendar: id, href: calendarHref(username, id) });
       }
       return visible;
     }
     if (target.kind === 'calendar') {
+      const merge = target.merge && target.calendar === target.merge.calendarId ? target.merge : null;
+      if (merge) {
+        const objects = await mergedEntries(merge);
+        return objects.map((object) => ({
+          kind: 'event',
+          username,
+          calendar: object.calendarId,
+          merge,
+          mergeCalendarId: merge.calendarId,
+          file: object.file,
+          // href 一律挂在合并集合路径下，客户端只看到一个日历。
+          href: objectHref(username, merge.calendarId, object.file),
+        }));
+      }
       const objects = await store.listEvents(target.calendar);
       return objects.map((object) => ({
         kind: 'event',
@@ -499,15 +565,20 @@ export function createDavHandler({ store, config, logger, auth }) {
     const props = requestedProps(bodyText, live.kind);
     const includeChildren = depth === '1'
       && ['root', 'principalRoot', 'principal', 'home', 'calendar'].includes(live.kind);
-    const meta = live.kind === 'calendar' ? await store.readCalendarMeta(live.calendar) : null;
-    const ctag = live.kind === 'calendar' ? await store.ctag(live.calendar) : null;
-    let writable = true;
-    if (live.kind === 'event') {
-      const eventMeta = await store.readCalendarMeta(live.calendar);
-      writable = !eventMeta || eventMeta.davAccess !== 'ro';
-    } else if (live.kind === 'calendar') {
-      writable = !meta || meta.davAccess !== 'ro';
-    }
+    const merge = live.merge && live.kind === 'calendar' && live.calendar === live.merge.calendarId
+      ? live.merge
+      : null;
+    const meta = live.kind === 'calendar'
+      ? { ...(await store.readCalendarMeta(live.calendar)), ...(merge ? { merge: true } : {}) }
+      : null;
+    const ctag = live.kind === 'calendar'
+      ? (merge ? await mergedCtagOf(merge) : await store.ctag(live.calendar))
+      : null;
+    // 0.8.46：订阅日历同样算只读（davAccessOf 会把 subscriptionUrl 归一成 'ro'），
+    // 否则客户端 PROPFIND 看到可写、PUT 才被 403 拒，属于自相矛盾的提示。
+    const writable = ['event', 'calendar'].includes(live.kind)
+      ? (await davAccessOf(live.calendar)) !== 'ro'
+      : true;
     const inner = await responseXml(live, props, { includeChildren, meta, ctag, writable });
     send(res, 207, { 'Content-Type': 'application/xml; charset=utf-8' }, multistatus(inner));
   }
@@ -578,7 +649,9 @@ export function createDavHandler({ store, config, logger, auth }) {
           .map((n) => String(n.attrs.name || '').toUpperCase())
           .filter((name) => name && name !== 'VCALENDAR'),
       );
-      for (const event of await store.listEvents(live.calendar)) {
+      const merge = live.merge && live.calendar === live.merge.calendarId ? live.merge : null;
+      const objects = merge ? await mergedEntries(merge) : await store.listEvents(live.calendar);
+      for (const event of objects) {
         if (wanted.size) {
           const component = componentOf(event.content) || 'VEVENT';
           if (!wanted.has(component)) continue;
@@ -587,9 +660,11 @@ export function createDavHandler({ store, config, logger, auth }) {
         const evTarget = {
           kind: 'event',
           username: live.username,
-          calendar: live.calendar,
+          calendar: event.calendarId || live.calendar,
+          merge,
+          mergeCalendarId: merge ? merge.calendarId : undefined,
           file: event.file,
-          href: objectHref(live.username, live.calendar, event.file),
+          href: objectHref(live.username, merge ? merge.calendarId : live.calendar, event.file),
         };
         responses.push(await reportEventResponse(evTarget, event, props, expandRange));
       }
@@ -659,6 +734,27 @@ export function createDavHandler({ store, config, logger, auth }) {
     const tokenNode = find(doc, 'sync-token');
     const token = tokenNode ? tokenNode.text.trim() : '';
     const props = reportProps(bodyText, ['getetag']);
+    const merge = target.merge && target.calendar === target.merge.calendarId ? target.merge : null;
+    if (merge) {
+      // 合并集合的变更集合不能只取一个日历的 changes，直接回全量 + 组合 token，
+      // 客户端按 href 对账即可；两历任一变化都会换 token。
+      const objects = await mergedEntries(merge);
+      const parts = [];
+      for (const object of objects) {
+        const evTarget = {
+          kind: 'event',
+          username: target.username,
+          calendar: object.calendarId,
+          merge,
+          mergeCalendarId: merge.calendarId,
+          file: object.file,
+          href: objectHref(target.username, merge.calendarId, object.file),
+        };
+        parts.push(await responseXml(evTarget, props, { event: object }));
+      }
+      parts.push(`<D:sync-token>${escapeXml(await mergedCtagOf(merge))}</D:sync-token>`);
+      return send(res, 207, { 'Content-Type': 'application/xml; charset=utf-8' }, multistatus(parts.join('')));
+    }
     const outcome = await store.changesSince(target.calendar, token);
     if (outcome.error) {
       logAccess({ event: 'sync-token-rejected', calendar: target.calendar, reason: outcome.error });
@@ -767,7 +863,10 @@ export function createDavHandler({ store, config, logger, auth }) {
     if (!calendarId) return 'rw';
     try {
       const meta = await store.readCalendarMeta(calendarId);
-      return meta && ['ro', 'hidden'].includes(meta.davAccess) ? meta.davAccess : 'rw';
+      if (!meta) return 'rw';
+      // 0.8.46：订阅日历对 DAV 客户端只读（GET/PROPFIND 仍可用）。
+      if (meta.readOnly === true || meta.subscriptionUrl) return 'ro';
+      return ['ro', 'hidden'].includes(meta.davAccess) ? meta.davAccess : 'rw';
     } catch {
       return 'rw';
     }
@@ -781,7 +880,17 @@ export function createDavHandler({ store, config, logger, auth }) {
     if (target.kind !== 'event') {
       return send(res, 405, { Allow: ALLOW_HEADER }, 'PUT target must be an event resource\n');
     }
-    const access = await davAccessOf(target.calendar);
+    // 0.8.48：合并集合同时接受 VEVENT 与 VTODO，按组件类型落到各自的日历。
+    const merge = target.merge && target.calendar === target.merge.calendarId ? target.merge : null;
+    let writeCalendar = target.calendar;
+    if (merge) {
+      const incoming = componentOf(bodyText) || 'VEVENT';
+      if (incoming !== 'VEVENT' && incoming !== 'VTODO') {
+        return send(res, 415, { 'Content-Type': 'text/plain; charset=utf-8' }, `unsupported component: ${incoming}\n`);
+      }
+      writeCalendar = incoming === 'VTODO' ? merge.taskCalendarId : merge.calendarId;
+    }
+    const access = await davAccessOf(merge ? writeCalendar : target.calendar);
     if (access === 'hidden') {
       return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'not found\n');
     }
@@ -796,7 +905,7 @@ export function createDavHandler({ store, config, logger, auth }) {
     if (contentType && !/text\/calendar|application\/ics/i.test(contentType)) {
       return send(res, 415, { 'Content-Type': 'text/plain; charset=utf-8' }, `unsupported content-type: ${contentType}\n`);
     }
-    if (!(await store.calendarExists(target.calendar))) {
+    if (!(await store.calendarExists(writeCalendar))) {
       return send(res, 409, { 'Content-Type': 'text/plain; charset=utf-8' }, 'parent calendar does not exist\n');
     }
     if (!looksLikeCalendar(bodyText)) {
@@ -806,10 +915,10 @@ export function createDavHandler({ store, config, logger, auth }) {
     // 0.2.0: the collection type decides which component may be stored. Rejecting
     // instead of silently storing keeps clients from believing a VTODO landed in
     // an event calendar (or the other way round).
-    const calendarMeta = await store.readCalendarMeta(target.calendar);
+    const calendarMeta = await store.readCalendarMeta(writeCalendar);
     const calendarType = calendarMeta.type === 'vtodo' ? 'vtodo' : 'vevent';
     const incomingComponent = componentOf(bodyText) || 'VEVENT';
-    if ((calendarType === 'vtodo') !== (incomingComponent === 'VTODO')) {
+    if (!merge && (calendarType === 'vtodo') !== (incomingComponent === 'VTODO')) {
       logAccess({
         event: 'component-not-supported',
         calendar: target.calendar,
@@ -819,15 +928,17 @@ export function createDavHandler({ store, config, logger, auth }) {
       return send(res, 403, { 'Content-Type': 'application/xml; charset=utf-8' },
         '<?xml version="1.0" encoding="utf-8"?><D:error xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><C:supported-calendar-component/></D:error>');
     }
-    const existing = await store.getEvent(target.calendar, target.file);
+    const existing = await store.getEvent(writeCalendar, target.file);
     const failure = checkPreconditions(req, existing);
     if (failure) {
       logAccess({ event: 'precondition-failed', file: target.file, status: failure.status, reason: failure.reason });
       return send(res, failure.status, { 'Content-Type': 'text/plain; charset=utf-8' }, `${failure.reason}\n`);
     }
-    const { etag } = await store.putEvent(target.calendar, target.file, bodyText);
+    const { etag } = await store.putEvent(writeCalendar, target.file, bodyText);
     const uid = uidOf(bodyText);
     const nameUid = target.file.replace(/\.ics$/i, '');
+    // 0.8.48：记一条路由，GET/DELETE 即使对象换了归属也能定位。
+    if (merge) await rememberMergeRoute(store, uid || nameUid, writeCalendar, target.href).catch(() => {});
     if (uid && nameUid && uid !== nameUid) logAccess({ event: 'uid-name-mismatch', file: target.file, uid });
     if (existing) return send(res, 204, { ETag: `"${etag}"` });
     return send(res, 201, { ETag: `"${etag}"`, Location: target.href });
@@ -854,7 +965,8 @@ export function createDavHandler({ store, config, logger, auth }) {
       return send(res, 200, { 'Content-Type': 'text/plain; charset=utf-8' }, `${principalRoot}\n`);
     }
     if (live.kind === 'calendar') {
-      const objects = await store.listEvents(live.calendar);
+      const merge = live.merge && live.calendar === live.merge.calendarId ? live.merge : null;
+      const objects = merge ? await mergedEntries(merge) : await store.listEvents(live.calendar);
       return send(res, 200, { 'Content-Type': 'text/plain; charset=utf-8' },
         `${live.calendar}: ${objects.length} object(s)\n${objects.map((o) => `${o.file}\t${o.etag}`).join('\n')}\n`);
     }
@@ -873,6 +985,7 @@ export function createDavHandler({ store, config, logger, auth }) {
 
   async function handleDelete(req, res, target) {
     if (target.kind !== 'event') return send(res, 405, { Allow: ALLOW_HEADER }, 'DELETE target must be an event resource\n');
+    // 0.8.2x 起：只读日历先回 403（即使对象不存在），避免客户端把「没写进去」当成已删。
     const deleteAccess = await davAccessOf(target.calendar);
     if (deleteAccess === 'hidden') {
       return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'not found\n');
@@ -881,11 +994,14 @@ export function createDavHandler({ store, config, logger, auth }) {
       logAccess({ event: 'read-only-calendar', calendar: target.calendar, method: 'DELETE' });
       return send(res, 403, { 'Content-Type': 'text/plain; charset=utf-8' }, '日历为只读（CalDAV 权限：只读）\n');
     }
-    const existing = await store.getEvent(target.calendar, target.file);
+    const live = await hydrate(target);
+    if (live.kind === 'unknown') return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'not found\n');
+    const existing = await store.getEvent(live.calendar, target.file);
     const failure = checkPreconditions(req, existing);
     if (failure) return send(res, failure.status, { 'Content-Type': 'text/plain; charset=utf-8' }, `${failure.reason}\n`);
     if (!existing) return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'not found\n');
-    await store.deleteEvent(target.calendar, target.file);
+    await store.deleteEvent(live.calendar, target.file);
+    if (live.merge) await forgetMergeRoute(store, uidOf(existing.content) || target.file.replace(/\.ics$/i, '')).catch(() => {});
     send(res, 204, {});
   }
 
@@ -1010,6 +1126,23 @@ export function createDavHandler({ store, config, logger, auth }) {
 
       const requestContext = currentContext();
       if (requestContext) requestContext.userId = account ? account.id : (config.auth ? null : 'anonymous');
+      // 0.8.48（用户）：任务合并只在 DAV 侧生效。合并开启后任务日历不出现在
+      // DAV 列表、也不能直接访问；事件资源的 href 仍挂在合并集合路径下。
+      if (account) {
+        target.merge = await resolveTasksMerge(store);
+        if (target.merge) {
+          const merge = target.merge;
+          const onTaskCalendar = (target.kind === 'calendar' || target.kind === 'event')
+            && target.calendar === merge.taskCalendarId;
+          if (onTaskCalendar) {
+            status = 404;
+            return send(res, 404, { 'Content-Type': 'text/plain; charset=utf-8' }, 'not found\n');
+          }
+          // 合并集合下的对象真实归属由 hydrate() 解析（GET/DELETE/PROPFIND 都走它），
+          // PUT 交给 handlePut 按组件类型分流。
+        }
+      }
+
 
       if (target.kind === 'unknown') {
         status = 404;

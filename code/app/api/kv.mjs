@@ -30,7 +30,7 @@ import { createHash } from 'node:crypto';
 import { eventFromIcs, eventToIcs, taskFromIcs, taskToIcs } from '../lib/ical.mjs';
 import { applyTagToSummary, categoryTagName, firstGrapheme, tagCategoryLabel } from '../lib/tags.mjs';
 import { normalizeSettings } from '../lib/settings.mjs';
-import { folderRootsOf, isAuthorisedFolder, normalizeRoots, resolveInsideRoots, resolveRoot } from '../lib/folders.mjs';
+import { clearMergeRoutes, validateTasksMerge } from '../lib/merge-sync.mjs';
 import { currentContext } from '../lib/request-context.mjs';
 import { sendJsonEtag } from '../lib/etag.mjs';
 
@@ -115,6 +115,10 @@ export function createKvApi({ store, tags = null }) {
       return { ok: false, status: 400, code: 'calendar_not_found', message: '日历不存在' };
     }
     const meta = await store.readCalendarMeta(calendarId);
+    // 0.8.46：订阅日历只读（源在远端，本地改动会被下次同步覆盖）。
+    if (meta && (meta.readOnly === true || meta.subscriptionUrl)) {
+      return { ok: false, status: 403, code: 'calendar_read_only', message: '订阅日历只读，请在订阅源修改' };
+    }
     const want = kind === 'task' ? 'vtodo' : 'vevent';
     if (typeOfMeta(meta) !== want) {
       return {
@@ -325,41 +329,20 @@ export function createKvApi({ store, tags = null }) {
     }
     if (key === SETTINGS_KEY) {
       const previous = await store.readUserData('settings').catch(() => null);
-      const before = folderRootsOf(previous).join('\n');
-      // 0.9.1（B 项）：允许的文件夹改动时校验——路径长度、绝对路径由
-      // normalizeRoots 把关；不存在/不可读在这里给明确错误码，不静默存坏值。
-      let nextRoots;
-      try {
-        nextRoots = normalizeRoots(value.folderRoots);
-      } catch (err) {
-        const bad = new Error(err.message);
-        bad.status = err.status || 400;
-        bad.code = err.code || 'folder_root_invalid';
-        throw bad;
+      const mergeCheck = await validateTasksMerge(store, value.tasksMerge);
+      if (mergeCheck.error) {
+        const err = new Error(mergeCheck.error.message);
+        err.status = 400;
+        err.code = mergeCheck.error.code;
+        throw err;
       }
-      if (nextRoots.join('\n') !== before) {
-        for (const root of nextRoots) {
-          // 任务书 §3.2.1：只允许 fnOS 已授权的目录（TRIM_DATA_ACCESSIBLE_PATHS /
-          // TRIM_DATA_SHARE_PATHS 的启动快照），越界直接 400，不静默存坏值。
-          if (!isAuthorisedFolder(root)) {
-            const bad = new Error(
-              '该目录不在 fnOS 授权范围内：请在 fnOS 的 FnCal 应用设置 →「可访问的文件」里添加，改完授权请重启 FnCal',
-            );
-            bad.status = 400;
-            bad.code = 'folder_root_forbidden';
-            throw bad;
-          }
-          const check = await resolveRoot(root).catch((err) => ({ error: err }));
-          if (check.error) {
-            const bad = new Error(`文件夹不可用：${root}`);
-            bad.status = check.error.status || 400;
-            bad.code = check.error.code || 'folder_root_unreadable';
-            throw bad;
-          }
-        }
-      }
-      const normalized = normalizeSettings(value);
+      const normalized = normalizeSettings({ ...value, tasksMerge: mergeCheck.value });
       await store.writeUserData('settings', normalized);
+      // 关闭合并：清路由，不删任何事件/任务数据。
+      const wasEnabled = previous && previous.tasksMerge && previous.tasksMerge.enabled === true;
+      if (wasEnabled && normalized.tasksMerge.enabled !== true) {
+        await clearMergeRoutes(store).catch(() => {});
+      }
       return { etag: sha256(JSON.stringify(normalized)), created: false };
     }
     const target = await resolveKey(key);

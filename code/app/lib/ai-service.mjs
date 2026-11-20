@@ -1128,6 +1128,21 @@ export function createAiService({
 
   /* --------------------------------------------------------------- 写端点 */
 
+  /**
+   * 0.8.47（任务书 §三·c）：写之前先判「是不是订阅日历」。
+   * 订阅日历的凭据一律只有 read，若先判档位会回 write_reject（让用户去改读写），
+   * 而订阅日历本来就不可能可写——必须先回 calendar_read_only「订阅日历只读」。
+   */
+  async function assertWritable(ctx, calendarId) {
+    if (isWritable(ctx.credential, calendarId)) return;
+    const meta = await aiStore.calendarMetaFor(ctx.userId, calendarId).catch(() => null);
+    if (meta && meta.subscriptionUrl) {
+      throw Object.assign(new Error('订阅日历只读'), { code: 'calendar_read_only', status: 403 });
+    }
+    throw writeReject('not-writable');
+  }
+
+
   async function createEvent(ctx, body) {
     const calendarId = String((body && body.calendarId) || '').trim();
     if (!calendarId) throw invalidError('calendarId', '需要 calendarId');
@@ -1135,7 +1150,7 @@ export function createAiService({
     // 用户先看到最根本的那一句（不可见 ≡ 不存在，逐字相同）。
     if (!isReadable(ctx.credential, calendarId)) throw writeReject('not-found');
     if (!(await aiStore.calendarExistsFor(ctx.userId, calendarId))) throw writeReject('not-found');
-    if (!isWritable(ctx.credential, calendarId)) throw writeReject('not-writable');
+    await assertWritable(ctx, calendarId);
     const hasIcs = typeof body.ics === 'string' && body.ics.trim().length > 0;
     let baseIcs = buildIcs(body);
     // 0.8.37（§A）：先把结构化字段落成模型，再交给同一份 eventToIcs 写重复与农历行，
@@ -1200,7 +1215,7 @@ export function createAiService({
     const calendarId = String(payload.calendarId || '').trim();
     const located = await locateEvent(ctx, uid, calendarId);
     if (!located) return null;
-    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    await assertWritable(ctx, located.calendarId);
 
     let current;
     try {
@@ -1276,7 +1291,7 @@ export function createAiService({
   async function deleteEvent(ctx, uid, { calendarId = '', note = '' } = {}) {
     const located = await locateEvent(ctx, uid, calendarId);
     if (!located) return null;
-    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    await assertWritable(ctx, located.calendarId);
     let current;
     try {
       current = await eventFromIcs(located.object.content);
@@ -1326,7 +1341,7 @@ export function createAiService({
         });
       } catch (err) {
         // 对象没删成就回滚回收站条目，避免「能恢复一条其实还在的日程」。
-        await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
+        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
         throw err;
       }
       return { applied: true, deleted: true, calendarId: located.calendarId, trashId: item.id, via: 'delete-mode-trash' };
@@ -1475,7 +1490,7 @@ export function createAiService({
     if (!calendarId) throw invalidError('calendarId', '需要 calendarId');
     if (!isReadable(ctx.credential, calendarId)) throw writeReject('not-found');
     if (!(await aiStore.calendarExistsFor(ctx.userId, calendarId))) throw writeReject('not-found');
-    if (!isWritable(ctx.credential, calendarId)) throw writeReject('not-writable');
+    await assertWritable(ctx, calendarId);
     const targets = await targetCalendarsOfType(ctx, calendarId, 'vtodo');
     if (!targets) throw invalidError('calendarId', '该日历不是任务日历：任务只能建在「任务」类型的日历里');
     const uid = payload.uid === undefined || payload.uid === null ? randomUUID() : String(payload.uid).trim();
@@ -1538,7 +1553,7 @@ export function createAiService({
     uid = String(uid || '').trim().replace(/@caldav\.local$/, '');
     const located = await locateTask(ctx, uid, payload.calendarId || '');
     if (!located) return null;
-    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    await assertWritable(ctx, located.calendarId);
     let current = null;
     try {
       current = await taskFromIcs(located.object.content);
@@ -1602,7 +1617,7 @@ export function createAiService({
     uid = String(uid || '').trim().replace(/@caldav\.local$/, '');
     const located = await locateTask(ctx, uid, calendarId);
     if (!located) return null;
-    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    await assertWritable(ctx, located.calendarId);
     let current = null;
     try {
       current = await taskFromIcs(located.object.content);
@@ -1666,7 +1681,7 @@ export function createAiService({
     uid = String(uid || '').trim().replace(/@caldav\.local$/, '');
     const located = await locateTask(ctx, uid, calendarId);
     if (!located) return null;
-    if (!isWritable(ctx.credential, located.calendarId)) throw writeReject('not-writable');
+    await assertWritable(ctx, located.calendarId);
     let current = null;
     try {
       current = await taskFromIcs(located.object.content);
@@ -1708,7 +1723,7 @@ export function createAiService({
           credentialId: ctx.credential.id,
         });
       } catch (err) {
-        await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
+        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
         throw err;
       }
       return { applied: true, deleted: true, calendarId: located.calendarId, trashId: item.id, via: 'delete-mode-trash' };
@@ -1864,11 +1879,11 @@ export function createAiService({
     try {
       const saved = await aiStore.acceptProposal(ctx.userId, proposal.id, { decidedBy: 'agent' });
       if (item && saved && saved.missing) {
-        await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
+        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
       }
       return saved;
     } catch (err) {
-      if (item) await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
+      if (item) await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
       throw err;
     }
   }

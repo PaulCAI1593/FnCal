@@ -172,6 +172,9 @@ export function createDataApi({ store, logger = null }) {
       return json(res, 404, { ok: false, code: 'calendar_not_found', message: '目标日历不存在' });
     }
     const meta = await store.readCalendarMeta(calendarId);
+    if (meta && (meta.readOnly === true || meta.subscriptionUrl)) {
+      return json(res, 403, { ok: false, code: 'calendar_read_only', message: '订阅日历只读，请在订阅源修改' });
+    }
     const calendarType = meta && meta.type === 'vtodo' ? 'vtodo' : 'vevent';
     if ((calendarType === 'vtodo') !== (component === 'VTODO')) {
       return json(res, 400, {
