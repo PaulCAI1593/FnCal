@@ -144,16 +144,16 @@ describe('0.8.43 · AI 页「技能配置 Prompt」', () => {
     expect(lines).toHaveLength(6);
     // 第 1、2 行必须是 Gitee（用户 2026-11-19：「默认用gitee的网址吧」）
     expect(lines[1]).toBe('1. 读取技能说明：https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md');
-    expect(lines[2]).toBe('2. 安装技能包：https://gitee.com/Paul1593/FnCal/releases/download/mcp-skill-v0.9.3/FnCal-MCP-Skill-0.9.3.zip');
-    expect(text).toContain('mcp-skill-v0.9.3');
-    expect(text).toContain('FnCal-MCP-Skill-0.9.3.zip');
+    expect(lines[2]).toBe('2. 安装技能包：https://gitee.com/Paul1593/FnCal/releases/download/mcp-skill-v0.8.40/FnCal-MCP-Skill-0.8.40.zip');
+    expect(text).toContain('mcp-skill-v0.8.40');
+    expect(text).toContain('FnCal-MCP-Skill-0.8.40.zip');
     expect(text).toContain('https://<你的地址>/mcp');
     expect(text).toContain('Bearer <你的令牌>');
     expect(text).toContain('list_calendars');
     // 末行备用：GitHub 两条原地址
     expect(lines[5]).toMatch(/^（Gitee 打不开时改用 GitHub：/);
     expect(lines[5]).toContain('https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/skills/fncal-mcp/SKILL.md');
-    expect(lines[5]).toContain('https://github.com/PaulCAI1593/FnCal/releases/download/mcp-skill-v0.9.3/FnCal-MCP-Skill-0.9.3.zip');
+    expect(lines[5]).toContain('https://github.com/PaulCAI1593/FnCal/releases/download/mcp-skill-v0.8.40/FnCal-MCP-Skill-0.8.40.zip');
     // Gitee 用户名不得写成 GitHub 的 PaulCAI1593
     expect(SKILL_PACKAGE.giteeSkillMd).toContain('gitee.com/Paul1593/');
     expect(SKILL_PACKAGE.giteeDownload).toContain('gitee.com/Paul1593/');
@@ -168,11 +168,11 @@ describe('0.8.43 · AI 页「技能配置 Prompt」', () => {
   });
 
   it('版本串只有 SKILL_PACKAGE 一处来源', () => {
-    const hits = settingsSource.match(/mcp-skill-v0\.9\.3/g) || [];
+    const hits = settingsSource.match(/mcp-skill-v0\.8\.40/g) || [];
     expect(hits).toHaveLength(1);
-    expect(settingsSource).toContain("version: '0.9.3'");
+    expect(settingsSource).toContain("version: '0.8.40'");
     // 文件名也只写一处，四个链接里不再各写一遍
-    expect(settingsSource.match(/FnCal-MCP-Skill-0\.9\.3\.zip/g) || []).toHaveLength(1);
+    expect(settingsSource.match(/FnCal-MCP-Skill-0\.8\.40\.zip/g) || []).toHaveLength(1);
     expect(Object.isFrozen(SKILL_PACKAGE)).toBe(true);
     // 四个链接字段都在
     for (const key of ['giteeSkillMd', 'giteeDownload', 'githubSkillMd', 'githubDownload']) {

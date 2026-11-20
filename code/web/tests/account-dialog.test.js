@@ -48,10 +48,10 @@ function submit(form) {
   form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
 }
 
-function makeStore({ settings = {} } = {}) {
+function makeStore({ settings = {}, calendars: calendarList = null } = {}) {
   const state = { ...DEFAULT_SETTINGS, ...settings };
   const calls = [];
-  const calendars = [
+  const calendars = calendarList || [
     { id: 'default', displayName: '我的日历', type: 'vevent', color: '#3272d9' },
     { id: 'cal-work', displayName: '工作', type: 'vevent', color: '#2fa66b' },
     { id: 'tasks', displayName: '任务', type: 'vtodo', color: '#8a94a6' },
@@ -96,7 +96,7 @@ describe('设置对话框', () => {
     document.body.replaceChildren();
   });
 
-  it('五个页签的标题正确；默认停在「一般」；不显示角色', () => {
+  it('四个页签的标题正确；默认停在「一般」；不显示角色', () => {
     opened = openAccountDialog({
       user: { username: 'alice', displayName: 'Alice', role: 'user' },
       store,
@@ -107,9 +107,8 @@ describe('设置对话框', () => {
     // 0.6.2：桌面卡片改为跟随 App 登录态，0.6.0 的第 5 枚「卡片」页签删除。
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4。
     // 0.6.15（用户）：快捷键页签搬到头像菜单，设置回到三页签。
-    // 0.7.0 起（用户）：新增第 2 页签「标签」。
-    // 0.9.1（F.4C，用户 2026-11-20）：「高级」插在「一般」与「标签」之间，共 5 枚。
-    expect(tabs).toEqual(['一般', '高级', '标签', 'CalDAV', 'AI']);
+    // 0.7.0 起（用户）：新增第 2 页签「标签」，顺序 一般 / 标签 / CalDAV / AI。
+    expect(tabs).toEqual(['一般', '标签', 'CalDAV', 'AI']);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(false);
     expect(dialog.querySelector('#settings-page-account').hidden).toBe(true);
     expect(dialog.querySelector('.settings__page--calendar')).toBeNull();
@@ -123,15 +122,15 @@ describe('设置对话框', () => {
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
-    // 0.9.1 起：一般 / 高级 / 标签 / CalDAV / AI，第 3 枚是 CalDAV（id 仍是 account）。
-    tabs[3].click();
-    expect(tabs[3].getAttribute('aria-selected')).toBe('true');
+    // 0.7.0 起：「标签」插到第 2 位，CalDAV / AI 各后移一位。
+    tabs[2].click();
+    expect(tabs[2].getAttribute('aria-selected')).toBe('true');
     expect(dialog.querySelector('#settings-page-account').hidden).toBe(false);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(true);
     // 方向键右移：CalDAV 之后是 AI
-    tabs[3].focus();
-    tabs[3].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-    expect(tabs[4].getAttribute('aria-selected')).toBe('true');
+    tabs[2].focus();
+    tabs[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(tabs[3].getAttribute('aria-selected')).toBe('true');
     expect(dialog.querySelector('#settings-page-ai').hidden).toBe(false);
   });
 
@@ -317,7 +316,8 @@ describe('设置对话框', () => {
     expect(toolbar.slice(0, 3)).toEqual(['编辑', '删除', '导出']);
     const headers = [...page.querySelectorAll('.cal-table__row--head .cal-table__cell')].map((n) => n.textContent);
     // 0.2.1 最终口径：提醒两列已移除（#16），CalDAV 权限为第 3 列（三态）。
-    expect(headers).toEqual(['名称', '显示', 'CalDAV 权限']);
+    // 0.8.47（任务书 §九）：第三列由「显示」改为「类型」，可见性只在侧栏勾选。
+    expect(headers).toEqual(['名称', '类型', 'CalDAV 权限']);
     const rows = page.querySelectorAll('.cal-table__row:not(.cal-table__row--head)');
     expect(rows.length).toBe(3);
     // 计数在工具条里，文案「共 N 个项目」，且底部那行已删掉。
@@ -352,16 +352,34 @@ describe('设置对话框', () => {
     expect(hint.textContent).toContain('只读');
   });
 
-  it('日历表格：勾选先暂存，点「应用」才批量保存（#6）', async () => {
+  it('0.8.47（§三·a）：订阅日历的权限下拉只有「只读 / 不可见」', () => {
+    store = makeStore({
+      calendars: [
+        { id: 'default', displayName: '我的日历', type: 'vevent', color: '#3272d9' },
+        { id: 'sub-1', displayName: '中国假日', type: 'vevent', color: '#8a94a6', subscriptionUrl: 'https://example.com/a.ics', davAccess: 'rw' },
+      ],
+    }).store;
+    opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
+    [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
+    const page = opened.dialog.querySelector('#settings-page-account');
+    const row = [...page.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')]
+      .find((node) => node.textContent.includes('中国假日'));
+    const values = [...row.querySelectorAll('select.cal-table__dav-select option')].map((o) => o.value);
+    // 没有「读写」；历史 rw 按只读显示。
+    expect(values).toEqual(['ro', 'hidden']);
+    expect(row.querySelector('select.cal-table__dav-select').value).toBe('ro');
+  });
+
+  it('日历表格：改 CalDAV 权限先暂存，点「应用」才批量保存（#6；0.8.47 起无「显示」列）', async () => {
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     [...opened.dialog.querySelectorAll('[role="tab"]')][1].click();
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页；表格节点仍在，位于 CalDAV 页最上面。
     const page = opened.dialog.querySelector('#settings-page-account');
     const apply = [...opened.dialog.querySelectorAll('.modal__foot button')].find((b) => b.textContent === '应用');
     expect(apply.disabled).toBe(true);
-    const firstCheck = page.querySelector('.cal-table__row:not(.cal-table__row--head) .cal-table__checkbox');
-    firstCheck.checked = false;
-    firstCheck.dispatchEvent(new Event('change'));
+    const firstDav = page.querySelector('.cal-table__row:not(.cal-table__row--head) .cal-table__dav-select');
+    firstDav.value = 'ro';
+    firstDav.dispatchEvent(new Event('change'));
     expect(apply.disabled).toBe(false);
     apply.click();
     await flush();
