@@ -7,8 +7,13 @@
 export default {
   root: '.',
   base: './',
+  // 0.8.53（F.9）：保留函数名。默认 esbuild 压缩会把 `friendlyError`、
+  // `closeAllOpenMenus` 这类导出函数改名，线上堆栈只剩 `a()`，
+  // 解包也查不到新符号。keepNames 只多几百字节的 `__name` 包装。
   build: {
     outDir: 'dist',
+    // Vite 8 走 rolldown：保留函数名（keepNames）在这里设，`esbuild` 段只影响 dev 转换。
+    rolldownOptions: { output: { keepNames: true } },
     // 0.6.12：发布产物不带 source map（两张 map 约 1.9 MB，走 Cloudflare Tunnel
     // 时纯属额外流量，还等于公开源码）。本地排查时用 FNCAL_SOURCEMAP=1 构建。
     sourcemap: process.env.FNCAL_SOURCEMAP === '1',
