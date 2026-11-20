@@ -1326,7 +1326,7 @@ export function createAiService({
         });
       } catch (err) {
         // 对象没删成就回滚回收站条目，避免「能恢复一条其实还在的日程」。
-        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+        await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
         throw err;
       }
       return { applied: true, deleted: true, calendarId: located.calendarId, trashId: item.id, via: 'delete-mode-trash' };
@@ -1708,7 +1708,7 @@ export function createAiService({
           credentialId: ctx.credential.id,
         });
       } catch (err) {
-        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+        await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
         throw err;
       }
       return { applied: true, deleted: true, calendarId: located.calendarId, trashId: item.id, via: 'delete-mode-trash' };
@@ -1864,11 +1864,11 @@ export function createAiService({
     try {
       const saved = await aiStore.acceptProposal(ctx.userId, proposal.id, { decidedBy: 'agent' });
       if (item && saved && saved.missing) {
-        await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+        await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
       }
       return saved;
     } catch (err) {
-      if (item) await Promise.resolve(trash.drop(ctx.userId, item.id)).catch(() => {});
+      if (item) await Promise.resolve(trash.drop(ctx.userId, item.id, { restoreAttachments: true })).catch(() => {});
       throw err;
     }
   }

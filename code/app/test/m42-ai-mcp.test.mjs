@@ -166,7 +166,9 @@ async function mintCredential(admin, body) {
 
 // 0.7.0 起：新增只读工具 list_tags（标签与数量），只读凭据 5 个、可写凭据 5+3。
 // 0.7.11（M6 §3）起：三个标签写工具与日历写权限无关，只读凭据也注册（提案或直写由凭据标签权限决定）。
-const READ_TOOL_NAMES = ['list_calendars', 'list_events', 'get_event', 'find_free_slots', 'list_tags', 'generate_annual_review', 'list_tasks', 'get_task'];
+// 0.9.1（任务书 §三·五 C）：新增附件只读工具 `list_attachments` / `get_attachment`，
+// 以及签发上传链接的 `create_attachment_upload_link`（读工具集里，签发时再判写权限）。
+const READ_TOOL_NAMES = ['list_calendars', 'list_events', 'get_event', 'find_free_slots', 'list_tags', 'generate_annual_review', 'list_tasks', 'get_task', 'list_attachments', 'get_attachment', 'create_attachment_upload_link'];
 const WRITE_TOOL_NAMES = ['create_event', 'update_event', 'delete_event', 'create_task', 'update_task', 'complete_task', 'delete_task'];
 const TAG_TOOL_NAMES = ['create_tag', 'update_tag', 'delete_tag'];
 
@@ -263,8 +265,8 @@ try {
   const listRead = await mcp(rpc('t-1', 'tools/list', {}), { token: tokenRead });
   eq('只读凭据 tools/list → 200', 200, listRead.status);
   const readNames = listRead.body.result.tools.map((tool) => tool.name).sort();
-  // 0.8.37 起：8 个读工具（含 list_tags、list_tasks、get_task）+ 3 个标签工具。
-  eq('只读凭据只有 8 个读工具 + 3 个标签工具', [...READ_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), readNames.join(','));
+  // 0.8.37 起：8 个读工具；0.9.1 起加 3 个附件工具（2 读 + 1 签发），共 11 个 + 3 个标签工具。
+  eq('只读凭据 11 个读工具（含附件 3 个） + 3 个标签工具', [...READ_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), readNames.join(','));
   ok('只读凭据没有 create_event', !readNames.includes('create_event'));
   ok('只读凭据没有 delete_event', !readNames.includes('delete_event'));
   ok('每个工具都有 inputSchema', listRead.body.result.tools.every((tool) => tool.inputSchema && tool.inputSchema.type === 'object'));
@@ -275,8 +277,8 @@ try {
   const tokenWrite = writer.token;
   const listWrite = await mcp(rpc('t-2', 'tools/list', {}), { token: tokenWrite });
   const writeNames = listWrite.body.result.tools.map((tool) => tool.name).sort();
-  // 0.8.37 起：8 个读工具 + 7 个写工具 + 3 个标签工具。
-  eq('可写凭据 8+7+3 个工具', [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), writeNames.join(','));
+  // 0.9.1 起：11 个读工具（含 3 个附件工具） + 7 个写工具 + 3 个标签工具。
+  eq('可写凭据 11+7+3 个工具', [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES, ...TAG_TOOL_NAMES].sort().join(','), writeNames.join(','));
   const deleteDef = listWrite.body.result.tools.find((tool) => tool.name === 'delete_event');
   // 0.4.13 起删除有双模式：提案模式只出提案，回收站模式立即删除并进回收站。
   ok('delete_event 的 description 讲明双模式', deleteDef.description.includes('提案模式') && deleteDef.description.includes('回收站模式'));

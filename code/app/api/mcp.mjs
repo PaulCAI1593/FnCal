@@ -18,6 +18,7 @@
 //     L3 任意工具回包在存在未交付回执时补 `receipts`（只含 proposalId/action/ok/decidedAt）。
 
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs/promises';
 import { DELETE_MODE_TRASH, canAgentApprove, deleteModeOf, NOT_FOUND_BODY } from '../lib/ai-grants.mjs';
 import { createAiRateLimiter } from '../lib/ai-rate-limit.mjs';
 import { AiInputError } from '../lib/ai-model.mjs';
@@ -33,6 +34,29 @@ import { CARD_FONT_FAMILY, renderAnnualCardPng } from '../lib/card-render.mjs';
 import { YEAR_MAX, YEAR_MIN } from '../lib/annual-collect.mjs';
 // 0.8.30（任务书 §四）：年度总结图片链接——只存内存、30 分钟、收不到图片的客户端靠它取图。
 import { describeAnnualImage } from '../lib/annual-image-link.mjs';
+import { folderRootsOf, resolveInsideRoots } from '../lib/folders.mjs';
+import {
+  NAS_ATTACHMENT_LIMITS,
+  attachmentStorageOf,
+  createNasAttachmentStore,
+  occurrenceDateOf,
+  startDateOfIcs,
+  timeZoneOfIcs,
+} from '../lib/nas-attachments.mjs';
+import {
+  boundFolderOf,
+  listFolderAttachments,
+  readFolderAttachment,
+} from '../lib/folder-attachments.mjs';
+import { summaryOfIcs } from '../lib/ical.mjs';
+import { runWithContext } from '../lib/request-context.mjs';
+import { ATTACHMENT_MESSAGES, decideAttachment } from '../lib/attachment-policy.mjs';
+import {
+  ATTACHMENT_LIMITS,
+  appLimitsOf,
+  libraryLimitsOf,
+  uploadLinkDefaultBytesFor,
+} from '../lib/attachment-limits.mjs';
 
 const MAX_BODY_BYTES = 256 * 1024;
 const PREFIX = '/mcp';
@@ -75,6 +99,16 @@ const MISSING_TASK_TEXT = '未找到该任务：它可能不存在、不在你�
 const MISSING_CALENDAR_TEXT = '未找到该日历：它可能不存在，或对你的凭据不可见。';
 /** 提案不存在 / 不是本凭据产生的 / 所属日历已不可见 —— 统一一句，不证明存在性。 */
 const PROPOSAL_MISSING_TEXT = '未找到该提案：它可能不存在、已被处理，或不属于你的凭据。';
+/** 0.9.1（任务书 §三·五 C）：附件与事件同一口径，不暴露存在性。 */
+const MISSING_ATTACHMENT_TEXT = '未找到该附件：它可能不存在、不在你的时间窗口内，或对你的凭据不可见。';
+/** 0.9.1：MCP 单条附件上限（base64 之前的字节数）；超过只给分享链接。 */
+const MCP_ATTACHMENT_MAX_BYTES = 5 * 1024 * 1024;
+/** 0.9.1：非图片附件的内联 base64 上限（其余只给链接）。 */
+const MCP_ATTACHMENT_TEXT_BYTES = 256 * 1024;
+/** 0.9.1（D 项）：绑定 NAS 文件夹的日程——附件只读，由 NAS 管理。 */
+const FOLDER_NOTE_LIST = '该日程的附件在 NAS 文件夹中管理，FnCal 只读不改。';
+// 0.9.1（E）：附件库放在 NAS 时，这些文件不在 FnCal 备份内，也不走上传链接。
+const NAS_NOTE = '附件存放在 NAS 文件夹，FnCal 备份不含这些文件；清理请在 NAS 上做';
 
 /* ------------------------------ 0.4.17：确认摘要与提示（0.4.21 起只用于弹窗与被拒结果） */
 
@@ -453,6 +487,60 @@ const READ_TOOLS = Object.freeze([
     ['uid'],
   ),
   tool(
+    'list_attachments',
+    '列出某一次日程的附件（只读）。附件按「某一次」存放：单次事件用它的 uid，'
+      + '重复系列要指定某一次（`uid` 写 `<uid>::<毫秒>` 或单独传 `recurrenceId`）；'
+      + '系列主记录本身没有附件。返回的 `storage` 有三种：`app`（应用内）与 `library`'
+      + '（NAS 附件库）共用同一套实例限额（默认每个日程 40 MB、单文件 20 MB），'
+      + '`limits` 回真实值与已用量；`linked`（关联文件夹）固定只读：只给总数与类型，'
+      + '不给文件名列表。事件不可见、不在时间窗口内或不存在时返回同一个「未找到」。',
+    {
+      uid: { type: 'string', description: '事件 UID；重复系列的某一次写成 `<uid>::<毫秒>`' },
+      recurrenceId: {
+        type: 'number',
+        description: '重复系列某一次的原槽位毫秒（list_events 返回的 recurrenceId），可省略',
+      },
+      calendarId: { type: 'string', description: '指定日历 id 可避免同名 UID 歧义，可省略' },
+    },
+    ['uid'],
+  ),
+  tool(
+    'get_attachment',
+    '取单个附件（只读）。图片会同时给 MCP `image` 内容块（可直接显示）与一个分享链接；'
+      + '不支持图片的客户端打开链接即可查看或另存。PDF / 文本 ≤256 KB 附 base64，超过只给链接。'
+      + '单条上限 5 MB（大于此值返回 attachment_too_large_for_mcp）；NAS 附件库里的视频只回元数据与流式链接。'
+      + '关联文件夹（`storage: "linked"`）为只读时只回元数据与链接，不读文件字节。'
+      + '先用 `list_attachments` 取附件 id。事件不可见、不在时间窗口内或附件不存在时返回同一个「未找到」。',
+    {
+      id: { type: 'string', description: '附件 id（list_attachments 返回的 id）' },
+      uid: { type: 'string', description: '事件 UID，可省略（给了就核对是否同一事件）' },
+      recurrenceId: { type: 'number', description: '重复系列某一次的原槽位毫秒，可省略' },
+      calendarId: { type: 'string', description: '指定日历 id 可避免同名 UID 歧义，可省略' },
+      attachmentId: { type: 'string', description: '与 uid 一起用时指定附件 id（等同 id）' },
+    },
+    [],
+  ),
+  tool(
+    'create_attachment_upload_link',
+    '为一个日程（或重复系列的某一次）签发附件上传链接：把 `url` 发给用户，'
+      + '他用自己的手机浏览器打开就能选照片上传，附件直接落到这一次日程上。'
+      + '链接默认 30 分钟、最多 10 个文件；应用内与 NAS 附件库共用实例限额，'
+      + 'maxBytes 取「剩余额度」与「单文件上限 + 1 MB」的较小值。'
+      + '凭据需要写权限，且这枚凭据的「附件」开关必须是开启状态。'
+      + '关联文件夹固定只读，一律返回 folder_read_only；只签发链接，不传文件字节。',
+    {
+      calendarId: { type: 'string', description: '目标日历 id，可省略（按 uid 查）' },
+      uid: { type: 'string', description: '事件 UID；重复系列的某一次写成 `<uid>::<毫秒>`' },
+      recurrenceId: {
+        type: 'number',
+        description: '重复系列某一次的原槽位毫秒（list_events 返回的 recurrenceId），可省略',
+      },
+      expiresInMinutes: { type: 'number', description: '链接有效期（分钟），默认 30，最多 1440' },
+      maxFiles: { type: 'number', description: '最多收几个文件，默认 10，最多 10' },
+    },
+    ['uid'],
+  ),
+  tool(
     'list_tasks',
     '列出任务（VTODO 日历里的条目，字段按凭据的字段掩码裁剪）。'
       + '有到期日的任务只返回落在时间范围内（默认凭据时间窗）的那些；**没有到期日的任务始终返回**。'
@@ -567,10 +655,17 @@ const WRITE_TOOLS = Object.freeze([
     'delete_event',
     '请求删除事件。该凭据的「删除」设为提案模式（默认）时只生成待确认提案；'
       + '设为回收站模式时立即删除并进入回收站，保留期内可在日历界面恢复。'
+      + '事件有附件时，第一次调用返回 attachment_confirm_required（不删），'
+      + '把 `attachments.count` 与 `attachments.storage` 告诉用户，等用户确认后'
+      + '带 `confirmAttachments: true` 再调一次。'
       + '提案模式下、且客户端没有弹窗能力时，返回里会直接带一次性审批链接 approvalUrl：有就直接给用户，不必再调 decide_proposals。',
     {
       uid: { type: 'string', description: '要删除的事件 UID（必填）' },
       calendarId: { type: 'string', description: '指定日历 id，可省略' },
+      confirmAttachments: {
+        type: 'boolean',
+        description: '用户已确认连同附件一起删除时传 true；附件按各存储位置的规则处理（应用内/库进回收站，关联文件夹只删 FnCal 上传的文件）',
+      },
       note: { type: 'string', description: '给用户的提案说明' },
     },
     ['uid'],
@@ -627,10 +722,17 @@ const WRITE_TOOLS = Object.freeze([
   tool(
     'delete_task',
     '请求删除任务。该凭据的「删除」设为提案模式（默认）时只生成待确认提案；'
-      + '设为回收站模式时立即删除并进入回收站，保留期内可在日历界面恢复。',
+      + '设为回收站模式时立即删除并进入回收站，保留期内可在日历界面恢复。'
+      + '任务有附件时，第一次调用返回 attachment_confirm_required（不删），'
+      + '把 `attachments.count` 与 `attachments.storage` 告诉用户，等用户确认后'
+      + '带 `confirmAttachments: true` 再调一次。',
     {
       uid: { type: 'string', description: '要删除的任务 UID（必填）' },
       calendarId: { type: 'string', description: '指定任务日历 id，可省略' },
+      confirmAttachments: {
+        type: 'boolean',
+        description: '用户已确认连同附件一起删除时传 true',
+      },
       note: { type: 'string', description: '给用户的提案说明' },
     },
     ['uid'],
@@ -915,11 +1017,22 @@ export function createMcp({
   approvalReceipts = null,
   // 0.8.30（任务书 §三）：年度总结图片链接表（只存内存，由 server 建好后注入）。
   annualImages = null,
+  // 0.9.1（任务书 §三·五 C）：只读附件——存储层与分享链接表都由 server 注入。
+  attachments = null,
+  attachmentLinks = null,
+  // 0.9.1（C.3）：上传链接表（只存内存），签发 `/u/a/<令牌>` 用。
+  uploadLinks = null,
+  // 0.9.1（D）：读设置里的允许文件夹（绑定日程的附件只读，由 NAS 管理）。
+  store = null,
+  // 0.9.1（F.4B）：实例级附件限额（管理员改），执行侧只读。
+  attachmentLimits = null,
 } = {}) {
   if (!aiStore && !aiService) throw new Error('createMcp 需要 aiStore');
   const service = aiService || createAiService({ aiStore, health, now });
   const rateLimiter = limiter || createAiRateLimiter({ now });
   const serverVersion = String(version || '');
+  // 0.9.1（E）：附件库放在 NAS 文件夹时，MCP 也要读写同一套目录。
+  const nasAttachments = createNasAttachmentStore({ store, logger });
 
   function logEvent(event, detail = {}) {
     if (logger && typeof logger.event === 'function') logger.event(event, detail);
@@ -1325,6 +1438,265 @@ export function createMcp({
     }
   }
 
+  /* ------------------------------------------ 0.9.1：只读附件（任务书 §三·五 C） */
+
+  /** 附件键：`<uid>`（单次）或 `<uid>::<rid>`（系列某一次）；系列主记录不挂附件。 */
+  function attachmentKeyOf(baseUid, recurrenceId) {
+    const base = String(baseUid || '');
+    if (!base) return null;
+    if (Number.isFinite(recurrenceId) && recurrenceId > 0) return `${base}::${Math.round(recurrenceId)}`;
+    return base;
+  }
+
+  /** 解析 `<uid>::<rid>`（也接受分开传的 recurrenceId）。畸形一律 null，不抛异常。 */
+  function splitAttachmentUid(rawUid, recurrenceId) {
+    const raw = String(rawUid || '').trim();
+    if (!raw) return null;
+    let baseUid = raw;
+    let rid = Number.isFinite(recurrenceId) && recurrenceId > 0 ? Math.round(recurrenceId) : null;
+    const match = /^(.*)::(\d{1,})$/.exec(raw);
+    if (match) {
+      baseUid = match[1];
+      const parsed = Number(match[2]);
+      if (!Number.isSafeInteger(parsed) || parsed <= 0) return null;
+      rid = parsed;
+    }
+    if (!baseUid) return null;
+    return { baseUid, recurrenceId: rid };
+  }
+
+  /**
+   * 可见性判定与 `get_event` 同口径：可读日历 + 时间窗全部由 `lib/ai-service.mjs` 决定，
+   * 这里不重复实现（单次走 getEvent，系列的某一次走 listEvents 的逐次结果）。
+   * 通过时回该事件所在日历 id，不通过回 null。
+   */
+  async function resolveAttachmentTarget(ctx, { baseUid, recurrenceId, calendarId }) {
+    if (!recurrenceId) {
+      const single = await service.getEvent(ctx, baseUid, { calendarId: calendarId || '' });
+      return single ? { calendarId: single.calendarId } : null;
+    }
+    const listed = await service.listEvents(ctx, {
+      fromMs: recurrenceId,
+      toMs: recurrenceId + 1,
+      calendar: calendarId || '',
+    });
+    if (!listed) return null;
+    const row = (listed.events || [])
+      .find((entry) => entry.uid === baseUid && entry.recurrenceId === recurrenceId);
+    if (row) return { calendarId: row.calendarId || calendarId };
+    // 公历 RRULE 系列在 `list_events` 里只回主实例（没有逐次行），拿不到该次的可见性行；
+    // 这时退回主实例的可见性（可读日历 + 时间窗），附件目录本身仍要存在才算数。
+    const single = await service.getEvent(ctx, baseUid, { calendarId: calendarId || '' });
+    if (!single) return null;
+    const payload = single.event || {};
+    if (!payload.recurring) return null;
+    return { calendarId: single.calendarId };
+  }
+
+  /**
+   * 0.9.1（D 项）：这条日程是否绑定了 NAS 文件夹。
+   * 绑定后附件全部由 NAS 管理，FnCal 只列目录、只预览；返回 real path 或 null。
+   */  async function boundFolderRealOf(ctx, target, baseUid) {
+    if (!store || typeof store.getEvent !== 'function') return null;
+    const object = await runWithContext({ userId: ctx.userId }, () =>
+      store.getEvent(target.calendarId || '', `${baseUid}.ics`).catch(() => null));
+    const folder = object && object.content ? boundFolderOf(object.content) : '';
+    if (!folder) return null;
+    const settings = await runWithContext({ userId: ctx.userId }, () =>
+      store.readUserData('settings').catch(() => null));
+    try {
+      const located = await resolveInsideRoots(folder, folderRootsOf(settings));
+      return { real: located.real, folder };
+    } catch {
+      // 允许根目录改过、或 NAS 暂时不在线：仍按绑定处理，只是列不出文件。
+      return { real: null, folder };
+    }
+  }
+
+  /** 0.9.1（D）：绑定日程的附件列表（只读，文件由 NAS 管理，不给下载地址）。 */
+  async function listBoundFolderItems(bound) {
+    if (!bound || !bound.real) return { items: [], truncated: false, total: 0 };
+    const listing = await listFolderAttachments(bound.real);
+    return {
+      items: listing.items,
+      truncated: listing.truncated,
+      total: listing.total,
+    };
+  }
+
+  /**
+   * 0.9.1（任务书 §三·五 第 7 条）：删除事件前统计附件，给 `delete_event` 的二次确认用。
+   * 回 `{count, storage, message}`；没有附件或事件不可见时回 null（照常删除）。
+   */
+  async function attachmentSummaryForDelete(ctx, rawUid, args) {
+    if (!attachments || typeof attachments.listAttachments !== 'function') return null;
+    const split = splitAttachmentUid(rawUid, null);
+    if (!split) return null;
+    const calendarId = optionalString(args, 'calendarId', { max: 255 }) || '';
+    const target = await resolveAttachmentTarget(ctx, { ...split, calendarId }).catch(() => null);
+    if (!target) return null;
+    const key = attachmentKeyOf(split.baseUid, split.recurrenceId);
+    const bound = await boundFolderRealOf(ctx, target, split.baseUid).catch(() => null);
+    if (bound) {
+      const listing = await listBoundFolderItems(bound).catch(() => ({ items: [], total: 0 }));
+      const count = Number(listing.total) || listing.items.length;
+      if (!count) return null;
+      return {
+        count,
+        storage: 'linked',
+        message: `这条日程关联的 NAS 文件夹里有 ${count} 个文件。删除日程不会删除这些文件，它们仍保留在 NAS 上；再次调用并带 confirmAttachments:true 才会删除日程。`,
+      };
+    }
+    const nasStorage = await nasStorageOf(ctx).catch(() => null);
+    if (nasStorage) {
+      const day = await nasDayOf(ctx, target, split.baseUid, split.recurrenceId).catch(() => null);
+      const listed = day
+        ? await nasAttachments.listAttachments({
+          root: nasStorage.root,
+          objectKey: key,
+          date: day.date,
+          calendarId: day.calendarId,
+          calendarName: day.calendarName,
+        }).catch(() => null)
+        : null;
+      const count = listed && Array.isArray(listed.items) ? listed.items.length : 0;
+      if (!count) return null;
+      return {
+        count,
+        storage: 'library',
+        message: `这条日程有 ${count} 个附件。删除后文件移到 NAS 的 .fncal/trash，保留 24 小时；再次调用并带 confirmAttachments:true 才会删除日程。`,
+      };
+    }
+    const listed = await attachments.listAttachments({
+      userId: ctx.userId,
+      calendarId: target.calendarId,
+      key,
+    }).catch(() => null);
+    const count = listed && Array.isArray(listed.items) ? listed.items.length : 0;
+    if (!count) return null;
+    return {
+      count,
+      storage: 'app',
+      message: `这条日程有 ${count} 个附件。删除后文件进 FnCal 最近删除，保留 24 小时；再次调用并带 confirmAttachments:true 才会删除日程。`,
+    };
+  }
+
+  /** 0.9.1（E）：附件库放在 NAS 文件夹时返回 `{mode:'library',root}`；app 模式回 null。 */
+  async function nasStorageOf(ctx) {
+    if (!store || typeof store.readUserData !== 'function') return null;
+    try {
+      // 0.9.1（F.4B）：存放位置读实例设置，不再读用户 settings。
+      const settings = attachmentLimits && typeof attachmentLimits.read === 'function'
+        ? attachmentLimits.read()
+        : await runWithContext({ userId: ctx.userId }, () => store.readUserData('settings').catch(() => null));
+      const storage = await attachmentStorageOf(settings);
+      return storage.mode === 'library' ? { mode: 'library', root: storage.root } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 日历显示名（重名追加 id 前 4 位，与 REST 侧同一口径）。 */
+  async function calendarNameOf(ctx, calendarId) {
+    const ids = await runWithContext({ userId: ctx.userId }, () =>
+      store.listCalendars(ctx.userId).catch(() => []));
+    const names = new Map();
+    for (const id of ids) {
+      let name = id;
+      try {
+        const paths = store.calendarPaths(ctx.userId, id);
+        const meta = JSON.parse(await fs.readFile(paths.metaPath, 'utf8'));
+        if (meta && typeof meta.displayName === 'string' && meta.displayName.trim()) name = meta.displayName.trim();
+      } catch {
+        // 没 meta 用 id
+      }
+      names.set(id, name);
+    }
+    const counts = new Map();
+    for (const name of names.values()) counts.set(name, (counts.get(name) || 0) + 1);
+    const own = names.get(calendarId) || calendarId;
+    return counts.get(own) > 1 ? `${own}_${String(calendarId).slice(0, 4)}` : own;
+  }
+
+  /** E 的目录需要「该次开始日期 + 日历 id」（改名不迁移）。 */
+  async function nasDayOf(ctx, target, baseUid, recurrenceId) {
+    const object = await runWithContext({ userId: ctx.userId }, () =>
+      store.getEvent(target.calendarId || '', `${baseUid}.ics`).catch(() => null));
+    const content = object && object.content ? object.content : '';
+    const date = recurrenceId
+      ? occurrenceDateOf(recurrenceId, timeZoneOfIcs(content))
+      : startDateOfIcs(content);
+    return { date, calendarId: target.calendarId, calendarName: await calendarNameOf(ctx, target.calendarId) };
+  }
+
+  /** 0.9.1（C.4 / F.5）：该凭据是否开了附件权限（默认开）；判定走单点策略。 */
+  function attachmentsAllowed(ctx, action = 'list') {
+    const decision = decideAttachment({ credential: ctx && ctx.credential, action });
+    return decision.ok;
+  }
+
+  function attachmentDenied(ctx, action = 'list') {
+    const decision = decideAttachment({ credential: ctx && ctx.credential, action });
+    if (decision.ok) return null;
+    return toolResult({ ok: false, code: decision.code, message: decision.message }, { isError: true });
+  }
+
+  function attachmentForbidden() {
+    return toolResult({
+      ok: false,
+      code: 'attachment_forbidden',
+      message: ATTACHMENT_MESSAGES.forbidden,
+    }, { isError: true });
+  }
+
+  /** 建一条分享链接（30 分钟、只存内存）；没有链接表时返回 null，回包只给 base64。 */
+  function attachmentShareFor(ctx, { bytes, name, mime }) {
+    if (!attachmentLinks || typeof attachmentLinks.put !== 'function') return null;
+    try {
+      const created = attachmentLinks.put({ bytes, name, mime });
+      const base = String((ctx && ctx.origin) || '').replace(/\/+$/, '');
+      logEvent('attachment-share-created', {
+        id: String(created.id).slice(0, 8),
+        bytes: created.bytes,
+        mime: String(mime || ''),
+      });
+      return {
+        url: `${base}/i/a/${created.token}`,
+        expiresAt: new Date(created.expiresAt).toISOString(),
+        expiresIn: created.expiresIn,
+      };
+    } catch (err) {
+      logEvent('attachment-share-failed', { message: String((err && err.message) || err) });
+      return null;
+    }
+  }
+
+  /**
+   * 建一条「从磁盘流式取」的分享链接（视频这类大文件，不读进内存）。
+   * 与 `attachmentShareFor` 同一套令牌规则；源文件被移走时页面会 410/断开。
+   */
+  function attachmentShareFileFor(ctx, { filePath, size, name, mime }) {
+    if (!attachmentLinks || typeof attachmentLinks.putFile !== 'function') return null;
+    try {
+      const created = attachmentLinks.putFile({ filePath, size, name, mime });
+      const base = String((ctx && ctx.origin) || '').replace(/\/+$/, '');
+      logEvent('attachment-share-created', {
+        id: String(created.id).slice(0, 8),
+        bytes: created.bytes,
+        mime: String(mime || ''),
+        stream: true,
+      });
+      return {
+        url: `${base}/i/a/${created.token}`,
+        expiresAt: new Date(created.expiresAt).toISOString(),
+        expiresIn: created.expiresIn,
+      };
+    } catch (err) {
+      logEvent('attachment-share-failed', { message: String((err && err.message) || err) });
+      return null;
+    }
+  }
+
   /* ---------------------------------------------------------------- 工具集 */
 
   /** 按凭据实时算工具集：写工具**只在**至少有一个可写日历时注册（不是调用了才报错）。 */
@@ -1576,6 +1948,278 @@ export function createMcp({
         if (!result) return toolFailure(MISSING_EVENT_TEXT);
         return toolResult(result);
       }
+      case 'list_attachments': {
+        if (!attachmentsAllowed(ctx)) return attachmentForbidden();
+        if (!attachments || typeof attachments.listAttachments !== 'function') {
+          return toolFailure('附件读取未启用。');
+        }
+        const split = splitAttachmentUid(args.uid, args.recurrenceId);
+        if (!split) return toolFailure(MISSING_ATTACHMENT_TEXT);
+        const calendarId = optionalString(args, 'calendarId', { max: 255 }) || '';
+        const target = await resolveAttachmentTarget(ctx, { ...split, calendarId });
+        if (!target) return toolFailure(MISSING_EVENT_TEXT);
+        const key = attachmentKeyOf(split.baseUid, split.recurrenceId);
+        // 0.9.1（D）：关联文件夹（只读）。MCP 只回摘要：总数 + 分类计数，
+        // **不回文件名列表**（用户 2026-11-20 裁定，避免把 NAS 目录清单带进对话）。
+        const bound = await boundFolderRealOf(ctx, target, split.baseUid);
+        if (bound) {
+          // 0.9.1（D.2B）：读写模式下 FnCal 管的文件在索引里，可以列文件名给 AI；
+          // 只读模式仍只回摘要（用户裁定不把 NAS 目录清单带进对话）。
+          const listing = await listBoundFolderItems(bound).catch(() => ({ items: [], truncated: false, total: 0 }));
+          const kinds = {};
+          for (const item of listing.items) {
+            const kind = item.kind || 'other';
+            kinds[kind] = (kinds[kind] || 0) + 1;
+          }
+          return toolResult({
+            ok: true,
+            uid: key,
+            calendarId: target.calendarId,
+            storage: 'linked',
+            managedBy: 'nas',
+            readOnly: true,
+            folder: bound.folder,
+            total: Number(listing.total) || listing.items.length,
+            truncated: Boolean(listing.truncated),
+            kinds,
+            totalBytes: listing.items.reduce((sum, item) => sum + (item.bytes || 0), 0),
+            limits: { maxBytes: null },
+            note: FOLDER_NOTE_LIST,
+            message: FOLDER_NOTE_LIST,
+          });
+        }
+        // 0.9.1（E）：附件库放在 NAS 文件夹——列共享目录里这条日程名下的文件。
+        const nasStorage = await nasStorageOf(ctx);
+        if (nasStorage) {
+          const day = await nasDayOf(ctx, target, split.baseUid, split.recurrenceId);
+          const nasListed = await nasAttachments.listAttachments({
+            root: nasStorage.root,
+            objectKey: key,
+            date: day.date,
+            calendarId: day.calendarId,
+            calendarName: day.calendarName,
+          }).catch(() => null);
+          if (!nasListed) return toolFailure('附件存放文件夹不可用。');
+          return toolResult({
+            ok: true,
+            uid: key,
+            calendarId: target.calendarId,
+            storage: 'library',
+            folder: nasListed.dir,
+            items: (nasListed.items || []).map((item) => ({
+              id: item.id,
+              name: item.name,
+              mime: item.mime,
+              bytes: item.bytes,
+              createdAt: item.createdAt,
+            })),
+            totalBytes: nasListed.totalBytes || 0,
+            // 0.9.2：NAS 库与应用内共用实例限额，回真实值 + 已用。
+            limits: (() => {
+              const cfg = libraryLimitsOf(attachmentLimits ? attachmentLimits.read() : null);
+              return {
+                maxFileBytes: cfg.effectiveFileBytes,
+                maxEventBytes: cfg.maxEventBytes,
+                freeReserveBytes: cfg.freeReserve,
+                used: nasListed.totalBytes || 0,
+              };
+            })(),
+            note: NAS_NOTE,
+          });
+        }
+        const listed = await attachments.listAttachments({
+          userId: ctx.userId,
+          calendarId: target.calendarId,
+          key,
+        });
+        const items = (listed.items || []).map((item) => ({
+          id: item.id,
+          name: item.name,
+          mime: item.mime,
+          bytes: item.bytes,
+          createdAt: item.createdAt,
+        }));
+        return toolResult({
+          ok: true,
+          uid: key,
+          calendarId: target.calendarId,
+          items,
+          totalBytes: listed.totalBytes || 0,
+          // 0.9.1 F.4：应用内额度来自设置，回真实值 + 已用，客户端能显示剩余。
+          limits: listed.limits,
+          used: listed.used != null ? listed.used : listed.totalBytes || 0,
+        });
+      }
+      case 'get_attachment': {
+        if (!attachmentsAllowed(ctx)) return attachmentForbidden();
+        if (!attachments || typeof attachments.readAttachment !== 'function') {
+          return toolFailure('附件读取未启用。');
+        }
+        const wantedId = optionalString(args, 'attachmentId', { max: 64 })
+          || optionalString(args, 'id', { max: 64 })
+          || '';
+        if (!wantedId) return toolFailure('缺少附件 id：请先用 list_attachments 取 id。');
+        // 0.9.1（D）：绑定 NAS 文件夹的日程——附件只读，按 id 从目录里找文件。
+        const askUid = typeof args.uid === 'string' ? args.uid.trim() : '';
+        if (askUid) {
+          const asked = splitAttachmentUid(askUid, args.recurrenceId);
+          if (!asked) return toolFailure(MISSING_ATTACHMENT_TEXT);
+          const askCalendar = optionalString(args, 'calendarId', { max: 255 }) || '';
+          const askTarget = await resolveAttachmentTarget(ctx, { ...asked, calendarId: askCalendar });
+          if (!askTarget) return toolFailure(MISSING_ATTACHMENT_TEXT);
+          const bound = await boundFolderRealOf(ctx, askTarget, asked.baseUid);
+          if (bound) {
+            // 0.9.1（D.2B）：读写模式下 FnCal 管的文件在索引里，按 id 直接定位。
+            const listing = await listBoundFolderItems(bound).catch(() => ({ items: [] }));
+            const entry = (listing.items || []).find((item) => item.id === wantedId);
+            if (!entry) return toolFailure(MISSING_ATTACHMENT_TEXT);
+            const found = await readFolderAttachment(bound.real, wantedId).catch(() => null);
+            const payload = {
+              ok: true,
+              id: entry.id,
+              name: entry.name,
+              mime: entry.mime,
+              bytes: entry.bytes,
+              createdAt: entry.createdAt,
+              storage: 'linked',
+              managedBy: 'nas',
+              readOnly: true,
+              note: FOLDER_NOTE_LIST,
+            };
+            const content = [{ type: 'text', text: JSON.stringify(payload) }];
+            if (!found) return { content };
+            // 5 MB 以内才读进内存做分享链接与图片块；超过只给元数据（视频同理，不整段进内存）。
+            if (entry.bytes <= MCP_ATTACHMENT_MAX_BYTES) {
+              const bytesText = await fs.readFile(found.filePath).catch(() => null);
+              if (bytesText) {
+                const share = attachmentShareFor(ctx, { bytes: bytesText, name: entry.name, mime: entry.mime });
+                if (share) {
+                  payload.url = share.url;
+                  payload.expiresAt = share.expiresAt;
+                }
+                const image = /^image\/(jpeg|png|webp|gif|avif)$/i.test(entry.mime);
+                if (!image && entry.bytes <= MCP_ATTACHMENT_TEXT_BYTES) {
+                  payload.dataBase64 = bytesText.toString('base64');
+                }
+                content[0] = { type: 'text', text: JSON.stringify(payload) };
+                if (image) content.push({ type: 'image', data: bytesText.toString('base64'), mimeType: entry.mime });
+              }
+            }
+            return { content };
+          }
+        }
+        // 0.9.1（E）：附件库放在 NAS 文件夹——从共享目录里按 id 找文件。
+        const nasStorage = await nasStorageOf(ctx);
+        if (nasStorage) {
+          const nasFound = await nasAttachments.readAttachment({
+            root: nasStorage.root,
+            userId: ctx.userId,
+            attachmentId: wantedId,
+          }).catch(() => null);
+          if (nasFound) {
+            const payload = {
+              ok: true,
+              id: nasFound.item.id,
+              name: nasFound.item.name,
+              mime: nasFound.item.mime,
+              bytes: nasFound.item.bytes,
+              createdAt: nasFound.item.createdAt,
+              storage: 'library',
+              readOnly: false,
+              note: NAS_NOTE,
+            };
+            const content = [{ type: 'text', text: JSON.stringify(payload) }];
+            const image = /^image\/(jpeg|png|webp|gif|avif)$/i.test(nasFound.item.mime);
+            const video = /^video\//i.test(nasFound.item.mime);
+            // 视频（以及任何超过 5 MB 的文件）只给流式分享链接，不整段读进内存。
+            if (video || nasFound.item.bytes > MCP_ATTACHMENT_MAX_BYTES) {
+              const fileShare = attachmentShareFileFor(ctx, {
+                filePath: nasFound.filePath,
+                size: nasFound.item.bytes,
+                name: nasFound.item.name,
+                mime: nasFound.item.mime,
+              });
+              if (fileShare) {
+                payload.url = fileShare.url;
+                payload.expiresAt = fileShare.expiresAt;
+                content[0] = { type: 'text', text: JSON.stringify(payload) };
+              }
+            }
+            // 5 MB 以内才把字节读进内存做分享链接与图片块；视频只给链接，不整段进内存。
+            if (!video && nasFound.item.bytes <= MCP_ATTACHMENT_MAX_BYTES) {
+              const bytesText = await fs.readFile(nasFound.filePath).catch(() => null);
+              if (bytesText) {
+                const share = attachmentShareFor(ctx, {
+                  bytes: bytesText,
+                  name: nasFound.item.name,
+                  mime: nasFound.item.mime,
+                });
+                if (share) {
+                  payload.url = share.url;
+                  payload.expiresAt = share.expiresAt;
+                }
+                if (!image && nasFound.item.bytes <= MCP_ATTACHMENT_TEXT_BYTES) {
+                  payload.dataBase64 = bytesText.toString('base64');
+                }
+                content[0] = { type: 'text', text: JSON.stringify(payload) };
+                if (image) content.push({ type: 'image', data: bytesText.toString('base64'), mimeType: nasFound.item.mime });
+              }
+            }
+            return { content };
+          }
+        }
+        const located = await attachments.locateAttachment({ userId: ctx.userId, attachmentId: wantedId });        if (!located) return toolFailure(MISSING_ATTACHMENT_TEXT);
+        const split = splitAttachmentUid(located.objectKey, null);
+        if (!split) return toolFailure(MISSING_ATTACHMENT_TEXT);
+        const target = await resolveAttachmentTarget(ctx, {
+          ...split,
+          calendarId: located.calendarId,
+        });
+        if (!target) return toolFailure(MISSING_ATTACHMENT_TEXT);
+        // 显式给了 uid 就核对「这个附件确实属于该事件」，不匹配时与不存在同一个说法。
+        const wantedUid = typeof args.uid === 'string' ? args.uid.trim() : '';
+        if (wantedUid) {
+          const asked = splitAttachmentUid(wantedUid, args.recurrenceId);
+          if (!asked) return toolFailure(MISSING_ATTACHMENT_TEXT);
+          if (attachmentKeyOf(asked.baseUid, asked.recurrenceId) !== located.objectKey) {
+            return toolFailure(MISSING_ATTACHMENT_TEXT);
+          }
+        }
+        const read = await attachments.readAttachment({ userId: ctx.userId, attachmentId: wantedId });
+        if (!read) return toolFailure(MISSING_ATTACHMENT_TEXT);
+        const item = read.item;
+        if (item.bytes > MCP_ATTACHMENT_MAX_BYTES) {
+          return toolResult({
+            ok: false,
+            code: 'attachment_too_large_for_mcp',
+            name: item.name,
+            mime: item.mime,
+            bytes: item.bytes,
+            message: '附件超过 5 MB，请到网页下载或打开链接。',
+          }, { isError: true });
+        }
+        const share = attachmentShareFor(ctx, { bytes: read.data, name: item.name, mime: item.mime });
+        const payload = {
+          ok: true,
+          id: item.id,
+          name: item.name,
+          mime: item.mime,
+          bytes: item.bytes,
+          createdAt: item.createdAt,
+        };
+        if (share) {
+          payload.url = share.url;
+          payload.expiresAt = share.expiresAt;
+        }
+        const image = /^image\/(jpeg|png|webp|gif)$/i.test(item.mime);
+        if (!image && item.bytes <= MCP_ATTACHMENT_TEXT_BYTES) {
+          payload.dataBase64 = read.data.toString('base64');
+        }
+        // 文本块放第一（客户端按它解析 JSON，回执也搭在第一块上），图片块追加在后。
+        const content = [{ type: 'text', text: JSON.stringify(payload) }];
+        if (image) content.push({ type: 'image', data: read.data.toString('base64'), mimeType: item.mime });
+        return { content };
+      }
       case 'find_free_slots': {
         const minMinutesRaw = args.minMinutes === undefined || args.minMinutes === null ? FREE_SLOT_MIN_MINUTES : Number(args.minMinutes);
         if (!Number.isFinite(minMinutesRaw) || minMinutesRaw < 1 || minMinutesRaw > 1440) {
@@ -1649,6 +2293,18 @@ export function createMcp({
       }
       case 'delete_event': {
         const uid = requireString(args, 'uid', { max: 255 });
+        // 0.9.1（任务书 §三·五 第 7 条）：带附件的日程第一次只回确认，不执行删除。
+        if (args.confirmAttachments !== true) {
+          const pending = await attachmentSummaryForDelete(ctx, uid, args);
+          if (pending && pending.count > 0) {
+            return toolResult({
+              ok: false,
+              code: 'attachment_confirm_required',
+              attachments: pending,
+              message: pending.message,
+            }, { isError: true });
+          }
+        }
         const result = await service.deleteEvent(ctx, uid, {
           calendarId: optionalString(args, 'calendarId', { max: 255 }) || '',
           note: optionalString(args, 'note', { max: 8000 }) || 'AI 请求删除',
@@ -1657,6 +2313,89 @@ export function createMcp({
         return toolResult(writePayload(result, { ctx, tool: name }));
       }
       /* -------- 0.8.37：任务（VTODO 日历） -------- */
+      case 'create_attachment_upload_link': {
+        if (!attachmentsAllowed(ctx)) return attachmentForbidden();
+        if (!uploadLinks || typeof uploadLinks.put !== 'function') return toolFailure('上传链接未启用。');
+        const split = splitAttachmentUid(args.uid, args.recurrenceId);
+        if (!split) return toolFailure(MISSING_EVENT_TEXT);
+        const calendarId = optionalString(args, 'calendarId', { max: 255 }) || '';
+        const target = await resolveAttachmentTarget(ctx, { ...split, calendarId });
+        if (!target) return toolFailure(MISSING_EVENT_TEXT);
+        // 0.9.2：关联文件夹固定只读——文件只能在 NAS 上放，上传链接一律拒绝。
+        const bound = await boundFolderRealOf(ctx, target, split.baseUid);
+        if (bound) {
+          return toolResult({
+            ok: false,
+            code: 'folder_read_only',
+            folder: bound.folder,
+            note: FOLDER_NOTE_LIST,
+            message: FOLDER_NOTE_LIST,
+          }, { isError: true });
+        }
+        const writable = await service.hasWritableCalendar(ctx);
+        if (!writable) {
+          return toolResult({
+            ok: false,
+            code: 'attachment_link_forbidden',
+            message: '这枚凭据没有写权限，无法签发上传链接。',
+          }, { isError: true });
+        }
+        const key = attachmentKeyOf(split.baseUid, split.recurrenceId);
+        const minutes = Number(args.expiresInMinutes);
+        const files = Number(args.maxFiles);
+        // 0.9.2 用户裁定：NAS 附件库与应用内共用实例限额；链接默认额度 = 单文件上限 + 1 MB。
+        const nasStorage = await nasStorageOf(ctx);
+        const settingsNow = attachmentLimits ? attachmentLimits.read() : null;
+        const cfg = nasStorage ? libraryLimitsOf(settingsNow) : appLimitsOf(settingsNow);
+        let usedBytes = 0;
+        if (nasStorage) {
+          const day = await nasDayOf(ctx, target, split.baseUid, split.recurrenceId);
+          const nasListed = await nasAttachments.listAttachments({
+            root: nasStorage.root,
+            objectKey: key,
+            date: day.date,
+            calendarId: day.calendarId,
+            calendarName: day.calendarName,
+          }).catch(() => null);
+          usedBytes = nasListed ? Number(nasListed.totalBytes) || 0 : 0;
+        } else {
+          const listed = await attachments.listAttachments({
+            userId: ctx.userId,
+            calendarId: target.calendarId,
+            key,
+          }).catch(() => null);
+          usedBytes = listed ? Number(listed.totalBytes) || 0 : 0;
+        }
+        const remaining = Math.max(0, cfg.maxEventBytes - usedBytes);
+        const linkMaxBytes = Math.min(remaining, uploadLinkDefaultBytesFor(nasStorage ? 'library' : 'app', settingsNow));
+        const created = uploadLinks.put({
+          userId: ctx.userId,
+          calendarId: target.calendarId,
+          objectKey: key,
+          credentialId: ctx.credential && ctx.credential.id ? ctx.credential.id : '',
+          maxFiles: Number.isFinite(files) ? files : 10,
+          expiresInMinutes: Number.isFinite(minutes) ? minutes : 30,
+          maxBytes: linkMaxBytes,
+        });
+        const base = String((ctx && ctx.origin) || '').replace(/\/+$/, '');
+        logEvent('upload-link-created', { id: String(created.id).slice(0, 8), objectKey: key });
+        // 用户 2026-11-20：凭据没设 PIN 时，链接只凭令牌就能上传——提醒一句，但不阻止签发。
+        const pinSet = Boolean(ctx.credential && (ctx.credential.pinHash || ctx.credential.pinSet));
+        return toolResult({
+          ok: true,
+          url: `${base}/u/a/${created.token}`,
+          expiresAt: created.expiresAt,
+          expiresIn: created.expiresIn,
+          objectKey: key,
+          maxFiles: created.maxFiles,
+          maxBytes: created.maxBytes,
+          pinSet,
+          message: pinSet
+            ? '把这条链接发给用户，他打开后先输入 PIN，再用手机浏览器选文件上传。'
+            : '把这条链接发给用户，他打开后直接用手机浏览器选文件上传。建议先给该凭据设置 PIN：'
+              + '没有 PIN 时，拿到链接的人就能往这条日程里传文件。',
+        });
+      }
       case 'list_tasks': {
         const fromMs = optionalIso(args, 'from');
         const toMs = optionalIso(args, 'to');
@@ -1724,6 +2463,18 @@ export function createMcp({
       }
       case 'delete_task': {
         const uid = requireString(args, 'uid', { max: 255 });
+        // 0.9.2：任务也能挂附件，删除前同样先确认（口径与 delete_event 一致）。
+        if (args.confirmAttachments !== true) {
+          const pending = await attachmentSummaryForDelete(ctx, uid, args);
+          if (pending && pending.count > 0) {
+            return toolResult({
+              ok: false,
+              code: 'attachment_confirm_required',
+              attachments: pending,
+              message: pending.message,
+            }, { isError: true });
+          }
+        }
         const result = await service.deleteTask(ctx, uid, {
           calendarId: optionalString(args, 'calendarId', { max: 255 }) || '',
           note: optionalString(args, 'note', { max: 8000 }) || 'AI 请求删除',

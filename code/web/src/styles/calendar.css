@@ -1809,19 +1809,26 @@ label,
   width: 100%;
   min-width: 0;
 }
-/* 0.2.3 B2：窄屏页签触控命中 >=44px（换行布局，不再横滚）。 */
+/* 0.2.3 B2：窄屏页签触控命中 >=44px。
+   0.9.1（F.4C，用户 2026-11-20）：5 枚页签（一般 / 高级 / 标签 / CalDAV / AI）在 390 宽
+   等分会把「CalDAV」挤爆，改成不换行 + 横向滚动；选中项由 selectTab 滚进可视区。 */
 @media (max-width: 720px) {
-  /* §17.1：窄屏三页签等分（flex:1 1 0 + min-width:0），文字完整不裁、不横向滚动。 */
   .settings__tabs {
     display: flex;
     flex-wrap: nowrap;
     width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .settings__tabs::-webkit-scrollbar {
+    display: none;
   }
   .settings__tabs button {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 0 0 auto;
     min-height: 44px;
-    padding-inline: var(--sp-2);
+    padding-inline: var(--sp-3);
     text-align: center;
     justify-content: center;
   }
@@ -2558,6 +2565,441 @@ label,
   color: var(--text-2);
 }
 
+/* ---- 0.9.0 附件（挂某一次日程）--------------------------------------- */
+/* 编辑器：添加按钮 + 文件名/大小/删除的列表 + 配额与说明。
+   字号一律用 token；文件名过长省略，不留横向溢出。 */
+.attach__main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  min-width: 0;
+  width: 100%;
+}
+.attach__add {
+  height: 44px;
+  padding: 0 var(--sp-4);
+  font-size: var(--fs-sm);
+}
+.attach__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.attach__item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding: 4px 6px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.attach__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+.attach__name {
+  display: block;
+  flex: 1 1 0%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.attach__size {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.attach__remove {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  color: var(--danger-ink);
+}
+@media (hover: hover) and (pointer: fine) {
+  .attach__remove:hover {
+    background: var(--danger-soft);
+  }
+}
+/* 0.9.2：设置 → 高级 → 备份。 */
+.backup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+  width: 100%;
+}
+.backup__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--line);
+}
+.backup__title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.backup__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.backup__label {
+  flex: 0 1 auto;
+  min-width: 96px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.backup__row .input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.backup__check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 44px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  cursor: pointer;
+}
+.backup__check input {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex: none;
+}
+.backup__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+@media (max-width: 480px) {
+  .backup__row {
+    align-items: stretch;
+  }
+  .backup__label {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .backup__row .input {
+    flex: 1 1 100%;
+  }
+}
+.attach__progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+}
+.attach__bar {
+  position: relative;
+  flex: 1 1 120px;
+  min-width: 80px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.attach__bar > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+.attach__progress-text {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.attach__crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 32px;
+}
+.attach__crumb-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.attach__dir {
+  justify-content: flex-start;
+  text-align: left;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attach__cancel {
+  flex: none;
+  height: 36px;
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+.attach__hint,
+.attach__quota,
+.attach__note,
+.attach__series {
+  margin: 0;
+  max-width: 100%;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.attach__series {
+  margin-top: calc(-1 * var(--sp-1));
+}
+
+/* 详情卡：缩略图条（最多 6 张）+ 文件行。 */
+.view__attach {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.view__attach-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.view__attach-thumb {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.view__attach-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.view__attach-more {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+.view__attach-file {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: start;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .view__attach-file:hover {
+    background: var(--surface-2);
+  }
+}
+.view__attach-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+.view__attach-name {
+  display: block;
+  flex: 1 1 0%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.view__attach-size {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* 预览层：全屏遮罩，390 宽即整屏；关闭按钮在右上，箭头只在多图时出现。 */
+.attach-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  flex-direction: column;
+  background: rgba(16, 16, 18, 0.86);
+}
+.attach-viewer__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  color: #fff;
+}
+.attach-viewer__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.attach-viewer__meta {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: rgba(255, 255, 255, 0.86);
+  font-variant-numeric: tabular-nums;
+}
+.attach-viewer__download {
+  flex: none;
+  height: 44px;
+  color: #fff;
+  background: #3a3d46;
+  border-color: #5b5f6b;
+}
+@media (hover: hover) and (pointer: fine) {
+  .attach-viewer__download:hover {
+    background: #4a4e58;
+    border-color: #737886;
+  }
+}
+.attach-viewer__close {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  color: #fff;
+  background: #3a3d46;
+  border: 1px solid #5b5f6b;
+}
+@media (hover: hover) and (pointer: fine) {
+  .attach-viewer__close:hover {
+    background: #4a4e58;
+  }
+}
+.attach-viewer__stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-3) var(--sp-4) var(--sp-5);
+}
+.attach-viewer__image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.attach-viewer__video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  border-radius: var(--r-md);
+}
+.attach-viewer__frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: var(--r-md);
+  background: #fff;
+}
+.attach-viewer__text {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: var(--sp-3);
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+.attach-viewer__hint {
+  position: absolute;
+  inset-inline: var(--sp-4);
+  bottom: var(--sp-2);
+  margin: 0;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: var(--fs-sm);
+  text-align: center;
+}
+.attach-viewer__nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #5b5f6b;
+  background: #3a3d46;
+  color: #fff;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .attach-viewer__nav:hover {
+    background: #4a4e58;
+  }
+}
+.attach-viewer__nav--prev {
+  left: var(--sp-3);
+}
+.attach-viewer__nav--next {
+  right: var(--sp-3);
+}
+@media (max-width: 520px) {
+  .attach-viewer__bar {
+    padding: var(--sp-2) var(--sp-3);
+  }
+  .attach-viewer__stage {
+    padding: var(--sp-2) var(--sp-2) var(--sp-5);
+  }
+  .attach-viewer__nav--prev {
+    left: var(--sp-1);
+  }
+  .attach-viewer__nav--next {
+    right: var(--sp-1);
+  }
+}
+
 /* =============================================================================
    0.3.0（P4）：设置 → 「AI」页签
    设计侧真源：design/M8-AI接入设置页-规范.md（§8 类名与变量）。
@@ -2647,6 +3089,12 @@ label,
 .ai-mcp-json:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+/* 0.8.43：技能配置 Prompt 含长 URL，必须换行，不得横向滚动、不得撑宽设置弹窗。 */
+.ai-skill-prompt {
+  max-height: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 /* 0.3.2：「未应用」提示，只在服务总开关有暂存值时出现。 */
 .ai-staged {
@@ -3543,6 +3991,7 @@ label,
 .ai-trash__head {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: var(--sp-2);
   min-height: 32px;
 }
@@ -3556,8 +4005,21 @@ label,
 .ai-trash__count {
   flex: 0 0 auto;
 }
-.ai-trash__fold {
+.ai-trash__clear {
+  /* 0.8.43 第三项：危险文字色、透明底，与「收起」同高（.btn 36px）；靠 auto 外边距把两键推到右侧。 */
   margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--danger-ink);
+}
+@media (hover: hover) and (pointer: fine) {
+.ai-trash__clear:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger-ink);
+}
+}
+.ai-trash__fold {
+  /* 0.8.43：右对齐交给 .ai-trash__clear 的 auto 外边距，两键间隔由 .ai-trash__head 的 gap（--sp-2=8px）给。 */
+  margin-left: 0;
   flex: 0 0 auto;
 }
 .ai-trash__list {
@@ -4477,4 +4939,200 @@ label,
   height: 44px;
   transform: translate(-50%, -50%);
   border-radius: var(--r-sm);
+}
+
+
+
+/* 0.9.1（D/E）：编辑器里的文件夹行与设置页的附件存放位置。 */
+.folder-field__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+}
+.folder-field__row .input {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+.folder-field__mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.folder-field__mode[hidden] {
+  display: none;
+}
+.folder-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+/* check_design 按 input 自身的盒子量点击区；13px 的原生圆点会被判太小，
+   把盒子放到 24px（label 仍是 44px 高的整行可点），观感与命中区一起够用。 */
+.folder-mode input {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  flex: none;
+}
+.settings__stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+/* 0.9.1（F.4C）：普通用户在高级页只能看，原生 disabled 的淡化不够明显，
+   四行统一降到 .55 并把光标改成默认，避免看起来「还能点」。 */
+.settings__page[aria-labelledby='settings-tab-advanced'] .input:disabled,
+.settings__page[aria-labelledby='settings-tab-advanced'] .segmented button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.settings__page[aria-labelledby='settings-tab-advanced'] .switch:has(input:disabled) {
+  opacity: 0.55;
+  cursor: default;
+}
+.attach__storage {
+  color: var(--text-2);
+}
+.folder-browser {
+  position: fixed;
+  inset: 0;
+  z-index: 160;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  width: min(640px, 100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: var(--sp-4);
+  overflow: hidden;
+  background: var(--surface);
+  border-radius: var(--r-lg);
+  box-shadow: 0 0 0 100vmax var(--overlay-scrim), var(--shadow-lg);
+  outline: none;
+}
+.folder-browser__status[data-tone='ok'] {
+  color: var(--text-2);
+}
+.folder-browser__status[data-tone='danger'] {
+  color: var(--danger-ink);
+}
+.folder-browser__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(52vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.folder-browser__row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .folder-browser__row:hover {
+    background: var(--surface-2);
+  }
+}
+.folder-browser__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-browser__meta {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+.folder-browser__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.folder-browser__title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 650;
+}
+.folder-browser__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+}
+.folder-browser__crumb,
+.folder-browser__status {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+.folder-browser__status:empty {
+  display: none;
+}
+.folder-browser__item {
+  display: block;
+  margin: 0;
+  padding: 0;
+}
+.folder-browser__row--dir .folder-browser__name {
+  font-weight: 600;
+}
+.folder-browser__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-3);
+}
+.folder-browser__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.folder-browser__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.folder-browser__empty {
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  margin: 0;
+  padding: 12px 8px;
+}
+@media (max-width: 390px) {
+  .folder-browser {
+    width: 100%;
+    max-width: none;
+    border-radius: 0;
+  }
 }

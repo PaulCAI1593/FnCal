@@ -103,7 +103,7 @@ function readJsonBody(req) {
   });
 }
 
-export function createApiHandler({ version, auth, kv, admin, data, calendars, tags = null, annual = null, ai = null, aiRest = null, widgetRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
+export function createApiHandler({ version, auth, kv, admin, data, calendars, attachments = null, instance = null, backup = null, uploadLinks = null, folders = null, tags = null, annual = null, ai = null, aiRest = null, widgetRest = null, health = null, reconcileStatus = null, reconcileDiagnostics = null, reconcileFixDavAccess = null, audit = null, securityApi = null, httpsStatus = null }) {
   async function handleAuth(req, res, pathnameIn) {
     const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
     // M2 §6.2 paths are `/api/v1/auth/*`; the M3.2 implementation used
@@ -436,6 +436,7 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ta
     const identityRead = pathname === '/api/v1/me' || pathname === '/api/me';
     const gated = pathname.startsWith('/api/v1/kv')
       || pathname.startsWith('/api/v1/calendars')
+      || pathname.startsWith('/api/v1/attachments')
       || pathname.startsWith('/api/v1/tags')
       || pathname.startsWith('/api/v1/tag-groups')
       || pathname.startsWith('/api/v1/ai')
@@ -564,7 +565,31 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ta
     }
     if (pathname === '/api/v1/calendars' || pathname.startsWith('/api/v1/calendars/')
 ) {
+      // 0.9.0：附件挂在日历事件下面（`/calendars/<id>/events/<uid>/attachments`），
+      // 必须在日历路由之前分流，否则 `:calendarId` 会把 `attachments` 当子路径。
+      if (attachments && pathname.includes('/events/')) {
+        return handleAttachments(req, res, url);
+      }
       return handleCalendars(req, res, url);
+    }
+    if (pathname === '/api/v1/upload-links' || pathname.startsWith('/api/v1/upload-links/')) {
+      return handleUploadLinks(req, res, url);
+    }
+    if (pathname === '/api/v1/attachments' || pathname.startsWith('/api/v1/attachments/')) {
+      return handleAttachments(req, res, url);
+    }
+    // 0.9.1（B 项）：NAS 文件夹只读浏览（会话；测试接口带 CSRF）。
+    if (folders && (pathname === '/api/v1/folders' || pathname.startsWith('/api/v1/folders/'))) {
+      return handleFolders(req, res, url);
+    }
+    // 0.9.1（F.4B）：附件限额是实例级设置，GET 任何会话、PUT 仅管理员（由子路由判）。
+    if (instance && (pathname === '/api/v1/instance' || pathname.startsWith('/api/v1/instance/'))) {
+      return instance.handle(req, res, url);
+    }
+
+    // 0.9.2：按用户的备份与恢复。
+    if (backup && pathname.startsWith('/api/v1/backup')) {
+      return backup.handle(req, res, url);
     }
     // 0.7.0：标签注册表（会话读写；写需 CSRF）。0.7.1 加分组与批量排序。
     if (pathname === '/api/v1/tags' || pathname.startsWith('/api/v1/tags/')) {
@@ -751,5 +776,60 @@ export function createApiHandler({ version, auth, kv, admin, data, calendars, ta
     }
     req.__caldavUsername = identity.account ? identity.account.username : '';
     return calendars.handle(req, res, url, { authenticated: true, csrfOk, ...identity });
+  }
+
+  /** Event attachments (0.9.0): session only, session+CSRF for writes. */
+  // 0.9.1（任务书 §三·五 C.3）：附件上传链接的字节入口。
+  // 这条路由**不看会话**：身份来自链接令牌绑定的 userId（与审批页同一口径，
+  // `/u/a/<token>` 只凭令牌 + PIN）。CSRF 用链接作用域令牌，模块内比对。
+  async function handleUploadLinks(req, res, url) {
+    if (!uploadLinks) return sendJson(res, 501, { ok: false, code: 'not_implemented' });
+    return uploadLinks.handle(req, res, url);
+  }
+
+  /** NAS 文件夹只读浏览（0.9.1 B 项）：会话鉴权；写测试带 CSRF。 */
+  async function handleFolders(req, res, url) {
+    if (!folders) return sendJson(res, 501, { ok: false, code: 'not_implemented' });
+    const identity = await auth.authenticate(req);
+    if (!identity.ok || !identity.account) {
+      return sendJson(res, 401, { ok: false, code: 'unauthorized', message: '请先登录' });
+    }
+    if (identity.via !== 'session') {
+      return sendJson(res, 403, { ok: false, code: 'session_required', message: '文件夹浏览只能在日历界面使用' });
+    }
+    const csrfOk = auth.validateCsrf(req, identity.account);
+    const context = currentContext();
+    if (context) context.userId = identity.account.id;
+    req.__caldavUsername = identity.account.username || '';
+    // csrfOk 是 folders.handle 的第 5 个位置参数，不能塞进 identity 对象。
+    return folders.handle(req, res, url, { ...identity, authenticated: true }, csrfOk);
+  }
+
+  async function handleAttachments(req, res, url) {
+    if (!attachments) return sendJson(res, 501, { ok: false, code: 'not_implemented' });
+    // 0.9.0：Bearer 就是 AI 通道（MCP / AI REST 用同一类凭据）。会话鉴权不认它，
+    // 但这里直接按「附件只能在日历界面操作」回 403，与回收站同一口径，
+    // 不让 AI 侧把 401 误读成「需要重试/换令牌」。
+    const authHeader = String((req.headers && req.headers.authorization) || '').toLowerCase();
+    if (authHeader.startsWith('bearer ')) {
+      return sendJson(res, 403, { ok: false, code: 'session_required', message: '附件只能在日历界面操作' });
+    }
+    const identity = await auth.authenticate(req);
+    if (!identity.ok || !identity.account) {
+      return sendJson(res, 401, { ok: false, code: 'unauthorized', message: '请先登录' });
+    }
+    // 附件是日历界面功能（与回收站同一口径）：AI 凭据（Bearer）一律 403，
+    // 附件字节永远不进 AI 的可读面。
+    if (identity.via !== 'session') {
+      return sendJson(res, 403, { ok: false, code: 'session_required', message: '附件只能在日历界面操作' });
+    }
+    const isWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    if (isWrite && !auth.validateCsrf(req, identity.account)) {
+      return sendJson(res, 403, { ok: false, code: 'csrf', message: 'CSRF 校验失败，请刷新后重试' });
+    }
+    const context = currentContext();
+    if (context) context.userId = identity.account.id;
+    req.__caldavUsername = identity.account.username || '';
+    return attachments.handle(req, res, url, { ...identity, authenticated: true });
   }
 }

@@ -198,18 +198,20 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     await aiReady(dialog);
   }
 
-  it('四个页签：顺序是 一般 / 标签 / CalDAV / AI，文案不裁', () => {
+  it('五个页签：顺序是 一般 / 高级 / 标签 / CalDAV / AI，文案不裁', () => {
     const dialog = open();
     const buttons = [...dialog.querySelectorAll('.settings__tabs button')];
     // 0.6.2：删除「卡片」页签（卡片跟随 App 登录态，不再发令牌）。
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4；CalDAV 是第 2 枚。
     // 0.6.15（用户）：快捷键页签搬到头像菜单，设置退回三页签。
     // 0.7.0 起（用户）：新增「标签」第 2 页签，CalDAV 第 3、AI 第 4。
-    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', '标签', 'CalDAV', 'AI']);
+    // 0.9.1（F.4C，用户 2026-11-20）：附件设置搬进「高级」，插在「一般」与「标签」之间。
+    expect(buttons.map((b) => b.textContent.trim())).toEqual(['一般', '高级', '标签', 'CalDAV', 'AI']);
       // 其余页签不带 aria-label（可见文字即全称）
     expect(buttons[3].getAttribute('aria-label')).toBe(null);
     expect(buttons.map((b) => b.id)).toEqual([
       'settings-tab-general',
+      'settings-tab-advanced',
       'settings-tab-tags',
       'settings-tab-account',
       'settings-tab-ai',
@@ -755,21 +757,23 @@ describe('0.3.0 P4 · 设置 →「AI」页签', () => {
     expect(hasKey('settings.ai.editor.name')).toBe(true);
   });
 
-  it('窄屏：四个页签仍单行等分不横滚，≤400px 才把内边距收到 6px', () => {
+  it('窄屏：五个页签单行不换行、溢出横向滚动；≤400px 才把内边距收到 6px', () => {
     const css = readSrc('../src/styles/calendar.css');
-    // ≤720px 的等分规则不能被改成换行/横滚（回归 D9/E18 的既有口径）
+    // 0.9.1（F.4C，用户 2026-11-20）：5 枚页签在 390 宽等分会把「CalDAV」挤爆，
+    // 窄屏改为「不换行 + 横向滚动」，不再等分（旧口径 flex:1 1 0 已撤）。
     const start = css.indexOf('/* 0.2.3 B2：窄屏页签触控命中 >=44px');
     expect(start).toBeGreaterThan(0);
-    const block = css.slice(start, start + 900);
+    const block = css.slice(start, start + 1200);
     expect(block).toContain('flex-wrap: nowrap');
-    expect(block).toContain('flex: 1 1 0');
-    expect(block).toContain('min-width: 0');
-    // 5 个页签在 375px 下用 var(--sp-2)=8px 会顶格，兜底 6px 必须存在且在 400px 断点里
+    expect(block).toContain('overflow-x: auto');
+    expect(block).toContain('flex: 0 0 auto');
+    // 选中项滚进可视区由 selectTab 做（scrollIntoView），不是 CSS。
+    const js = readSrc('../src/js/account-dialog.js');
+    expect(js).toContain('scrollIntoView');
+    // ≤400px 的内边距兜底仍在（横滚时省一点宽度）
     const fallback = css.slice(css.lastIndexOf('@media (max-width: 400px)'));
     expect(fallback).toContain('.settings__tabs button');
     expect(fallback).toContain('padding-inline: 6px');
-    // 五格 × 62px ≈ 310px，加上模态体内边距在 375px 内放得下（规范 §1.1 的算式）
-    expect(5 * 62).toBeLessThanOrEqual(375 - 2 * 20);
   });
 
   it('样式：AI 页只用既有 tokens，栅格一律 minmax(0,1fr)，没有新增颜色/字体档', () => {

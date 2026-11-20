@@ -255,6 +255,8 @@ export function publicCredential(credential, { calendarIds = [] } = {}) {
     agentApproval: approvalEffective,
     // 0.4.22（M4 §S1）：审批页是否需要 PIN；只回「是否已设置」，绝不回显哈希或 PIN。
     pinSet: approvalEffective && Boolean(credential.pinHash),
+    // 0.9.1（C.4 用户）：凭据的「附件」开关；默认开，升级后已有凭据不受影响。
+    allowAttachments: credential.allowAttachments !== false,
     rateLimit: Number.isFinite(Number(credential.rateLimit)) ? Number(credential.rateLimit) : 60,
     createdAt: credential.createdAt || null,
     lastUsedAt: credential.lastUsedAt || null,
@@ -533,6 +535,8 @@ export function createAiStore({
       tagWriteMode: limits.tagWriteMode,
       tagDeleteMode: limits.tagDeleteMode,
       agentApproval,
+      // 0.9.1（C.4）：附件权限开关，默认开（老凭据升级后仍可读附件）。
+      allowAttachments: input.allowAttachments !== false,
       rateLimit: normalizeRateLimit(input.rateLimit),
       createdAt,
       lastUsedAt: null,
@@ -593,6 +597,10 @@ export function createAiStore({
     }
     if (patch.rateLimit !== undefined) {
       target.rateLimit = normalizeRateLimit(patch.rateLimit);
+    }
+    // 0.9.1（C.4）：附件开关；只认布尔，默认保持现状（未传不改）。
+    if (patch.allowAttachments !== undefined) {
+      target.allowAttachments = patch.allowAttachments !== false;
     }
     // 0.4.13（M4 §4）：AI 端批准开关；只认布尔，其它值当 false（不悄悄打开）。
     if (patch.agentApproval !== undefined) {

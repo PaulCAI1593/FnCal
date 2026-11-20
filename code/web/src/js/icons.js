@@ -96,6 +96,9 @@ const PATHS = {
   shield: '<path d="M12 3 5 6v5c0 4.6 2.9 8.4 7 10 4.1-1.6 7-5.4 7-10V6z"/>',
   // 0.4.13（M21 §7）：回收站「恢复」按钮的撤销箭头。窄屏只留图标，`aria-label` 带标题。
   undo: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+  // 0.9.1（任务书 §三·五 B）：文件夹浏览层用「文件夹 / 文件」两枚线性图标。
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><polyline points="14 3 14 8 19 8"/>',
 };
 
 export function icon(name, { size = '', className = '' } = {}) {

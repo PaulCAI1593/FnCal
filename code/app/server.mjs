@@ -32,6 +32,14 @@ import { createKvApi } from './api/kv.mjs';
 import { createAdminApi } from './api/admin.mjs';
 import { createDataApi } from './api/data.mjs';
 import { createCalendarsApi } from './api/calendars.mjs';
+import { createAttachmentsApi } from './api/attachments.mjs';
+import { createInstanceApi } from './api/instance.mjs';
+import { createBackupApi } from './api/backup.mjs';
+import { createBackupService } from './lib/backup-service.mjs';
+import { createAttachmentSettingsStore } from './lib/attachment-settings-store.mjs';
+import { createFoldersApi } from './api/folders.mjs';
+import { createAttachmentStore } from './lib/attachments.mjs';
+import { createNasAttachmentStore } from './lib/nas-attachments.mjs';
 import { createTagsApi } from './api/tags.mjs';
 import { createAnnualApi } from './api/annual.mjs';
 import { createTagStore } from './lib/tags.mjs';
@@ -42,6 +50,13 @@ import { createMcp } from './api/mcp.mjs';
 import { createApprovalPage, APPROVAL_PAGE_PREFIX } from './api/approval-page.mjs';
 // 0.8.30（任务书 §二）：年度总结图片链接——页面与原始字节都给收不到图片的客户端。
 import { createAnnualImagePage, ANNUAL_IMAGE_PREFIX } from './api/annual-image-page.mjs';
+// 0.9.1（任务书 §三·五 C）：MCP 附件分享页 `/i/a/<token>`——必须比年度总结的 `/i/` 先注册。
+import { createAttachmentSharePage, ATTACHMENT_SHARE_PREFIX } from './api/attachment-share-page.mjs';
+// 0.9.1（任务书 §三·五 C.3）：附件上传链接——页面只凭令牌 + PIN，接口只看链接令牌。
+import { createUploadLinkPage, UPLOAD_LINK_PREFIX } from './api/upload-link-page.mjs';
+import { createUploadLinksApi, UPLOAD_LINKS_API_PREFIX } from './api/upload-links.mjs';
+import { createAttachmentLinks } from './lib/attachment-links.mjs';
+import { createUploadLinks } from './lib/upload-links.mjs';
 import { DEFAULT_ACCENT } from './lib/accent.mjs';
 import { createApprovalLinks } from './lib/approval-link.mjs';
 import { createAnnualImages } from './lib/annual-image-link.mjs';
@@ -92,7 +107,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 0.7.9：月格「今天」胶囊贴右、全天任务 emoji 被前导挤掉、平板周视图名称只显示
 // 0.8.28 的 MCP 年度总结；0.8.29 只给桌面卡片摘要接口加四个只读标签字段（tagEmoji / tagGroupId / tagGroupName / tagGroupIndex），
 // 不新增正文，busy 时一律 null。
-export const VERSION = '0.8.34';
+export const VERSION = '0.9.3';
 
 const ADMIN_INITIAL_PASSWORD_FILE = 'admin-initial-password.txt';
 const DEFAULT_UID_DOMAIN = 'caldav.local';
@@ -337,6 +352,25 @@ export async function createApp(
   const store = createStore({ root: config.calendarsDir, logger });
   await store.ensureRoot();
 
+  // 0.9.0：附件与日历对象同盘（`<calendarDir>/attachments/<seriesUid>/`），
+  // 备份数据目录即带附件。启动时清一次孤儿文件：上传只写临时名再 rename，
+  // 进程被杀可能留下没有 meta 记录的字节，这里连带空的附件目录一起收掉。
+  // 0.9.1（F.4B/E.1）：附件存放位置与限额是实例级设置（`<varDir>/attachment-settings.json`，
+  // 仅管理员可改；全机器统一一个位置）。
+  const attachmentSettings = createAttachmentSettingsStore({ varDir: config.varDir, logger });
+  const attachmentStore = createAttachmentStore({ store, logger, limits: attachmentSettings });
+  // 0.9.1（E）：附件库可能在 NAS 文件夹（`settings.attachmentStorage === 'nas'`），
+  // 与 appdata 附件库共用同一个路由层，按当前设置分派。
+  const nasAttachmentStore = createNasAttachmentStore({ store, logger });
+  try {
+    const pruned = await attachmentStore.pruneOrphans();
+    if (pruned.files || pruned.entries || pruned.dirs) {
+      logger.event('attachments-pruned', pruned);
+    }
+  } catch (err) {
+    logger.event('attachments-prune-failed', { message: err && err.message });
+  }
+
   // 0.2.37（S4）：先把会话密钥读出来，再建账号库 —— 账号库用它经 HKDF 派生的
   // 落盘密文艺（TOTP 种子），旧明文在首次读取时自动改写为 `enc:v1:` 密文。
   const secret = await loadOrCreateSecret(config.secretFile);
@@ -457,14 +491,41 @@ export async function createApp(
     config,
     version: config.version,
   });
+  // 0.9.0：附件四接口（会话专用；AI 凭据 403）。限额与类型判定在 lib/attachments.mjs。
+  const attachmentsApi = createAttachmentsApi({ store, logger, attachmentStore, attachmentSettings });
+  const instanceApi = createInstanceApi({ settings: attachmentSettings, auth, logger });
+  // 0.9.1（B 项）：NAS 文件夹只读浏览（列目录、只读测试、流式预览，支持 Range）。
+  const foldersApi = createFoldersApi({ store, logger });
   const adminApi = createAdminApi({ accounts, store, auth, audit, logger });
   const dataApi = createDataApi({ store, logger });
   // 0.3.0 P1：AI 数据层 + 用户侧 REST。凭据单独一张表（ai-credentials），
   // 与 CalDAV 专用密码表完全分离；令牌只在创建时返回明文。
   // 0.7.11（M6 §2.3）：标签提案受理需要标签注册表；未装配时标签提案报 tag_unavailable。
   const aiStore = createAiStore({ store, accounts, varDir: config.varDir, logger, tags: tagStore });
-  const aiTrash = createAiTrash({ store, logger });
-const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
+  const aiTrash = createAiTrash({
+    store, logger, attachments: attachmentStore, nasAttachments: nasAttachmentStore,
+    nasSettings: attachmentSettings,
+  });
+  // 0.5.8（M5 §2）：审批回执三层共用一张进程内表——审批页与 App 内决策写（L1 推送源）、
+  // MCP 侧推送/等待/搭车读。只在内存，保留 24 小时，不落盘、不含令牌。
+  // 0.8.43（任务书 §八）：提前到 aiApi 之前创建，App 内单条 / 批量决策也能发回执；
+  // 只建一次，审批页与 MCP 侧共用同一个实例。
+  // 0.8.43（用户定·可靠送达）：再镜像到 `var/approval-receipts.json`——重启后未交付的回执
+  // 还在，靠任何一次成功返回 JSON 的工具回包带出，不依赖客户端一定开 SSE。
+  const approvalReceipts = createApprovalReceipts({
+    logger,
+    file: path.join(config.varDir, 'approval-receipts.json'),
+  });
+  const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash, approvalReceipts });
+  // 0.9.2：按用户的备份与恢复（设置、日程、附件；管理员也没有备份别人的入口）。
+  const backupService = createBackupService({
+    store,
+    attachmentSettings,
+    accounts,
+    logger,
+    version: config.version,
+  });
+  const backupApi = createBackupApi({ auth, store, service: backupService, logger });
   // 0.3.0 P2：AI 侧 Bearer REST（/api/ai/v1/*）。`health()` 同步返回迁移状态，
   // 供它判断「AI 集合 failed → 整个前缀 404」。
   const healthState = () => {
@@ -538,9 +599,7 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
   const approvalLinks = createApprovalLinks({
     file: path.join(config.varDir, '.data', 'ai-approval-links.json'),
   });
-  // 0.5.8（M5 §2）：审批回执三层共用一张进程内表——审批页写（L1 推送源）、
-  // MCP 侧推送/等待/搭车读。只在内存，保留 24 小时，不落盘、不含令牌。
-  const approvalReceipts = createApprovalReceipts({ logger });
+  // 审批回执实例已在 aiApi 之前创建（0.8.43，任务书 §八），审批页与 MCP 侧共用同一个。
   const approvalPage = createApprovalPage({
     aiStore,
     aiService,
@@ -561,6 +620,30 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     // 页面与字节同桶 60 次/分/IP，与凭据限流分开。
     rateLimiter: createAiRateLimiter(),
   });
+  // 0.9.1（任务书 §三·五 C）：MCP 附件分享链接——同样只存内存、30 分钟、同一令牌最多取 50 次。
+  const attachmentLinks = createAttachmentLinks();
+  const attachmentSharePage = createAttachmentSharePage({
+    links: attachmentLinks,
+    logger,
+    rateLimiter: createAiRateLimiter(),
+  });
+  // 0.9.1（任务书 §三·五 C.3）：上传链接令牌表（只存哈希、只放内存）+ 页面 + 落盘接口。
+  const uploadLinks = createUploadLinks();
+  const uploadLinkPage = createUploadLinkPage({
+    uploadLinks,
+    aiStore,
+    store,
+    attachmentStore,
+    logger,
+  });
+  const uploadLinksApi = createUploadLinksApi({
+    uploadLinks,
+    aiStore,
+    attachmentStore,
+    store,
+    logger,
+    attachmentSettings,
+  });
   const mcpApi = createMcp({
     tags: tagStore,
     aiStore,
@@ -573,6 +656,11 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     approvalLinks,
     approvalReceipts,
     annualImages,
+    attachments: attachmentStore,
+    attachmentLinks,
+    uploadLinks,
+    store,
+    attachmentLimits: attachmentSettings,
   });
   const apiHandler = createApiHandler({
     version: config.version,
@@ -581,6 +669,11 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
     admin: adminApi,
     data: dataApi,
     calendars: calendarsApi,
+    attachments: attachmentsApi,
+    instance: instanceApi,
+    backup: backupApi,
+    uploadLinks: uploadLinksApi,
+    folders: foldersApi,
     tags: tagsApi,
     annual: annualApi,
     ai: aiApi,
@@ -868,6 +961,50 @@ const aiApi = createAiApi({ aiStore, auth, logger, audit, trash: aiTrash });
           remoteAddress: source.ip || null,
         })),
         'approval-page',
+      );
+    }
+
+    // 0.9.1（任务书 §三·五 C.3）：附件上传链接页 `/u/a/<token>`（只凭令牌 + PIN，不登录）。
+    if (pathname.startsWith(UPLOAD_LINK_PREFIX)) {
+      const start = Date.now();
+      res.on('finish', () => {
+        logger.access({
+          method: req.method,
+          path: '/u/a/[token]',
+          status: res.statusCode,
+          ms: Date.now() - start,
+          ua: req.headers['user-agent'] ?? null,
+          remoteAddress: source.ip || null,
+          gateway: gateway || undefined,
+        });
+      });
+      return guarded(
+        () => runWithContext({ userId: null }, () => uploadLinkPage.handle(req, res, { pathname })),
+        'upload-link-page',
+      );
+    }
+
+    // 0.9.1（任务书 §三·五 C）：MCP 附件分享 `/i/a/<token>`、`/raw`、`.png`。
+    // 必须早于下面的年度总结 `/i/`，否则令牌会被 `/i/` 抢走。
+    if (pathname.startsWith(ATTACHMENT_SHARE_PREFIX)) {
+      const start = Date.now();
+      res.on('finish', () => {
+        logger.access({
+          method: req.method,
+          path: '/i/a/[token]',
+          status: res.statusCode,
+          ms: Date.now() - start,
+          ua: req.headers['user-agent'] ?? null,
+          remoteAddress: source.ip || null,
+          gateway: gateway || undefined,
+        });
+      });
+      return guarded(
+        () => runWithContext({ userId: null }, () => attachmentSharePage.handle(req, res, {
+          pathname,
+          remoteAddress: source.ip || null,
+        })),
+        'attachment-share-page',
       );
     }
 
@@ -1401,6 +1538,7 @@ async function main() {
   }
 
   server.listen(config.port, config.host, () => {
+    backupService.startScheduler();
     logger.event('listening', {
       version: VERSION,
       host: config.host,
@@ -1461,6 +1599,7 @@ async function main() {
     if (closing) return;
     closing = true;
     logger.event('shutdown', { reason });
+    if (backupService && typeof backupService.stopScheduler === 'function') backupService.stopScheduler();
     const finish = async () => {
       await closeGatewayServers();
       await releasePid(config);

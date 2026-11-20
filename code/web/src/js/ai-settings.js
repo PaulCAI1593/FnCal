@@ -90,6 +90,34 @@ export function mcpConfigJson(url) {
   }, null, 2);
 }
 
+/* 0.8.43（用户：「MCP 配置片段的下面也给一下skill的配置prompt」）。
+   第 18 条：技能包独立发版——以后技能包升版只改这一个常量，网页其它处不写死版本号。 */
+const SKILL_TAG = 'mcp-skill-v0.9.3';
+const SKILL_FILE = 'FnCal-MCP-Skill-0.9.3.zip';
+const SKILL_SKILL_MD = 'skills/fncal-mcp/SKILL.md';
+// 0.8.43（用户 2026-11-19：「默认用gitee的网址吧」）：主地址走 Gitee，GitHub 留作备用。
+// 注意两个用户不同名：Gitee 是 Paul1593，GitHub 是 PaulCAI1593。
+export const SKILL_PACKAGE = Object.freeze({
+  version: '0.9.3',
+  giteeSkillMd: `https://gitee.com/Paul1593/FnCal/raw/main/${SKILL_SKILL_MD}`,
+  giteeDownload: `https://gitee.com/Paul1593/FnCal/releases/download/${SKILL_TAG}/${SKILL_FILE}`,
+  githubSkillMd: `https://raw.githubusercontent.com/PaulCAI1593/FnCal/main/${SKILL_SKILL_MD}`,
+  githubDownload: `https://github.com/PaulCAI1593/FnCal/releases/download/${SKILL_TAG}/${SKILL_FILE}`,
+});
+
+/** 技能配置 Prompt（0.8.43）：占位符与 `mcpConfigJson` 同一套，不写当前 origin、不写真实令牌。 */
+export function mcpSkillPrompt() {
+  const p = SKILL_PACKAGE;
+  return [
+    '请帮我配置 FnCal 技能：',
+    `1. 读取技能说明：${p.giteeSkillMd}`,
+    `2. 安装技能包：${p.giteeDownload}`,
+    '3. 按上面的 MCP 配置连接 FnCal：地址 https://<你的地址>/mcp，请求头 Authorization: Bearer <你的令牌>。',
+    '4. 连上后调用 list_calendars，把你能看到的日历列给我。',
+    `（Gitee 打不开时改用 GitHub：${p.githubSkillMd} 与 ${p.githubDownload}）`,
+  ].join('\n');
+}
+
 /** 档位文案（只做显示）。 */
 export function permLabel(level) {
   return t(`settings.ai.perm.${PERM_LEVELS.includes(level) ? level : 'hidden'}`);
@@ -392,7 +420,44 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       ]),
     ]);
 
-    serviceBody.append(enabledRow, addressRow, configRow);
+    /* 0.8.43（用户 2026-11-19）：「MCP 配置片段的下面也给一下skill的配置prompt」。
+       结构与 configRow 同构：label → control → pre → 复制按钮 → 提示。 */
+    const skillText = mcpSkillPrompt();
+    const skillPre = el('pre', {
+      class: 'ai-mcp-json ai-skill-prompt',
+      tabindex: '0',
+      'aria-label': t('settings.ai.skillPrompt'),
+    }, [el('code', { text: skillText })]);
+    const skillCopyBtn = el('button', {
+      class: 'btn settings__copy-btn ai-skill-prompt-copy',
+      type: 'button',
+      disabled: loading || errored,
+      html: icon('copy', { size: 'sm' }) + `<span>${t('settings.action.copy')}</span>`,
+      'aria-label': t('settings.ai.copySkillAria'),
+      on: {
+        click: async () => {
+          try {
+            if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('no clipboard');
+            await navigator.clipboard.writeText(skillText);
+            toast(t('settings.ai.toast.skillCopied'), { variant: 'success' });
+          } catch {
+            skillPre.focus();
+            toast(t('settings.copyFailed'), { variant: 'danger' });
+          }
+        },
+      },
+    });
+    const skillRow = el('div', { class: 'settings__row settings__row--stack' }, [
+      el('span', { class: 'settings__label', text: t('settings.ai.skillPrompt') }),
+      el('div', { class: 'settings__control' }, [
+        skillPre,
+        el('div', { class: 'settings__inline' }, [skillCopyBtn]),
+        el('p', { class: 'ai-hint', text: t('settings.ai.skillPromptHint') }),
+        el('p', { class: 'ai-hint', text: t('settings.ai.skillTokenHint') }),
+      ]),
+    ]);
+
+    serviceBody.append(enabledRow, addressRow, configRow, skillRow);
     if (loading) serviceBody.setAttribute('aria-busy', 'true');
     else serviceBody.removeAttribute('aria-busy');
 
@@ -590,6 +655,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
     tagDeleteMode: 'proposal',
     // 0.4.13（M4 §4）：AI 端批准开关，默认关。旧凭据没有该字段时按 false 处理。
     agentApproval: false,
+    // 0.9.1（任务书 §三·五 C.4）：附件开关，默认开（旧凭据缺字段按 true，升级后不会突然读不到）。
+    allowAttachments: true,
     // 0.4.22（M4-0.4.22 S1）：审批页 PIN。pin 只是草稿值，pinSet 来自服务端，不回显哈希。
     pin: '',
     pinSet: false,
@@ -630,6 +697,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       tagWriteMode: credential && credential.tagWriteMode === 'direct' ? 'direct' : 'proposal',
       tagDeleteMode: credential && credential.tagDeleteMode === 'direct' ? 'direct' : 'proposal',
       agentApproval: Boolean(credential && credential.agentApproval === true),
+      // 0.9.1（C.4）：缺字段按开启处理。
+      allowAttachments: !(credential && credential.allowAttachments === false),
       // 0.4.22（S1）：只拿到「是否已设置」，PIN 哈希与明文都不会下发。
       pin: '',
       pinSet: Boolean(credential && credential.pinSet === true),
@@ -1114,9 +1183,28 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
 
     refreshModeAvailability();
 
+    /* 0.9.1（任务书 §三·五 C.4）：凭据级「附件」开关，默认开。
+       关闭后 list_attachments / get_attachment / create_attachment_upload_link
+       统一回 attachment_forbidden（用户 2026-11-20「凭证下可以设置附件开关」）。 */
+    const attachSwitch = switchControl({
+      checked: draft.allowAttachments !== false,
+      ariaLabel: t('settings.ai.credential.attachments'),
+      onChange: (next) => {
+        draft.allowAttachments = next;
+        refreshSave();
+      },
+    });
+    const attachRow = el('div', { class: 'settings__row ai-switch-row', 'data-mode': 'allowAttachments' }, [
+      el('span', { class: 'settings__label', text: t('settings.ai.credential.attachments') }),
+      el('div', { class: 'settings__control' }, [attachSwitch.node]),
+    ]);
+    const attachHint = el('p', { class: 'ai-hint', text: t('settings.ai.credential.attachmentsHint') });
+
     const operationBlock = block('settings.ai.editor.block.operation', 'settings.ai.editor.block.operationHint', [
       writeRow,
       deleteRow,
+      attachRow,
+      attachHint,
       modeNotes,
     ]);
 
@@ -1469,6 +1557,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
         tagWriteMode: draft.tagWriteMode,
         tagDeleteMode: draft.tagDeleteMode,
         agentApproval: effectiveApproval,
+        // 0.9.1（C.4）：附件开关按凭据存，脏判定与保存都带上。
+        allowAttachments: draft.allowAttachments !== false,
       };
       if (effectiveApproval && draft.pin) payload.pin = draft.pin;
       else if (editor.mode === 'edit' && (draft.clearPin || !effectiveApproval)) payload.clearPin = true;
@@ -1576,6 +1666,8 @@ export function createAiSettingsPage({ user, store, now = () => Date.now(), onSt
       tagWriteMode: draft.tagWriteMode,
       tagDeleteMode: draft.tagDeleteMode,
       agentApproval: effectiveApproval,
+      // 0.9.1（C.4）：附件开关按凭据存。
+      allowAttachments: draft.allowAttachments !== false,
     };
     // 0.4.22：只在有值时带 pin；编辑态点过「清除」或代办批准不生效时清 PIN。
     if (effectiveApproval && draft.pin) payload.pin = draft.pin;

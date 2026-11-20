@@ -7,6 +7,13 @@
 //
 // 只存 { proposalId, action, ok, decidedAt }：不含令牌、PIN、链接（A6）。
 // 保留期 24 小时，过期未交付的回执丢弃并记 approval-receipt-expired。
+//
+// 0.8.43（用户定）：回执要可靠送达——不只在内存里。给 file 就落盘（先写 .tmp 再 rename，
+// 重启后由 load() 读回，deliveredAt 也保留，已交付的不会二次搭车），并继续由 L3 在任何
+// 成功返回 JSON 的工具回包里一并带上；SSE 只是「客户端支持时」的更快路径，不依赖它。
+
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const APPROVAL_RECEIPT_TTL_MS = 24 * 60 * 60 * 1000;
 export const APPROVAL_RECEIPT_MAX_DELIVERED = 20;
@@ -18,11 +25,13 @@ export function createApprovalReceipts({
   logger = null,
   ttlMs = APPROVAL_RECEIPT_TTL_MS,
   maxDelivered = APPROVAL_RECEIPT_MAX_DELIVERED,
+  file = null,
 } = {}) {
-  /** credentialId → 回执数组（按到达先后）；进程内、不落盘。 */
+  /** credentialId → 回执数组（按到达先后）。给了 file 就同时镜像到磁盘。 */
   const byCredential = new Map();
   /** L1 监听器：publish 时同步通知，供 MCP 写 SSE。 */
   const listeners = new Set();
+  const storePath = typeof file === 'string' && file.trim() ? file.trim() : null;
 
   function logEvent(event, detail = {}) {
     if (!logger || typeof logger.event !== 'function') return;
@@ -39,6 +48,76 @@ export function createApprovalReceipts({
     const created = [];
     byCredential.set(credentialId, created);
     return created;
+  }
+
+  /** 盘上格式：{ version: 1, receipts: [...] }；写入先 .tmp 再 rename，半截文件不会被读成有效数据。 */
+  function persist() {
+    if (!storePath) return;
+    try {
+      fs.mkdirSync(path.dirname(storePath), { recursive: true });
+      const snapshot = [];
+      for (const list of byCredential.values()) {
+        for (const receipt of list) {
+          snapshot.push({
+            credentialId: receipt.credentialId,
+            proposalId: receipt.proposalId,
+            action: receipt.action,
+            ok: receipt.ok,
+            decidedAt: receipt.decidedAt,
+            deliveredAt: receipt.deliveredAt,
+          });
+        }
+      }
+      const tmp = `${storePath}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ version: 1, receipts: snapshot }), 'utf8');
+      fs.renameSync(tmp, storePath);
+    } catch (error) {
+      // 落盘失败不影响内存里的送达路径（L1/L2/L3 照走）。
+      logEvent('approval-receipt-persist-failed', { message: String((error && error.message) || error) });
+    }
+  }
+
+  /** 启动时读回：坏文件、错字段、过期条目一律跳过，不阻断服务。 */
+  function load() {
+    if (!storePath) return;
+    let raw;
+    try {
+      raw = fs.readFileSync(storePath, 'utf8');
+    } catch {
+      return; // 还没有文件 = 第一次启动。
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      logEvent('approval-receipt-load-failed', { message: String((error && error.message) || error) });
+      return;
+    }
+    const items = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.receipts) ? parsed.receipts : []);
+    let restored = 0;
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const credential = typeof item.credentialId === 'string' ? item.credentialId.trim() : '';
+      const proposal = item.proposalId === undefined || item.proposalId === null ? '' : String(item.proposalId).trim();
+      const decidedAt = typeof item.decidedAt === 'string' && Number.isFinite(Date.parse(item.decidedAt))
+        ? item.decidedAt
+        : null;
+      if (!credential || !proposal || !decidedAt) continue;
+      const deliveredAt = typeof item.deliveredAt === 'string' && Number.isFinite(Date.parse(item.deliveredAt))
+        ? item.deliveredAt
+        : null;
+      listOf(credential).push({
+        credentialId: credential,
+        proposalId: proposal,
+        action: item.action === 'reject' ? 'reject' : 'accept',
+        ok: item.ok === true,
+        decidedAt,
+        deliveredAt,
+      });
+      restored += 1;
+    }
+    for (const credential of Array.from(byCredential.keys())) prune(credential);
+    if (restored > 0) logEvent('approval-receipt-loaded', { count: restored });
   }
 
   /** 丢掉过期与超出上限的条目；返回该凭据的回执数组。 */
@@ -86,6 +165,7 @@ export function createApprovalReceipts({
       deliveredAt: null,
     };
     prune(credential).push(receipt);
+    persist();
     for (const listener of Array.from(listeners)) {
       try {
         listener(receipt);
@@ -119,6 +199,7 @@ export function createApprovalReceipts({
       receipt.deliveredAt = stamp;
       out.push(view(receipt));
     }
+    if (out.length > 0) persist();
     return out;
   }
 
@@ -142,7 +223,10 @@ export function createApprovalReceipts({
       receipt.deliveredAt = stamp;
       decided.push(view(receipt));
     }
-    if (decided.length > 0) return Promise.resolve({ decided, timedOut: false });
+    if (decided.length > 0) {
+      persist();
+      return Promise.resolve({ decided, timedOut: false });
+    }
 
     return new Promise((resolve) => {
       let settled = false;
@@ -158,6 +242,7 @@ export function createApprovalReceipts({
         if (!matches(receipt)) return;
         receipt.deliveredAt = new Date(now()).toISOString();
         decided.push(view(receipt));
+        persist();
         finish(false);
       };
       listeners.add(listener);
@@ -167,5 +252,8 @@ export function createApprovalReceipts({
     });
   }
 
-  return { publish, onDecision, take, wait };
+  // 启动时先读回盘上未过期、未交付的回执，再对外提供服务。
+  load();
+
+  return { publish, onDecision, take, wait, persist };
 }

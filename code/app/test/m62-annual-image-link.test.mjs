@@ -158,7 +158,7 @@ const svgToken = store.put({ kind: 'svg', bytes: SVG_BYTES, year: 2026 }).token;
 try {
   /* ------------------------------------------------------------ 准备 */
 
-  eq('版本号已是 0.8.31', '0.8.31', VERSION);
+  eq('版本号已是 0.9.3', '0.9.3', VERSION);
 
   const admin = await login('admin', 'admin-pass-123');
   eq('管理员登录成功', 200, admin.status);

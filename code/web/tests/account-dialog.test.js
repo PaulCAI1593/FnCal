@@ -96,7 +96,7 @@ describe('设置对话框', () => {
     document.body.replaceChildren();
   });
 
-  it('四个页签的标题正确；默认停在「一般」；不显示角色', () => {
+  it('五个页签的标题正确；默认停在「一般」；不显示角色', () => {
     opened = openAccountDialog({
       user: { username: 'alice', displayName: 'Alice', role: 'user' },
       store,
@@ -107,8 +107,9 @@ describe('设置对话框', () => {
     // 0.6.2：桌面卡片改为跟随 App 登录态，0.6.0 的第 5 枚「卡片」页签删除。
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，页签 5→4。
     // 0.6.15（用户）：快捷键页签搬到头像菜单，设置回到三页签。
-    // 0.7.0 起（用户）：新增第 2 页签「标签」，顺序 一般 / 标签 / CalDAV / AI。
-    expect(tabs).toEqual(['一般', '标签', 'CalDAV', 'AI']);
+    // 0.7.0 起（用户）：新增第 2 页签「标签」。
+    // 0.9.1（F.4C，用户 2026-11-20）：「高级」插在「一般」与「标签」之间，共 5 枚。
+    expect(tabs).toEqual(['一般', '高级', '标签', 'CalDAV', 'AI']);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(false);
     expect(dialog.querySelector('#settings-page-account').hidden).toBe(true);
     expect(dialog.querySelector('.settings__page--calendar')).toBeNull();
@@ -122,15 +123,15 @@ describe('设置对话框', () => {
     opened = openAccountDialog({ user: { username: 'alice', role: 'user' }, store });
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
-    // 0.7.0 起：「标签」插到第 2 位，CalDAV / AI 各后移一位。
-    tabs[2].click();
-    expect(tabs[2].getAttribute('aria-selected')).toBe('true');
+    // 0.9.1 起：一般 / 高级 / 标签 / CalDAV / AI，第 3 枚是 CalDAV（id 仍是 account）。
+    tabs[3].click();
+    expect(tabs[3].getAttribute('aria-selected')).toBe('true');
     expect(dialog.querySelector('#settings-page-account').hidden).toBe(false);
     expect(dialog.querySelector('#settings-page-general').hidden).toBe(true);
     // 方向键右移：CalDAV 之后是 AI
-    tabs[2].focus();
-    tabs[2].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-    expect(tabs[3].getAttribute('aria-selected')).toBe('true');
+    tabs[3].focus();
+    tabs[3].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(tabs[4].getAttribute('aria-selected')).toBe('true');
     expect(dialog.querySelector('#settings-page-ai').hidden).toBe(false);
   });
 

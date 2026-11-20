@@ -14,6 +14,8 @@
 //   - new keys get defaults: `timezone`, `showWeekNumbers`, `defaultReminders`,
 //     `lastCalendarId`, `visibleCalendarIds`, `schemaVersion`.
 
+import { normalizeRoots } from './folders.mjs';
+
 export const SETTINGS_SCHEMA_VERSION = 2;
 export const DEFAULT_TIMED_REMINDER_MINUTES = 10;
 export const DEFAULT_ALL_DAY_REMINDER_MINUTES = 540; // 09:00 on the day
@@ -55,6 +57,8 @@ export function defaultSettings() {
     },
     lastCalendarId: 'default',
     visibleCalendarIds: [],
+    // 0.9.1（B 项）：允许浏览/绑定附件的 NAS 文件夹，最多 3 个，只读。
+    folderRoots: [],
   };
 }
 
@@ -93,6 +97,12 @@ export function normalizeSettings(value) {
   out.visibleCalendarIds = Array.isArray(input.visibleCalendarIds)
     ? input.visibleCalendarIds.filter((id) => typeof id === 'string' && ID_RE.test(id))
     : [];
+  try {
+    out.folderRoots = normalizeRoots(input.folderRoots);
+  } catch {
+    // 非法值不阻断读取：回空列表，用户到设置页重新选（保存时才有明确错误码）。
+    out.folderRoots = [];
+  }
   out.schemaVersion = SETTINGS_SCHEMA_VERSION;
   return out;
 }

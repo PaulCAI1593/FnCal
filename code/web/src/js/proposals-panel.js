@@ -24,6 +24,8 @@ import {
   // 0.4.13（M4 §3、M21 §5）：提案面板底部「最近删除」的列表与恢复。
   listAiTrash,
   restoreAiTrash,
+  // 0.8.43 第三项（任务书 §十）：面板里「最近删除」加「清空」。
+  clearAiTrash,
   // 0.4.15（M23 §5.1、§7.1）：删除卡按凭据当前 deleteMode 选文案；模式提示行要凭据列表。
   getAiSettings,
   listAiCredentials,
@@ -454,7 +456,7 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
     busy: false,
     busyAction: '',
     /** 0.4.13（M4 §3、M21 §5）：面板底部「最近删除」——0 条时整区不渲染。 */
-    trash: { items: [], count: 0, loading: false, error: false, folded: false, restoring: '', errorLine: null },
+    trash: { items: [], count: 0, loading: false, error: false, folded: false, restoring: '', clearing: false, errorLine: null },
     /** 0.4.15（M23 §5.1、§7.1）：凭据列表（取当前 deleteMode）、全局保留期、模式提示文案。 */
     credentials: [],
     retentionDays: 7,
@@ -730,10 +732,24 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
     const trash = state.trash;
     if (!trash.count && !trash.loading && !trash.error) return;
     const foldLabel = trash.folded ? t('settings.ai.trash.unfold') : t('settings.ai.trash.fold');
+    // 0.8.43 第三项（任务书 §十）：清空按钮与「收起」右侧并排，间隔由 .ai-trash__head 的 gap 给。
+    // 文案复用 clearConfirm（「清空」，与确认框同词），不新增可见文案键；aria-label 用新的 clearAria。
+    const clearDisabled = trash.count <= 0 || Boolean(trash.clearing);
     const section = el('section', { class: 'ai-trash', 'aria-label': t('settings.ai.trash.recentTitle') }, [
       el('div', { class: 'ai-trash__head' }, [
         el('h4', { class: 'ai-trash__title', text: t('settings.ai.trash.recentTitle') }),
         el('span', { class: 'ai-badge ai-trash__count', text: String(trash.count) }),
+        el('button', {
+          class: 'btn btn--ghost ai-trash__clear',
+          type: 'button',
+          'aria-label': t('settings.ai.trash.clearAria'),
+          'aria-disabled': String(clearDisabled),
+          disabled: clearDisabled,
+          text: t('settings.ai.trash.clearConfirm'),
+          on: {
+            click: () => { void clearTrash(); },
+          },
+        }),
         el('button', {
           class: 'btn btn--ghost ai-trash__fold',
           type: 'button',
@@ -842,6 +858,43 @@ export function createProposalsPanel({ store, now = () => Date.now() } = {}) {
       state.trash.restoring = '';
       state.trash.errorLine = { id: item.id, text: restoreErrorText(err) };
       render();
+    }
+  }
+
+  /**
+   * 0.8.43 第三项（任务书 §十）：清空「最近删除」。危险动作，走同一个 confirmAction；
+   * 确认后调 DELETE /api/ai/trash，成功清掉本地 items/count 并重渲染（count=0 时整段不再渲染）。
+   */
+  function clearTrash() {
+    const trash = state.trash;
+    if (trash.count <= 0 || trash.clearing) return;
+    confirmAction({
+      title: t('settings.ai.trash.clearTitle'),
+      text: t('settings.ai.trash.clearText', { n: trash.count }),
+      confirmLabel: t('settings.ai.trash.clearConfirm'),
+      cancelLabel: t('settings.ai.cancel'),
+      danger: true,
+      onConfirm: () => { void runClearTrash(); },
+    });
+  }
+
+  async function runClearTrash() {
+    const trash = state.trash;
+    if (trash.count <= 0 || trash.clearing) return;
+    trash.clearing = true;
+    render();
+    try {
+      await clearAiTrash();
+      state.trash.items = [];
+      state.trash.count = 0;
+      state.trash.clearing = false;
+      state.trash.errorLine = null;
+      toast(t('settings.ai.trash.toastCleared'), { variant: 'success' });
+      render();
+    } catch (err) {
+      state.trash.clearing = false;
+      render();
+      toast((err && err.message) || t('settings.ai.trash.failed'), { variant: 'danger' });
     }
   }
 

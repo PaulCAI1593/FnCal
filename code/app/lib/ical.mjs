@@ -854,6 +854,8 @@ function propertyLines(record, titleFallback = '') {
   // 0.7.0：标签 id 只在本机有意义（emoji 也只存在本地注册表），放 X- 属性里，
   // 外部客户端会忽略；标签名仍然写在 CATEGORIES 里，导出与互通不受影响。
   if (record.tagId) push('X-FNCAL-TAG', escapeIcsText(String(record.tagId)));
+  // 0.9.1（D 项）：绑定的 NAS 文件夹（绝对路径，固定只读）。
+  if (record.folder) push('X-FNCAL-FOLDER', escapeIcsText(String(record.folder)));
   if (record.organizer && record.organizer.email) {
     const cn = record.organizer.name ? `;CN=${escapeIcsText(record.organizer.name)}` : '';
     push(`ORGANIZER${cn}`, `mailto:${record.organizer.email}`);
@@ -1336,6 +1338,14 @@ function tagIdOf(block) {
   return unescapeIcsText(String(prop.value || '').trim()).trim();
 }
 
+/** 0.9.1（D 项）：绑定的 NAS 文件夹路径（`X-FNCAL-FOLDER`），没有就返回空串。 */
+function folderOfBlock(block) {
+  if (!block) return '';
+  const prop = propNamed(block, 'X-FNCAL-FOLDER');
+  if (!prop) return '';
+  return unescapeIcsText(String(prop.value || '').trim()).trim();
+}
+
 /** Date digits (local) of an instant that belongs to an all-day record. */
 function allDayDateOf(event, ms) {
   // Imported all-day records may carry the zone the file used; otherwise the
@@ -1421,6 +1431,8 @@ export async function eventFromIcs(text) {
   if (createdBy) model.createdBy = createdBy;
   const tagId = tagIdOf(masterBlock);
   if (tagId) model.tagId = tagId;
+  const folder = folderOfBlock(masterBlock);
+  if (folder) model.folder = folder;
   const lunar = lunarOfBlock(masterBlock);
   if (lunar) Object.assign(model, lunar);
   if (master && Array.isArray(master.exdates) && master.exdates.length) model.exdates = master.exdates;

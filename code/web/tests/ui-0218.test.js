@@ -590,7 +590,10 @@ describe('C6 事件编辑弹窗：农历日期控件', () => {
     // 开关加回「全天」行上方，它与弹层两段式共用 setLunarMode，状态不分叉。
     const lunarToggle = document.querySelector('.modal-scrim input[aria-label="农历"]');
     expect(lunarToggle).toBeTruthy();
-    expect(lunarToggle.closest('.field').nextElementSibling.textContent).toContain('全天');
+    const lunarToggleRow = lunarToggle.closest('.field, .inline-field');
+    // 0.8.42：农历行与「全天」行之间只隔它自己的 status 提示行。
+    expect(lunarToggleRow.nextElementSibling.getAttribute('role')).toBe('status');
+    expect(lunarToggleRow.nextElementSibling.nextElementSibling.textContent).toContain('全天');
     expect(modalJs).toContain('setLunarMode');
     expect(modalJs).not.toContain('editor__date-mode');
     expect(modalJs).toContain("import { closeDatePopover, openDatePopover }");

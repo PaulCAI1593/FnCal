@@ -23,6 +23,11 @@ import { openCalendarSettings } from './calendar-dialog.js';
 // 0.7.0：设置第 2 页签「标签」（一般 → 标签 → CalDAV → AI）。
 import { createTagsPage } from './tags-settings.js';
 import { openDataCheckDialog } from './data-check.js';
+// 0.9.1（E）：附件存放位置（应用文件夹 / NAS 附件库）与文件夹选择。
+import { openFolderBrowser } from './folder-browser.js';
+import { getInstanceAttachmentSettings, putInstanceAttachmentSettings, testAttachmentStorage } from './api-client.js';
+// 0.9.2（任务书 §三）：设置 → 高级 → 备份（按用户，所有登录用户可用）。
+import { createBackupSection } from './backup-settings.js';
 // 0.3.0（P4）：设置 → 「AI」页签（设计侧真源 design/M8-AI接入设置页-规范.md）。
 // 0.6.13（首包拆分）：AI 页约 67 KB 源码，改为切到该页签时才 `import()`，
 // 主包不再包含它；加载期间用静态骨架占位，失败给提示 + 重试（不白屏）。
@@ -269,6 +274,259 @@ export function openAccountDialog({
   ]);
   weekModeRow.hidden = !settings.showWeekNumbers;
 
+  // 0.9.1（F.4C，用户 2026-11-20）：附件设置搬到「高级」页签，而且是**实例级**设置——
+  // 全机器一个存放位置 + 一套应用内限额，只有管理员能改，普通用户只读。
+  // 数据一律走 GET|PUT /api/v1/instance/attachment-settings，不再进 saveSetting 暂存。
+  const attachmentStorageHint = t('settings.attachmentStorage.hint');
+  const fnosGrantHint = t('settings.attachmentStorage.rootHint');
+  const instanceAttachment = {
+    storage: 'app',
+    root: '',
+    eventLimitMB: 40,
+    fileLimitMB: 20,
+    fileLimitEnabled: true,
+    minMB: 1,
+    maxMB: 10240,
+    canEdit: false,
+    loaded: false,
+  };
+  const adminOnlyHint = el('p', { class: 'settings__hint', text: t('settings.advanced.adminOnly'), hidden: true });
+  const instanceState = el('p', { class: 'settings__hint' });
+
+  const attachmentRootValue = el('input', {
+    class: 'input',
+    type: 'text',
+    readonly: true,
+    'aria-label': t('settings.attachmentStorage'),
+  });
+  const attachmentRootState = el('p', { class: 'settings__hint' });
+  const attachmentRootPick = el('button', {
+    class: 'btn',
+    type: 'button',
+    text: t('settings.attachmentStorage.pick'),
+    on: {
+      click: () =>
+        openFolderBrowser({
+          mode: 'pick',
+          title: t('settings.attachmentStorage.pick'),
+          onPick: (picked) => {
+            instanceAttachment.root = picked;
+            instanceAttachment.storage = 'library';
+            syncInstanceControls();
+            renderAttachmentStorage();
+            void saveInstance({ attachmentStorage: 'library', attachmentRoot: picked });
+          },
+        }),
+    },
+  });
+  const attachmentRootTest = el('button', {
+    class: 'btn btn--ghost',
+    type: 'button',
+    text: t('settings.attachmentStorage.test'),
+    on: {
+      click: async () => {
+        const target = instanceAttachment.root;
+        if (!target) return;
+        attachmentRootTest.disabled = true;
+        try {
+          const result = await testAttachmentStorage(target);
+          // 四态（任务书 §3.2.1）：可读写 / 可读（只读）/ 未确认 / 不可读。
+          const degraded = Boolean(result && result.degraded);
+          const state = degraded
+            ? t('settings.attachmentStorage.testUnknown')
+            : result && result.writable
+              ? t('folderBrowser.testOk')
+              : result && result.readable
+                ? t('settings.attachmentStorage.testReadOnly')
+                : t('folderBrowser.testFailed');
+          attachmentRootState.textContent = state;
+          attachmentRootState.dataset.state = degraded
+            ? 'unknown'
+            : result && result.writable
+              ? 'ok'
+              : result && result.readable
+                ? 'readonly'
+                : 'fail';
+        } catch (err) {
+          attachmentRootState.textContent = err && err.message ? err.message : t('folderBrowser.testFailed');
+          attachmentRootState.dataset.state = 'fail';
+        } finally {
+          attachmentRootTest.disabled = !instanceAttachment.canEdit;
+        }
+      },
+    },
+  });
+  const attachmentRootRow = el('div', { class: 'settings__row settings__row--split' }, [
+    el('span', { class: 'settings__label', text: '' }),
+    el('div', { class: 'settings__control' }, [
+      el('div', { class: 'folder-field__row' }, [attachmentRootValue, attachmentRootPick, attachmentRootTest]),
+      attachmentRootState,
+      el('p', { class: 'settings__hint', text: t('settings.attachmentStorage.restartHint') }),
+      el('p', { class: 'settings__hint', text: t('settings.attachmentStorage.aiHint') }),
+    ]),
+  ]);
+  const attachmentStorageSeg = segmented(
+    [
+      { value: 'app', label: t('settings.attachmentStorage.app') },
+      { value: 'library', label: t('settings.attachmentStorage.nas') },
+    ],
+    instanceAttachment.storage,
+    (value) => {
+      instanceAttachment.storage = value;
+      renderAttachmentStorage();
+      void saveInstance({
+        attachmentStorage: value,
+        attachmentRoot: value === 'library' ? instanceAttachment.root : '',
+      });
+    },
+    t('settings.attachmentStorage'),
+  );
+  const attachmentStorageRow = settingRow(
+    t('settings.attachmentStorage'),
+    el('div', { class: 'settings__stack' }, [
+      attachmentStorageSeg,
+      attachmentRootRow,
+      el('p', { class: 'settings__hint', text: attachmentStorageHint }),
+      el('p', { class: 'settings__hint', text: fnosGrantHint }),
+    ]),
+  );
+  function renderAttachmentStorage() {
+    const library = instanceAttachment.storage === 'library';
+    attachmentRootRow.hidden = !library;
+    attachmentRootValue.value = instanceAttachment.root || t('settings.attachmentStorage.none');
+    if (!library) {
+      attachmentRootState.textContent = '';
+      delete attachmentRootState.dataset.state;
+    }
+    const buttons = Array.from(attachmentStorageSeg.querySelectorAll('[role="radio"]'));
+    buttons.forEach((node, i) => node.setAttribute('aria-checked', String(i === (library ? 1 : 0))));
+  }
+
+  // 0.9.1（F.4，用户 2026-11-20）：应用内附件限额（实例级，只有管理员能改）。
+  // 只约束「应用文件夹」；NAS 附件库与关联文件夹不受这些数值限制，只看磁盘剩余空间。
+  const eventLimitInput = el('input', {
+    class: 'input',
+    type: 'number',
+    min: 1,
+    max: 10240,
+    step: 1,
+    value: instanceAttachment.eventLimitMB,
+    'aria-label': t('settings.attachment.eventLimit'),
+  });
+  const fileLimitInput = el('input', {
+    class: 'input',
+    type: 'number',
+    min: 1,
+    max: 10240,
+    step: 1,
+    value: instanceAttachment.fileLimitMB,
+    'aria-label': t('settings.attachment.fileLimit'),
+  });
+  const fileLimitToggle = switchToggle(instanceAttachment.fileLimitEnabled, t('settings.attachment.fileLimitEnabled'), (on) => {
+    instanceAttachment.fileLimitEnabled = on;
+    syncInstanceControls();
+    void saveInstance({ attachmentFileLimitEnabled: on });
+  });
+  const appLimitsState = el('p', { class: 'settings__hint' });
+  function showLimitState(message) {
+    appLimitsState.textContent = message || '';
+    if (message) appLimitsState.dataset.state = 'danger';
+    else delete appLimitsState.dataset.state;
+  }
+  async function saveInstance(patch) {
+    if (!instanceAttachment.canEdit) return;
+    try {
+      const result = await putInstanceAttachmentSettings(patch);
+      applyInstance(result && result.values ? result.values : null, result ? result.canEdit !== false : instanceAttachment.canEdit);
+      showLimitState('');
+    } catch (err) {
+      const message = err && err.message ? err.message : t('settings.attachment.limitInvalid');
+      showLimitState(message);
+      // 失败后回读一次，把本地值与磁盘上的真实值对齐。
+      void loadInstanceSettings();
+    }
+  }
+  function clampLimit(value, fallback) {
+    const mb = Math.floor(Number(value));
+    if (!Number.isFinite(mb)) return fallback;
+    return Math.min(instanceAttachment.maxMB, Math.max(instanceAttachment.minMB, mb));
+  }
+  function commitLimits() {
+    if (!instanceAttachment.canEdit) return;
+    const nextEvent = clampLimit(eventLimitInput.value, instanceAttachment.eventLimitMB);
+    const nextFile = clampLimit(fileLimitInput.value, instanceAttachment.fileLimitMB);
+    if (instanceAttachment.fileLimitEnabled && nextFile > nextEvent) {
+      showLimitState(t('settings.attachment.limitInvalid'));
+      eventLimitInput.value = instanceAttachment.eventLimitMB;
+      fileLimitInput.value = instanceAttachment.fileLimitMB;
+      return;
+    }
+    instanceAttachment.eventLimitMB = nextEvent;
+    instanceAttachment.fileLimitMB = nextFile;
+    eventLimitInput.value = nextEvent;
+    fileLimitInput.value = nextFile;
+    void saveInstance({ attachmentEventLimitMB: nextEvent, attachmentFileLimitMB: nextFile });
+  }
+  eventLimitInput.addEventListener('change', commitLimits);
+  fileLimitInput.addEventListener('change', commitLimits);
+  const appLimitsRow = settingRow(
+    t('settings.attachment.eventLimit'),
+    el('div', { class: 'settings__stack' }, [
+      el('div', { class: 'folder-field__row' }, [eventLimitInput]),
+      el('div', { class: 'folder-field__row' }, [
+        fileLimitToggle,
+        el('span', { class: 'settings__label', text: t('settings.attachment.fileLimitEnabled') }),
+      ]),
+      el('div', { class: 'folder-field__row' }, [fileLimitInput]),
+      el('p', { class: 'settings__hint', text: t('settings.attachment.limitsHint') }),
+      appLimitsState,
+    ]),
+  );
+
+  /** 把实例接口回包套进控件；`canEdit:false` 时整块置灰。 */
+  function applyInstance(values, canEdit) {
+    if (values && typeof values === 'object') {
+      instanceAttachment.storage = values.attachmentStorage === 'library' ? 'library' : 'app';
+      instanceAttachment.root = typeof values.attachmentRoot === 'string' ? values.attachmentRoot : '';
+      const eventMB = clampLimit(values.attachmentEventLimitMB, instanceAttachment.eventLimitMB);
+      const fileMB = clampLimit(values.attachmentFileLimitMB, instanceAttachment.fileLimitMB);
+      instanceAttachment.eventLimitMB = eventMB;
+      instanceAttachment.fileLimitMB = fileMB;
+      instanceAttachment.fileLimitEnabled = values.attachmentFileLimitEnabled !== false;
+      if (Number.isFinite(Number(values.minMB))) instanceAttachment.minMB = Number(values.minMB);
+      if (Number.isFinite(Number(values.maxMB))) instanceAttachment.maxMB = Number(values.maxMB);
+    }
+    if (canEdit !== undefined) instanceAttachment.canEdit = Boolean(canEdit);
+    instanceAttachment.loaded = true;
+    eventLimitInput.value = instanceAttachment.eventLimitMB;
+    fileLimitInput.value = instanceAttachment.fileLimitMB;
+    fileLimitToggle.querySelector('input').checked = instanceAttachment.fileLimitEnabled;
+    syncInstanceControls();
+    renderAttachmentStorage();
+  }
+  function syncInstanceControls() {
+    const canEdit = instanceAttachment.canEdit;
+    adminOnlyHint.hidden = canEdit;
+    for (const node of Array.from(attachmentStorageRow.querySelectorAll('input, button'))) node.disabled = !canEdit;
+    for (const node of Array.from(appLimitsRow.querySelectorAll('input, button'))) node.disabled = !canEdit;
+    // 关掉「单一文件上限」时只禁用那个数字框；开关本身与其余项照旧。
+    if (canEdit) fileLimitInput.disabled = !instanceAttachment.fileLimitEnabled;
+  }
+  async function loadInstanceSettings() {
+    try {
+      const result = await getInstanceAttachmentSettings();
+      applyInstance(result && result.values ? result.values : null, result ? result.canEdit !== false : false);
+      instanceState.textContent = '';
+      delete instanceState.dataset.state;
+    } catch (err) {
+      instanceState.textContent = err && err.message ? err.message : t('settings.advanced.adminOnly');
+      instanceState.dataset.state = 'danger';
+      // 读不到就按只读处理，避免普通用户在坏网络下误以为能改。
+      instanceAttachment.canEdit = false;
+      syncInstanceControls();
+    }
+  }
+
   const generalPage = el('div', { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-general' }, [
     settingRow(
       t('settings.theme'),
@@ -332,6 +590,23 @@ export function openAccountDialog({
     // 0.2.2（③）：「事件颜色（按日历/按分类）」设置项已删除——事件默认取所属
     // 日历色、可被事件级手动色覆盖，不再需要这个模式开关。
   ]);
+
+  // 0.9.2：备份节在附件节之后（顺序：附件 → 备份）。
+  const backupSection = createBackupSection();
+
+  // 0.9.1（F.4C，用户 2026-11-20）：「一般」与「标签」之间加「高级」，附件设置整体搬进来。
+  const advancedPage = el(
+    'div',
+    { class: 'settings__page', role: 'tabpanel', 'aria-labelledby': 'settings-tab-advanced', hidden: true },
+    [
+      el('h2', { class: 'settings__section-title', text: t('settings.advanced.title') }),
+      adminOnlyHint,
+      attachmentStorageRow,
+      appLimitsRow,
+      instanceState,
+      backupSection.node,
+    ],
+  );
 
   /* ---- 日历页（表格，#6） ---- */
 
@@ -828,9 +1103,12 @@ export function openAccountDialog({
   }
 
   const tagsView = createTagsPage({ store, toast });
+  void loadInstanceSettings();
 
   const tabs = [
     { id: 'general', label: t('settings.tab.general'), page: generalPage },
+    // 0.9.1（F.4C，用户 2026-11-20）：附件设置搬进「高级」，位置固定在「一般」之后、「标签」之前。
+    { id: 'advanced', label: t('settings.tab.advanced'), page: advancedPage },
     // 0.7.0（用户）：标签独占第 2 页签，位置固定在「一般」之后、「CalDAV」之前。
     { id: 'tags', label: t('settings.tab.tags'), page: tagsView.page },
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV——页签由 5 枚回到 4 枚。
@@ -869,6 +1147,11 @@ export function openAccountDialog({
       if (tabDef.id === 'account' && active) renderTable();
       // 0.7.0：标签数量可能在别处（新建/删除日程）变过，每次切入重读一次。
       if (tabDef.id === 'tags' && active) void tagsView.refresh();
+      // 0.9.1（F.4C）：附件设置是实例级的，可能被别的管理员改过，每次切入重读。
+      if (tabDef.id === 'advanced' && active) {
+        void loadInstanceSettings();
+        backupSection.load();
+      }
       // AI 页每次切入都重新拉一次（服务开关/凭据/提案都可能被其它会话改过）。
       // 0.3.7：列表拉完再补一次红点计数——用户可能正好停在 AI 页看着队列，
       // 受理/驳回后这里也要跟着灭掉（ai-settings.js 里已经直接刷过一次）。
@@ -885,7 +1168,13 @@ export function openAccountDialog({
         });
       }
     });
-    if (tabButtons[index]) tabButtons[index].focus();
+    if (tabButtons[index]) {
+      tabButtons[index].focus();
+      // 0.9.1（F.4C）：窄屏页签条横向滚动，选中项滚进可视区（桌面不滚）。
+      if (typeof tabButtons[index].scrollIntoView === 'function') {
+        tabButtons[index].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    }
   }
   tabbar.addEventListener('keydown', (e) => {
     const i = tabButtons.indexOf(document.activeElement);
@@ -992,7 +1281,7 @@ export function openAccountDialog({
     ]),
     el('div', { class: 'modal__body settings__body' }, [
       tabbar,
-      el('div', { class: 'settings__pages' }, [generalPage, tagsView.page, accountPage, aiPageHost]),
+      el('div', { class: 'settings__pages' }, [generalPage, advancedPage, tagsView.page, accountPage, aiPageHost]),
     ]),
     // 0.5.22（用户 m00535 / m00549）：页脚收成「按钮行 + 左侧两行小块」。
     // 上面一行只放「有 N 项未应用」（N=0 时整行不渲染）；按钮行左侧小块两行：

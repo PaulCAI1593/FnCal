@@ -100,7 +100,7 @@ function methodNotAllowed(res, allow) {
   json(res, 405, { ok: false, code: 'method_not_allowed', allow });
 }
 
-export function createAiApi({ aiStore, auth, logger = null, audit = null, trash = null } = {}) {
+export function createAiApi({ aiStore, auth, logger = null, audit = null, trash = null, approvalReceipts = null } = {}) {
   if (!aiStore) throw new Error('createAiApi 需要 aiStore');
   if (!auth) throw new Error('createAiApi 需要 auth');
 
@@ -117,6 +117,27 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
 
   function logEvent(event, detail = {}) {
     if (logger && typeof logger.event === 'function') logger.event(event, detail);
+  }
+
+  /**
+   * 0.8.43（任务书 §八）：App 内决策也要发回执，让发起提案的 AI 下一次读工具时拿到
+   * 「已批准 / 已拒绝」。与审批链接页（api/approval-page.mjs）共用同一个 receipts 实例，
+   * 由 server.mjs 只建一次后注入；没注入（单元测试或旧接线）时静默跳过。
+   * 回执是附属动作：写不进去只记日志，绝不改决策响应。
+   */
+  function publishReceipt({ credentialId, proposalId, action, ok }) {
+    if (!approvalReceipts || typeof approvalReceipts.publish !== 'function') return;
+    const credential = typeof credentialId === 'string' ? credentialId.trim() : '';
+    if (!credential) return;
+    try {
+      approvalReceipts.publish({ credentialId: credential, proposalId, action, ok: ok === true });
+    } catch (err) {
+      logEvent('approval-receipt-publish-failed', {
+        proposalId: proposalId === undefined ? null : proposalId,
+        action,
+        message: String((err && err.message) || err),
+      });
+    }
   }
 
   async function requireIdentity(req, res) {
@@ -389,22 +410,37 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
       const remoteAddress = (req.socket && req.socket.remoteAddress) || null;
       const actor = identity.account.username || identity.account.id;
       let batch;
+      // 回执要记「这条提案属于哪个凭据」，决策后提案已改状态，决策前先取一次。
+      const receiptCredentials = new Map();
       try {
         batch = await runProposalBatch({
           action,
           ids: body.ids,
-          decideOne: (id) => (action === 'accept'
-            ? acceptProposalSafely(userId, id)
-            : aiStore.rejectProposal(userId, id, { reason })),
-          onItem: (entry) => writeDecisionAudit({
-            actor,
-            userId,
-            proposalId: entry.id,
-            action,
-            ok: entry.ok,
-            code: entry.ok ? '' : entry.code,
-            remoteAddress,
-          }),
+          decideOne: async (id) => {
+            const before = await aiStore.getProposal(userId, id).catch(() => null);
+            const credentialId = before && before.credentialId ? before.credentialId : '';
+            if (credentialId) receiptCredentials.set(id, credentialId);
+            return action === 'accept'
+              ? acceptProposalSafely(userId, id)
+              : aiStore.rejectProposal(userId, id, { reason });
+          },
+          onItem: (entry) => {
+            writeDecisionAudit({
+              actor,
+              userId,
+              proposalId: entry.id,
+              action,
+              ok: entry.ok,
+              code: entry.ok ? '' : entry.code,
+              remoteAddress,
+            });
+            publishReceipt({
+              credentialId: receiptCredentials.get(entry.id),
+              proposalId: entry.id,
+              action: action === 'accept' ? 'accept' : 'reject',
+              ok: entry.ok,
+            });
+          },
         });
       } catch (err) {
         if (err && err.code === 'invalid') {
@@ -450,6 +486,12 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
         return json(res, 404, { ...NOT_FOUND_BODY });
       }
       writeDecisionAudit({ actor, userId, proposalId: id, action, ok: true, code: '', remoteAddress });
+      publishReceipt({
+        credentialId: result && result.credentialId,
+        proposalId: (result && result.id) || id,
+        action: 'accept',
+        ok: true,
+      });
       return json(res, 200, { ok: true, proposal: result });
     }
     const body = await readJsonBody(req).catch(() => ({}));
@@ -460,6 +502,12 @@ export function createAiApi({ aiStore, auth, logger = null, audit = null, trash 
       return json(res, 404, { ...NOT_FOUND_BODY });
     }
     writeDecisionAudit({ actor, userId, proposalId: id, action, ok: true, code: '', remoteAddress });
+    publishReceipt({
+      credentialId: result && result.credentialId,
+      proposalId: (result && result.id) || id,
+      action: 'reject',
+      ok: true,
+    });
     return json(res, 200, { ok: true, proposal: result });
   }
 

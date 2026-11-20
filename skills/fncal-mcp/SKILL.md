@@ -1,8 +1,8 @@
 ---
 name: fncal-mcp
 description: "Use when the user wants to read or change their FnCal calendar through the FnCal MCP server: what is on today/this week, look for a free slot, create or move an event or task, set up a lunar or Gregorian repeat, or confirm a pending AI proposal. Covers FnCal's permission model — invisible calendars behave as if they do not exist, reads are limited to the credential's time window, and writes follow two per-credential switches: create/update (proposal or direct) and delete (proposal, or trash where a deleted event is recoverable for a retention period). When the credential allows agent approval you can also approve or reject your own pending proposals. It can also settle pending proposals, but only after the user confirms: with two or more pending, only after they pick all-at-once or one-by-one; with exactly one, after a single confirmation. It can also generate the year's annual review card as a 1080×1440 PNG (generate_annual_review, read-only). Do not use for CalDAV client setup, for other calendar services, or for anything outside scheduling."
-version: 0.8.40
-fncalMinVersion: 0.8.40
+version: 0.9.3
+fncalMinVersion: 0.9.3
 user-invocable: true
 license: MIT
 ---
@@ -122,6 +122,9 @@ A name can be used directly when you just saw it; if you are not sure of the spe
 | `list_calendars` | read | — (each calendar carries `access`, `visible`, `type`: `calendar` or `vtodo`) |
 | `list_events` | read | — (`calendar`, `from`, `to` optional; each event carries `lunar`, `lunarRule`, `recurrence`; lunar repeats come back once per occurrence with `recurrenceId`) |
 | `get_event` | read | `uid` (`<uid>::<ms>` for one lunar occurrence) |
+| `list_attachments` | read | `uid` (`<uid>::<ms>` or `recurrenceId` for one occurrence); `storage` is `app`, `library` or `linked` |
+| `get_attachment` | read | `id`; images also come as an MCP `image` block plus a 30-minute link |
+| `create_attachment_upload_link` | write | `uid`; `expiresInMinutes` (default 30, max 1440), `maxFiles` (default 10, max 10) |
 | `list_tasks` | read | — (`calendar`, `from`, `to`, `tags`, `done` optional; tasks without a due date always come back) |
 | `get_task` | read | `uid` (`calendarId` optional) |
 | `find_free_slots` | read | — (`from`, `to`, `minMinutes` optional) |
@@ -213,6 +216,25 @@ Two worked calls:
 // 勾完成 → 到期日推到下一个农历初一
 {"name":"complete_task","arguments":{"uid":"…"}}
 ```
+
+### 附件（0.9.1）：三种存放位置
+
+附件永远属于**某一次**日程（重复系列要写 `<uid>::<毫秒>` 或传 `recurrenceId`；系列主记录本身没有附件）。先 `list_attachments` 取 id，再 `get_attachment`。
+
+`storage` 有三种，行为不同：
+
+| `storage` | 含义 | 读 | 写（AI） |
+|---|---|---|---|
+| `app` | 应用内（随 FnCal 数据备份） | 正常读，受实例限额 | `create_attachment_upload_link` 可签发；上限取「剩余额度」与「单文件上限 + 1 MB」的较小值 |
+| `library` | NAS 附件库（用户在设置里指定的目录） | 正常读；视频只回元数据与流式链接 | 可签发上传链接；与应用内共用实例限额 |
+| `linked` | 关联文件夹（用户自己的目录，**固定只读**） | 列出条目、按 `id` 读单个文件、子目录最多 10 层 | 所有写操作回 `folder_read_only`：不能上传、删除、改名，也不能签发上传链接 |
+
+- 关联文件夹没有读写档位，也没有 `X-FNCAL-FOLDER-MODE`；要在那里增删文件，请用户自己到 NAS 上操作。
+- FnCal 不在绑定目录里建任何文件或目录（不写索引、不缓存、不写缩略图），**不改名、不移动、不删除用户自己的文件**；这些文件永不进 FnCal 备份。
+- `get_attachment` 单条读取上限 5 MB（`attachment_too_large_for_mcp`），超过只给链接；图片同时给 `image` 块与 `/i/a/<令牌>` 链接，30 分钟有效、最多 50 次，过期 410。
+- 上传链接 `url` 形如 `/u/a/<令牌>`：用户在自己手机浏览器打开就能选文件。凭据设了 PIN 就先验 PIN（错 5 次失效），没设 PIN 则链接本身即凭据；页面上传不需要登录、不接受客户端改目标；过期 410，文件数用完 409 `attachment_link_exhausted`。把链接原样发给用户，**不要**让他把文件贴进对话。
+- 凭据的「附件」开关（`allowAttachments`，默认开）关闭后，三个附件工具统一回 `attachment_forbidden`，已签发的链接立即失效。
+- `delete_event` 遇到带附件的日程，第一次返回 `attachment_confirm_required` + `attachments: {count, storage}`，**不删**；把数量与位置告诉用户，得到确认后带 `confirmAttachments: true` 再调。
 
 ### Approval receipts — do not poll
 

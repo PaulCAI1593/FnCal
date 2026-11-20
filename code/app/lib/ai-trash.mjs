@@ -17,6 +17,7 @@ import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 import { runWithContext } from './request-context.mjs';
+import { attachmentStorageOf } from './nas-attachments.mjs';
 
 /** `store.readUserData` 的文件名（实际落盘 `ai-trash.json`）。 */
 export const AI_TRASH_NAME = 'ai-trash';
@@ -45,7 +46,14 @@ function textOf(value, max) {
   return typeof value === 'string' ? value.slice(0, max) : '';
 }
 
-export function createAiTrash({ store = null, logger = null, now = () => Date.now() } = {}) {
+export function createAiTrash({
+  store = null,
+  logger = null,
+  now = () => Date.now(),
+  attachments = null,
+  nasAttachments = null,
+  nasSettings = null,
+} = {}) {
   if (!store) throw new Error('createAiTrash 需要 store');
 
   function logEvent(event, detail = {}) {
@@ -58,6 +66,97 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
 
   function emptyFile() {
     return { version: 1, items: [] };
+  }
+
+  // 0.9.1 A 项：附件随日程回收站走。附件不可用时整条链路降级为「只记日志」，不阻塞删除。
+  async function trashAttachmentsOf(userId, item, keys) {
+    if (!attachments || !item || !item.calendarId) return [];
+    try {
+      if (Array.isArray(keys) && keys.length) {
+        return await attachments.moveToTrash({
+          userId, calendarId: item.calendarId, keys, trashId: item.id,
+        });
+      }
+      const under = await attachments.keysUnderUid(userId, item.calendarId, item.uid);
+      if (!under.length) return [];
+      return await attachments.moveToTrash({
+        userId, calendarId: item.calendarId, keys: under, trashId: item.id,
+      });
+    } catch (err) {
+      logEvent('attachments-trash-failed', { userId, itemId: item.id, error: err && err.code });
+      return [];
+    }
+  }
+
+  /** 0.9.1 E：附件库在 NAS 时，整条日程的附件也随回收站搬进 `<root>/.fncal/trash/`。 */
+  async function nasRootOf(userId) {
+    if (!nasAttachments || typeof nasAttachments.moveObjectToTrash !== 'function') return null;
+    try {
+      // 0.9.1（F.4B）：附件库位置是实例级设置；未注入时退回用户 settings（老测试）。
+      const settings = nasSettings && typeof nasSettings.read === 'function'
+        ? nasSettings.read()
+        : await withUser(userId, () => store.readUserData('settings'));
+      const storage = await attachmentStorageOf(settings);
+      return storage.mode === 'library' ? storage.root : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function trashNasAttachmentsOf(userId, item) {
+    const root = await nasRootOf(userId);
+    if (!root) return [];
+    try {
+      const moved = await nasAttachments.moveObjectToTrash({
+        root, objectKey: item.uid, trashId: item.id, userId,
+      });
+      return moved;
+    } catch (err) {
+      logEvent('nas-attachments-trash-failed', { userId, itemId: item.id, error: err && err.code });
+      return [];
+    }
+  }
+
+  async function restoreNasAttachmentsOf(userId, item) {
+    if (!nasAttachments || typeof nasAttachments.restoreObjectFromTrash !== 'function') return [];
+    const root = await nasRootOf(userId);
+    if (!root) return [];
+    try {
+      return await nasAttachments.restoreObjectFromTrash({ root, trashId: item.id });
+    } catch (err) {
+      logEvent('nas-attachments-restore-failed', { userId, itemId: item.id, error: err && err.code });
+      return [];
+    }
+  }
+
+  async function purgeNasAttachmentsOf(userId, items = []) {
+    if (!nasAttachments || typeof nasAttachments.purgeTrashBucket !== 'function') return;
+    const root = await nasRootOf(userId);
+    if (!root) return;
+    for (const item of items) {
+      if (!item || !item.id) continue;
+      await nasAttachments.purgeTrashBucket({ root, trashId: item.id }).catch(() => {});
+    }
+  }
+
+  async function restoreAttachmentsOf(userId, item) {
+    if (!attachments || !item || !item.calendarId) return [];
+    try {
+      return await attachments.restoreFromTrash({
+        userId, calendarId: item.calendarId, trashId: item.id,
+      });
+    } catch (err) {
+      logEvent('attachments-restore-failed', { userId, itemId: item.id, error: err && err.code });
+      return [];
+    }
+  }
+
+  async function purgeAttachmentsOf(userId, items = []) {
+    if (!attachments) return;
+    for (const item of items) {
+      if (!item || !item.calendarId) continue;
+      await attachments.purgeTrash({ userId, calendarId: item.calendarId, trashId: item.id });
+    }
   }
 
   function normalizeItem(raw) {
@@ -76,6 +175,10 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
       title: textOf(raw.title, 500),
       deletedAt,
       restoreUntil: typeof raw.restoreUntil === 'string' ? raw.restoreUntil : null,
+      // 0.9.1 A 项：这条回收站记录带走的附件键（`<uid>` / `<uid>::<rid>`）。
+      attachmentKeys: Array.isArray(raw.attachmentKeys)
+        ? raw.attachmentKeys.filter((key) => typeof key === 'string' && key.length <= 160).slice(0, 64)
+        : [],
     };
   }
 
@@ -132,9 +235,11 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
     const kept = [];
     let removed = 0;
     let changed = false;
+    const expired = [];
     for (const item of file.items) {
       if (isExpired(item, days, nowMs)) {
         removed += 1;
+        expired.push(item);
         continue;
       }
       const restoreUntil = restoreUntilOf(item, days);
@@ -144,7 +249,11 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
     if (!removed && !changed) return { file, removed: 0 };
     const next = { version: 1, items: kept };
     await save(userId, next);
-    if (removed) logEvent('ai-trash-pruned', { userId, removed });
+    if (removed) {
+      logEvent('ai-trash-pruned', { userId, removed });
+      await purgeAttachmentsOf(userId, expired);
+      await purgeNasAttachmentsOf(userId, expired);
+    }
     return { file: next, removed };
   }
 
@@ -154,6 +263,9 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
     const nowMs = now();
     const loaded = await load(userId);
     const { file } = await prune(userId, loaded, days, nowMs);
+    // 0.9.1 E：读取即顺手清 NAS 垃圾桶里超过 24 小时的桶（零云没有定时任务）。
+    const nasRoot = await nasRootOf(userId);
+    if (nasRoot) await nasAttachments.purgeExpiredTrash({ root: nasRoot }).catch(() => {});
     let items = file.items.slice().sort((a, b) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt));
     // 上限只在这里与 add() 收口：读取即淘汰最旧，不必等下一次删除才看到正确条数。
     if (items.length > TRASH_LIMIT) {
@@ -184,21 +296,37 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
       title: entry.title,
       deletedAt,
       restoreUntil: new Date(nowMs + retentionMs(days)).toISOString(),
+      attachmentKeys: Array.isArray(entry.attachmentKeys) ? entry.attachmentKeys : [],
     });
     if (!item || !item.calendarId || !item.uid || !item.ics) {
       throw trashError('invalid', '回收站记录不完整');
     }
     const items = [item, ...file.items].slice(0, TRASH_LIMIT);
+    // 先搬附件再落盘：搬失败只记日志（宁可留孤儿，也不让删除失败）。
+    const movedKeys = await trashAttachmentsOf(userId, item, item.attachmentKeys);
+    if (movedKeys.length) item.attachmentKeys = movedKeys.slice();
+    const movedNas = await trashNasAttachmentsOf(userId, item);
+    if (movedNas.length) item.attachmentStorage = 'library';
     await save(userId, { version: 1, items });
-    logEvent('ai-trash-added', { userId, itemId: item.id, calendarId: item.calendarId, uid: item.uid });
+    logEvent('ai-trash-added', { userId, itemId: item.id, calendarId: item.calendarId, uid: item.uid, attachments: item.attachmentKeys.length });
     return item;
   }
 
-  /** 删除一条（写回收站后又发现删除失败时回滚用）。 */
-  async function drop(userId, itemId) {
+  /** 删除一条（写回收站后又发现删除失败时回滚用）。`restoreAttachments` 回滚时把附件搬回原位。 */
+  async function drop(userId, itemId, { restoreAttachments = false } = {}) {
     const loaded = await load(userId);
+    const target = loaded.items.find((item) => item.id === itemId) || null;
     const next = loaded.items.filter((item) => item.id !== itemId);
     if (next.length === loaded.items.length) return false;
+    if (target) {
+      if (restoreAttachments) {
+        await restoreAttachmentsOf(userId, target);
+        await restoreNasAttachmentsOf(userId, target);
+      } else {
+        await purgeAttachmentsOf(userId, [target]);
+        await purgeNasAttachmentsOf(userId, [target]);
+      }
+    }
     await save(userId, { version: 1, items: next });
     return true;
   }
@@ -225,6 +353,8 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
     }
     const put = await withUser(userId, () => store.putObject(item.calendarId, item.uid, item.ics));
     if (!put || put.missingCalendar) throw trashError('missing_calendar', '原日历已删除，无法恢复', 404);
+    await restoreAttachmentsOf(userId, item);
+    await restoreNasAttachmentsOf(userId, item);
     await save(userId, { version: 1, items: loaded.items.filter((entry) => entry.id !== itemId) });
     logEvent('ai-trash-restore', {
       userId,
@@ -243,6 +373,8 @@ export function createAiTrash({ store = null, logger = null, now = () => Date.no
     const { file } = await prune(userId, loaded, days, now());
     const removed = file.items.length;
     if (removed) {
+      await purgeAttachmentsOf(userId, file.items);
+      await purgeNasAttachmentsOf(userId, file.items);
       await save(userId, emptyFile());
       logEvent('ai-trash-cleared', { userId, removed });
     }

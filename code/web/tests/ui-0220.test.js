@@ -473,7 +473,10 @@ describe('0.2.20 E6/E7：编辑器语种只剩弹层一处', () => {
     expect(document.querySelector('.editor__date-mode')).toBeNull();
     const toggle = document.querySelector('input[aria-label="农历"]');
     expect(toggle).toBeTruthy();
-    expect(toggle.closest('.field').nextElementSibling.textContent).toContain('全天');
+    const toggleRow = toggle.closest('.field, .inline-field');
+    // 0.8.42：农历行与「全天」行之间只隔它自己的 status 提示行。
+    expect(toggleRow.nextElementSibling.getAttribute('role')).toBe('status');
+    expect(toggleRow.nextElementSibling.nextElementSibling.textContent).toContain('全天');
     expect(document.querySelectorAll('.editor__date-field')).toHaveLength(2);
     expect(document.querySelectorAll('.editor__date-btn')).toHaveLength(2);
   });
@@ -752,7 +755,8 @@ describe('0.2.20 E13–E16：设置页', () => {
     // 0.6.4（用户 m00800）：「日历」页签收进 CalDAV 页，五个变四个。
     // 0.6.15（用户）：快捷键搬到头像菜单，设置回到三页签，第 4 页签与页面一起删除。
     // 0.7.0 起（用户）：新增「标签」第 2 页签。
-    expect(tabs).toEqual(['一般', '标签', 'CalDAV', 'AI']);
+    // 0.9.1（F.4C，用户 2026-11-20）：「高级」插在「一般」与「标签」之间。
+    expect(tabs).toEqual(['一般', '高级', '标签', 'CalDAV', 'AI']);
     expect(dialog.querySelector('#settings-page-shortcuts')).toBeNull();
     // 键位清单搬进独立模块，设置对话框不再持有
     const shortcuts = READ('src/js/shortcuts-dialog.js');

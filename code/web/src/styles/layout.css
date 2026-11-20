@@ -1021,6 +1021,19 @@
   gap: var(--sp-1);
   padding-bottom: 0;
 }
+/* 0.9.2：详情卡标题行的小字附件 id（附件库给 日期/日历 id，应用内给「应用内」）。 */
+.modal__head--with-id .view__kind {
+  margin-right: 0;
+}
+.view__storage-id {
+  min-width: 0;
+  margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-3);
+}
 .view__kind {
   margin-right: auto;
   font-size: var(--fs-xs);

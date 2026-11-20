@@ -478,23 +478,23 @@
 </header>
 <main>
   <section class="hero wrap">
-    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.8.41</p>
+    <p class="eyebrow"><span class="dot"></span>飞牛OS 应用 · 自托管日历 · v0.8.53</p>
     <h1 class="hero__title"><img class="hero__logo" src="logo/fncal-256.png" alt="" width="56" height="56">FnCal</h1>
     <p class="hero__tag">日历留在自己的 NAS 上</p>
     <p class="lede">FnCal 是跑在飞牛 OS 上的日历应用，自带 CalDAV 服务：手机和电脑上的日历客户端直接读写同一批日程。AI 助手能帮你读、帮你记，但写进日历之前要先过你这一关。运行时不访问任何第三方云。</p>
     <div class="actions">
-      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.41/FnCal-0.8.41.fpk">下载安装包 0.8.41</a>
+      <a class="btn btn--primary" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.53/FnCal-0.8.53.fpk">下载安装包 0.8.53</a>
       <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases">查看全部版本与安卓 APK</a>
       <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/mcp-skill-v0.8.40/FnCal-MCP-Skill-0.8.40.zip">下载 AI 技能包</a>
-      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.41/SHA256SUMS.txt">下载校验文件</a>
+      <a class="btn" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.53/SHA256SUMS.txt">下载校验文件</a>
     </div>
     <p style="margin-top:12px;font-size:var(--t-sm);color:var(--ink-3)">国内访问慢时可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>，内容与 GitHub 相同。</p>
-    <p style="margin-top:16px;font-size:var(--t-md);color:var(--ink-3)">安装包 22,068,072 B · 技能包 35,880 B（0.8.40）· 校验文件 176 B · 安卓 APK 随 0.4.3 发布。先看 <a href="#ai-abilities">两条 AI 能力</a>、<a href="#ai">提案与审批</a> 与 <a href="#features">六条特色</a>。</p>
+    <p style="margin-top:16px;font-size:var(--t-md);color:var(--ink-3)">安装包 22,102,289 B · 技能包 35,880 B（0.8.40）· 校验文件 83 B · 安卓 APK 随 0.4.3 发布。先看 <a href="#ai-abilities">两条 AI 能力</a>、<a href="#ai">提案与审批</a> 与 <a href="#features">六条特色</a>。</p>
     <dl class="spec">
       <div><dt>协议</dt><dd>CalDAV · RFC 4791</dd></div>
       <div><dt>数据</dt><dd>本机 <code>/vol1/<wbr>@appdata/<wbr>FnCal/</code></dd></div>
       <div><dt>许可</dt><dd>MIT</dd></div>
-      <div><dt>体积</dt><dd>22,068,072 B</dd></div>
+      <div><dt>体积</dt><dd>22,102,289 B</dd></div>
     </dl>
     <figure class="shot">
       <div class="shot__frame">
@@ -797,7 +797,7 @@
           <p>飞牛 OS 用户走应用中心；其他环境用 Docker。装之前先核对包的 SHA-256。</p>
         </div>
         <ol class="steps">
-          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.41/FnCal-0.8.41.fpk">Release 下载 <code>FnCal-0.8.41.fpk</code></a>（国内慢可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>），核对哈希后再装。</div></li>
+          <li><div><strong>下载并核对哈希</strong><br>从 <a href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.53/FnCal-0.8.53.fpk">Release 下载 <code>FnCal-0.8.53.fpk</code></a>（国内慢可用 <a href="https://gitee.com/Paul1593/FnCal/releases">Gitee 镜像</a>），核对哈希后再装。</div></li>
           <li><div><strong>安装向导</strong><br>填一个空闲端口（1024 以上，避开 5232）与管理员用户名、密码；两步都必填。</div></li>
           <li><div><strong>打开并登录</strong><br>装完点桌面图标，浏览器新标签打开 <code>http://&lt;NAS-IP&gt;:&lt;端口&gt;/</code>，用刚设的账号登录。</div></li>
         </ol>
@@ -807,17 +807,17 @@
           <li>依赖 Node.js 22，安装时由应用中心一并带上。</li>
           <li>端口范围 1024–65535；避开系统保留端口，不要用 5232。</li>
         </ul>
-        <p style="margin-top:22px;font-size:var(--t-md);color:var(--ink-2)">0.8.0 及以后的版本：升级在应用中心覆盖安装即可，数据保留。早于 0.8.0 的版本不能直接覆盖升级（0.8.0 起应用账号体系有变更）：先在应用中心卸载、卸载时选「保留资料」，再重装 0.8.41，安装向导里填与原来完全相同的管理员账号、密码与端口，数据与设置都接着用，等于无损更新。源码构建需要 Node.js 22，步骤见仓库 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/BUILD.md">BUILD.md</a>。</p>
+        <p style="margin-top:22px;font-size:var(--t-md);color:var(--ink-2)">0.8.0 及以后的版本：升级在应用中心覆盖安装即可，数据保留。早于 0.8.0 的版本不能直接覆盖升级（0.8.0 起应用账号体系有变更）：先在应用中心卸载、卸载时选「保留资料」，再重装 0.8.53，安装向导里填与原来完全相同的管理员账号、密码与端口，数据与设置都接着用，等于无损更新。源码构建需要 Node.js 22，步骤见仓库 <a href="https://github.com/PaulCAI1593/FnCal/blob/main/BUILD.md">BUILD.md</a>。</p>
       </div>
       <div>
         <pre class="code"><span># 先核对哈希（Linux / macOS）</span>
-sha256sum FnCal-0.8.41.fpk
+sha256sum FnCal-0.8.53.fpk
 
 <span># Windows PowerShell</span>
-Get-FileHash .\FnCal-0.8.41.fpk -Algorithm SHA256
+Get-FileHash .\FnCal-0.8.53.fpk -Algorithm SHA256
 
 <span># 期望值</span>
-79B8F1EBD3B4ABFA178F2009ADBADC7F659CDEAF5ECC2F82E4FD2DF9726C19D0</pre>
+92129DB7546460E2930B82DB0DC9FB0A1D0BE3C0BD1F47024178D889C4FAEEAA</pre>
         <div class="callout">
           <strong>对公网开放时请套 HTTPS 反向代理。</strong>FnCal 不做来源 IP 白名单：谁能访问这个端口，谁就能看到登录页。限流、CSRF 与会话安全始终开启。
         </div>
@@ -1004,16 +1004,16 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
       <div class="sec__head">
         <p class="kicker">Releases</p>
         <h2>版本与下载</h2>
-        <p>当前版本 0.8.41（2026-11-18）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
+        <p>当前版本 0.8.53（2026-11-20）。旧版本不要再装；升级用应用中心覆盖安装，数据保留。</p>
       </div>
       <div class="assets">
         <div class="asset">
-          <div class="asset__name">安装包 <code>FnCal-0.8.41.fpk</code></div>
+          <div class="asset__name">安装包 <code>FnCal-0.8.53.fpk</code></div>
           <div class="asset__act">
-            <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.8.41.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.41/FnCal-0.8.41.fpk">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安装包 FnCal-0.8.41.fpk" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.8.41/FnCal-0.8.41.fpk">Gitee 镜像</a>
+            <a class="btn btn--primary" aria-label="下载安装包 FnCal-0.8.53.fpk" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.53/FnCal-0.8.53.fpk">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载安装包 FnCal-0.8.53.fpk" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.8.53/FnCal-0.8.53.fpk">Gitee 镜像</a>
           </div>
-          <div class="asset__meta">22,068,072 B · SHA-256 79B8F1EBD3B4ABFA178F2009ADBADC7F659CDEAF5ECC2F82E4FD2DF9726C19D0</div>
+          <div class="asset__meta">22,102,289 B · SHA-256 92129DB7546460E2930B82DB0DC9FB0A1D0BE3C0BD1F47024178D889C4FAEEAA</div>
         </div>
         <div class="asset">
           <div class="asset__name">安卓 APK <code>FnCal-Android</code></div>
@@ -1034,15 +1034,22 @@ https://gitee.com/Paul1593/FnCal/raw/main/skills/fncal-mcp/SKILL.md
         <div class="asset">
           <div class="asset__name">校验文件 <code>SHA256SUMS.txt</code></div>
           <div class="asset__act">
-            <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.41/SHA256SUMS.txt">下载</a>
-            <a class="asset__mirror" aria-label="从 Gitee 镜像下载校验文件 SHA256SUMS.txt" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.8.41/SHA256SUMS.txt">Gitee 镜像</a>
+            <a class="btn" aria-label="下载校验文件 SHA256SUMS.txt" href="https://github.com/PaulCAI1593/FnCal/releases/download/v0.8.53/SHA256SUMS.txt">下载</a>
+            <a class="asset__mirror" aria-label="从 Gitee 镜像下载校验文件 SHA256SUMS.txt" href="https://gitee.com/Paul1593/FnCal/releases/download/v0.8.53/SHA256SUMS.txt">Gitee 镜像</a>
           </div>
-          <div class="asset__meta">176 B · 两行：安装包与 AI 技能包（0.8.40）· SHA-256 0AFEFF80ADFBBCA2A619F78FD8A92E71D0AC44516CDEEE8E12AF804BBEDBDE24</div>
+          <div class="asset__meta">83 B · 一行：安装包 · SHA-256 62CCBC3D75CF0DF9D4EBDB35000A4DF594D8A12F3DF6CBCB146E91E87070B3BB</div>
         </div>
       </div>
-      <h3 class="sub">0.8.0 – 0.8.41 新增</h3>
+      <h3 class="sub">0.8.0 – 0.8.53 新增</h3>
       <ul class="rules">
-        <li><strong>农历开关与农历重复（0.8.35）。</strong>新建与编辑事件的「全天」上方新增「农历」开关：打开后日期按农历显示，重复可选「每年（农历）」「每月（农历）」。农历每月按初一展开，小月没有三十就跳过；详情卡写明这次是该系列的第几次。</li>
+<li><strong>下拉菜单不再被裁切（0.8.47–0.8.51）。</strong>全站下拉改成挂到页面顶层的浮层：按按钮位置定位、向下贴框底 4px、空间不够时上翻且底边贴框顶、上下都紧张时限高并在菜单内滚动，滚动或缩放时关闭。覆盖默认日历、CalDAV 权限、AI 凭据权限、管理页角色、事件编辑器的日历 / 提醒 / 重复等 10 个入口。</li>
+        <li><strong>在线 ICS 订阅（0.8.48）。</strong>导入弹窗的「新建日历」下多一个「订阅链接…」：填在线 ICS 地址、名称与同步间隔（手动 / 15 分钟 / 1 小时 / 6 小时 / 24 小时，默认 1 小时）。订阅日历按普通日历存储但只读：CalDAV 与 AI 都只有「只读 / 不可见」两档；日历设置里能改地址与间隔、看最后同步时间；拉取失败保留旧数据并写中文原因（DNS、拒连、超时、证书、HTTP 状态码、不是 ICS 分开说明）。订阅只能新建日历，不能覆盖已有日历。</li>
+        <li><strong>任务合并同步（0.8.48）。</strong>设置 → CalDAV →「CalDAV 地址」上方新增开关与「合并到日历」：打开后 CalDAV 客户端只看到一个日历，客户端写入的事件进目标日历、任务自动进任务日历；任务日历在客户端隐藏，App 内列表与待办照常显示。关闭只清映射，不动数据。</li>
+        <li><strong>权限表与暂存状态（0.8.48–0.8.49）。</strong>CalDAV 权限表的「显示」列改成「类型」，用事件 / 任务 / 订阅三种彩色小胶囊表示，开关只控制本地查看；系统日历不允许设为「不显示」；合并打开时任务日历那行显示灰色「已合并」与行末说明；开关或下拉改回原值后底部不再挂「1 处未应用」。</li>
+        <li><strong>同步入口修复（0.8.51）。</strong>点「立即同步」报 <code>e.syncCalendar is not a function</code>：离线层的转发名单漏了 <code>syncCalendar</code> 与 <code>testSubscription</code>，补上并加用例锁住（名单每个名字必须在 REST 层存在）。</li>
+        <li><strong>日期选择统一（0.8.52）。</strong>导出「订阅日历」的起始 / 结束日期从浏览器原生日历换成与编辑器同款的自绘弹层；两处「同步间隔」下拉改为自绘；订阅地址改了没保存就点同步会先保存再同步；TLS 瞬时失败自动重试一次；同步成功后列表立即刷新，不必整页刷新。</li>
+        <li><strong>界面文案统一中文（0.8.53）。</strong>新增统一错误出口：后端给的中文原样显示，网络与解析异常一律用中文兜底，不再漏出英文；弹窗关闭时下拉菜单一并消失；菜单内按 Tab 焦点回到按钮；日期弹层在小屏限高并在内部滚动。</li>
+                <li><strong>农历开关与农历重复（0.8.35）。</strong>新建与编辑事件的「全天」上方新增「农历」开关：打开后日期按农历显示，重复可选「每年（农历）」「每月（农历）」。农历每月按初一展开，小月没有三十就跳过；详情卡写明这次是该系列的第几次。</li>
         <li><strong>待办也能重复（0.8.36）。</strong>待办支持与事件同一套重复选择器（含农历）；勾完成后自动推到下一次，规则用尽才算完成。</li>
         <li><strong>AI 也能排农历（0.8.37）。</strong>MCP 新建、修改事件可指定农历规则，还能建、改、勾完成待办；读回带每次的农历日期。</li>
         <li><strong>农历在各处一致（0.8.39–0.8.41）。</strong>详情卡补齐农历说明行与「第 N 次」，图标与文字水平中线对齐；搜索结果的农历记录带重复角标、按农历显示日期；服务端时间范围查询、空闲查询与 MCP 列表都按农历逐次展开，<code>get_event</code> 传畸形后缀不再报内部错误。</li>

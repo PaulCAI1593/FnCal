@@ -314,6 +314,55 @@ Result depends on the credential's **delete mode** (separate from `writeMode`):
 - **trash**: the event is deleted at once and stored in FnCal's trash for the retention period (default 7 days). The user can restore it **only** in the FnCal interface; you have no restore or empty tool. Say "已移到 FnCal 回收站，可在保留期内恢复", not "无法撤销".
 - Either way a failed trash write leaves the event in place: `删除失败：回收站写入失败，日程未删除` / `删除失败：回收站不可用，日程未删除`.
 
+## list_attachments
+
+Args:
+
+| arg | type | notes |
+|---|---|---|
+| `uid` | string | required; an event UID. A repeated series must name one occurrence: `<uid>::<milliseconds>` |
+| `recurrenceId` | number | optional; the occurrence's original slot in milliseconds (`recurrenceId` from `list_events`) |
+| `calendarId` | string | optional; disambiguates a UID reused in two calendars |
+
+```json
+{ "storage": "library", "managedBy": "nas", "readOnly": false,
+  "relDir": "2026-11-20/my-calendar", "total": 2, "totalBytes": 3145728,
+  "kinds": { "image": 1, "video": 1 },
+  "limits": { "maxFileBytes": 20971520, "maxEventBytes": 41943040, "freeReserveBytes": 104857600, "used": 3145728 },
+  "items": [ { "id": "lib_9f3c…", "name": "photo.jpg", "mime": "image/jpeg", "bytes": 1048576 } ] }
+```
+
+- `storage` is `app` (应用内), `library` (NAS 附件库) or `linked` (关联文件夹).
+- `app` and `library` share the instance limits (default 40 MB per event, 20 MB per file); `limits` reports the live values and `used`.
+- `linked` is fixed read-only: it returns `readOnly: true`, `total` and `kinds`, and **no file name list**. Use `get_attachment` for a specific id only if the user gave it.
+- A series master record has no attachments; ask for one occurrence.
+- Invisible event, outside the credential time window, or no attachment: the same single "not found" result.
+
+## get_attachment
+
+Args: `id` (required), `uid`, `recurrenceId`, `calendarId` (optional checks).
+
+- Images: an MCP `image` content block plus a share link in the text block. Text always carries `url` and `expiresAt`.
+- PDF / text ≤ 256 KB: `dataBase64` plus the link. Larger: link only.
+- One attachment over 5 MB: `attachment_too_large_for_mcp` (only the link is usable for larger files).
+- Video in `library`: metadata and a streaming link only.
+- `linked`: metadata and link only; bytes are not read (folder is read-only).
+- The link token is 32 bytes, single-use credentials never appear in it, lives 30 minutes and allows at most 50 hits; expired or exhausted: HTTP 410.
+
+## create_attachment_upload_link
+
+Args: `uid` (required), `recurrenceId`, `calendarId`, `expiresInMinutes` (default 30, max 1440), `maxFiles` (default 10, max 10).
+
+```json
+{ "url": "https://cal.example.com/u/a/<token>", "expiresAt": "2026-11-20T03:10:00.000Z", "maxFiles": 10, "maxBytes": 20972544 }
+```
+
+- The user opens `url` in any phone browser; no FnCal login needed. A credential PIN, when set, is asked once before the upload page.
+- `maxBytes` = min(remaining quota for this occurrence, single-file limit + 1 MB). `app` and `library` share the instance limits.
+- Requires a credential with write access and the credential switch 「附件」 on.
+- `linked` folders are fixed read-only: always `folder_read_only`.
+- This tool issues a link only; it never uploads bytes.
+
 ## list_proposals
 
 No arguments. Requires the credential to have **agent approval** enabled; otherwise the call fails with `凭据未开启 AI 端批准，请到 FnCal 设置里打开，或在日历界面批准`.
