@@ -42,6 +42,7 @@ export const LEGACY_DEFAULT_CALENDAR_NAME = '默认日历';
 export const TASKS_CALENDAR_ID = 'tasks';
 export const TASKS_CALENDAR_NAME = '任务';
 export const CALENDAR_TYPES = Object.freeze(['vevent', 'vtodo']);
+export const SUBSCRIPTION_INTERVALS = [0, 15, 60, 360, 1440];
 const DEFAULT_COLOR = '#3272d9';
 const TASKS_COLOR = '#8a94a6';
 // 系统自动创建的日历：只可改名，不可删除（0.2.0 第 2 条拍板）。
@@ -105,6 +106,16 @@ export function normalizeCalendarMeta(meta, calendarId = '') {
     ctag: Number.isFinite(Number(base.ctag)) ? Number(base.ctag) : 0,
     syncUuid: typeof base.syncUuid === 'string' && base.syncUuid ? base.syncUuid : randomUUID(),
     tombstones: Array.isArray(base.tombstones) ? base.tombstones : [],
+    // 0.8.46：在线 ICS 订阅（复用普通日历，不另建存储）。订阅日历永远只读。
+    subscriptionUrl: typeof base.subscriptionUrl === 'string' ? base.subscriptionUrl : '',
+    syncIntervalMin: SUBSCRIPTION_INTERVALS.includes(Number(base.syncIntervalMin))
+      ? Number(base.syncIntervalMin)
+      : 0,
+    lastSyncAt: typeof base.lastSyncAt === 'string' && base.lastSyncAt ? base.lastSyncAt : null,
+    lastSyncStatus: ['never', 'ok', 'error'].includes(base.lastSyncStatus) ? base.lastSyncStatus : 'never',
+    lastSyncError: typeof base.lastSyncError === 'string' ? base.lastSyncError.slice(0, 300) : '',
+    lastSyncEtag: typeof base.lastSyncEtag === 'string' ? base.lastSyncEtag : '',
+    readOnly: base.readOnly === true || (typeof base.subscriptionUrl === 'string' && base.subscriptionUrl !== ''),
   };
 }
 
@@ -749,8 +760,32 @@ export function createStore({ root, logger = null }) {
       if (patch.remindersEnabled !== undefined) meta.remindersEnabled = patch.remindersEnabled !== false;
       if (patch.visible !== undefined) meta.visible = patch.visible !== false;
       // 0.2.1：CalDAV 权限（'ro' 只读 / 'rw' 读写）。
-      if (patch.davAccess !== undefined) meta.davAccess = ['ro', 'hidden'].includes(patch.davAccess) ? patch.davAccess : 'rw';
+      if (patch.davAccess !== undefined) {
+        const next = ['ro', 'hidden'].includes(patch.davAccess) ? patch.davAccess : 'rw';
+        // 0.8.47（任务书 §八）：系统日历必须对 CalDAV 可见（store 层再拦一次，
+        // 避免绕过 REST 的调用把 tasks/default 写成 hidden）。
+        if (next === 'hidden' && (cal === 'default' || cal === 'tasks')) {
+          throw Object.assign(new Error('系统日历必须对 CalDAV 可见'), {
+            code: 'system_calendar_must_visible',
+            status: 400,
+          });
+        }
+        meta.davAccess = next;
+      }
       if (patch.order !== undefined && Number.isFinite(Number(patch.order))) meta.order = Number(patch.order);
+      // 0.8.46：订阅字段（URL 创建后不允许改，只改间隔与同步状态）。
+      if (patch.subscriptionUrl !== undefined) meta.subscriptionUrl = String(patch.subscriptionUrl || '');
+      if (patch.syncIntervalMin !== undefined && SUBSCRIPTION_INTERVALS.includes(Number(patch.syncIntervalMin))) {
+        meta.syncIntervalMin = Number(patch.syncIntervalMin);
+      }
+      if (patch.lastSyncAt !== undefined) meta.lastSyncAt = patch.lastSyncAt ? String(patch.lastSyncAt) : null;
+      if (patch.lastSyncStatus !== undefined && ['never', 'ok', 'error'].includes(patch.lastSyncStatus)) {
+        meta.lastSyncStatus = patch.lastSyncStatus;
+      }
+      if (patch.lastSyncError !== undefined) meta.lastSyncError = String(patch.lastSyncError || '').slice(0, 300);
+      if (patch.lastSyncEtag !== undefined) meta.lastSyncEtag = String(patch.lastSyncEtag || '');
+      if (patch.readOnly !== undefined) meta.readOnly = patch.readOnly === true;
+      if (meta.subscriptionUrl) meta.readOnly = true;
       await saveMeta(userId, cal, meta);
       return meta;
     });
