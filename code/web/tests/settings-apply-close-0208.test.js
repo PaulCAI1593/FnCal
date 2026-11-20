@@ -99,9 +99,9 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
     opened = open(store, { tab: 'account' });
     const row = [...document.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')]
       .find((r) => r.textContent.includes('工作'));
-    const checkbox = row.querySelector('.cal-table__checkbox');
-    checkbox.checked = false;
-    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    const dav = row.querySelector('.cal-table__dav-select');
+    dav.value = 'ro';
+    dav.dispatchEvent(new Event('change', { bubbles: true }));
     await flush();
     expect(applyBtn().disabled).toBe(false);
 
@@ -137,7 +137,9 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
     opened = open(failing, { tab: 'account' });
     const row = [...document.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')]
       .find((r) => r.textContent.includes('工作'));
-    row.querySelector('.cal-table__checkbox').dispatchEvent(new Event('change', { bubbles: true }));
+    const dav = row.querySelector('.cal-table__dav-select');
+    dav.value = 'ro';
+    dav.dispatchEvent(new Event('change', { bubbles: true }));
     await flush();
 
     applyBtn().click();
@@ -210,7 +212,9 @@ describe('0.2.8 设置「应用」= 应用并关闭', () => {
 
     const row = [...document.querySelectorAll('.cal-table__row:not(.cal-table__row--head)')]
       .find((r) => r.textContent.includes('工作'));
-    row.querySelector('.cal-table__checkbox').dispatchEvent(new Event('change', { bubbles: true }));
+    const dav = row.querySelector('.cal-table__dav-select');
+    dav.value = 'ro';
+    dav.dispatchEvent(new Event('change', { bubbles: true }));
     await flush();
     expect(count.hidden).toBe(false);
     expect(count.textContent).toBe('有 1 项未应用');

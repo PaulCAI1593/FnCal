@@ -96,8 +96,8 @@ describe('B2 设置页签不被裁', () => {
 
 describe('B3 日历表格自适应', () => {
   const css = read('src/styles/calendar.css');
-  it('表头与数据行同一套 grid（1fr / 72px / 132px）、表头单行不换行', () => {
-    expect(css).toMatch(/\.cal-table__row \{[\s\S]{0,300}grid-template-columns: minmax\(160px, 1fr\) 88px 148px/);
+  it('表头与数据行同一套 grid（名称 / 84px 类型 / 148px 权限）、表头单行不换行', () => {
+    expect(css).toMatch(/\.cal-table__row \{[\s\S]{0,300}grid-template-columns: minmax\(160px, 1fr\) 84px 148px/);
     expect(css).toMatch(/\.cal-table__row--head \.cal-table__cell \{[\s\S]{0,80}white-space: nowrap/);
   });
   it('权限列靠右；≤720 两行卡片式（权限另起一行占满）；触屏行高 >=44px', () => {

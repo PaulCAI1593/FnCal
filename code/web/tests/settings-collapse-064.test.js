@@ -70,16 +70,14 @@ describe('0.6.4 设置页签收拢', () => {
     opened = null;
   });
 
-  it('页签 5→4→3→4→5：一般 / 高级 / 标签 / CalDAV / AI，DOM 里没有日历页签、日历页与快捷键页签', () => {
+  it('页签 5→4→3→4：一般 / 标签 / CalDAV / AI，DOM 里没有日历页签、日历页与快捷键页签', () => {
     const { dialog } = opened;
     const tabs = [...dialog.querySelectorAll('[role="tab"]')];
     // 0.6.15（用户）：快捷键搬到头像菜单，设置退回三页签；`settings-tab-shortcuts` 同时删除。
     // 0.7.0 起（用户）：新增「标签」第 2 页签，页签回到 4 枚（断言只加不减，理由同注释）。
-    // 0.9.1（F.4C，用户 2026-11-20）：附件设置搬进「高级」，插在「一般」与「标签」之间。
-    expect(tabs.map((b) => b.textContent.trim())).toEqual(['一般', '高级', '标签', 'CalDAV', 'AI']);
+    expect(tabs.map((b) => b.textContent.trim())).toEqual(['一般', '标签', 'CalDAV', 'AI']);
     expect(tabs.map((b) => b.id)).toEqual([
       'settings-tab-general',
-      'settings-tab-advanced',
       'settings-tab-tags',
       'settings-tab-account',
       'settings-tab-ai',
@@ -87,7 +85,7 @@ describe('0.6.4 设置页签收拢', () => {
     expect(dialog.querySelector('#settings-tab-calendar')).toBeNull();
     expect(dialog.querySelector('#settings-page-calendar')).toBeNull();
     expect(dialog.querySelector('#settings-tab-shortcuts')).toBeNull();
-    expect(dialog.querySelectorAll('.settings__pages > .settings__page').length).toBe(5);
+    expect(dialog.querySelectorAll('.settings__pages > .settings__page').length).toBe(4);
   });
 
   it('CalDAV 页：日历表格在最上面，CalDAV 地址区在其后（DOM 顺序）', () => {
@@ -104,7 +102,8 @@ describe('0.6.4 设置页签收拢', () => {
     expect(toolbar.compareDocumentPosition(addressInput) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // 表格结构没变：三列 + 工具条计数
     const headers = [...block.querySelectorAll('.cal-table__row--head .cal-table__cell')].map((n) => n.textContent);
-    expect(headers).toEqual(['名称', '显示', 'CalDAV 权限']);
+    // 0.8.47（任务书 §九）：第三列由「显示」改为「类型」，可见性只在侧栏勾选。
+    expect(headers).toEqual(['名称', '类型', 'CalDAV 权限']);
     expect(block.querySelector('.cal-table__toolbar .cal-table__count')).toBeTruthy();
   });
 

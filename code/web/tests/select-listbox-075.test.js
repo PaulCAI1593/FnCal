@@ -163,7 +163,9 @@ describe('0.7.5 自绘下拉（select-listbox）', () => {
 
     const unitTrigger = unitBox.querySelector('.select-listbox__trigger');
     unitTrigger.click();
-    const weeks = [...unitBox.querySelectorAll('.select-listbox__option')]
+    // 0.8.46：菜单挂到 document.body（不再在 wrapper 内），按 aria-controls 找列表。
+    const unitMenu = document.getElementById(unitTrigger.getAttribute('aria-controls'));
+    const weeks = [...unitMenu.querySelectorAll('.select-listbox__option')]
       .find((node) => node.dataset.value === 'week');
     weeks.click();
     expect(nativeUnit.value).toBe('week');

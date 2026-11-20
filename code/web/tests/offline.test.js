@@ -26,6 +26,11 @@ const DATA_MUTATORS = [
   'clearCalendar',
   'restoreCalendar',
   'setCalendarVisible',
+  // 0.8.46：订阅日历立即同步会写事件并改 meta（与 offline.js 一致）。
+  'syncCalendar',
+  // 0.8.52（F.5）：保存订阅地址并顺手同步（与 offline.js 一致）。
+  'updateSubscriptionCalendar',
+  'testSubscription',
   // 0.7.0：标签注册表在服务端，离线时与日历数据同口径——直接拦住写，不改内存。
   'createTag',
   'updateTag',
